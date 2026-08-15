@@ -1,6 +1,8 @@
 name: Update Star Hub
 
 on:
+  push:
+    branches: [main]
   schedule:
     # 每天 UTC 23:35 = 北京时间 07:35
     - cron: "35 23 * * *"
@@ -15,6 +17,7 @@ concurrency:
 
 jobs:
   update:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -25,8 +28,16 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Point build at ghoustghoust
+        run: sed -i 's/^USER = .*/USER = "ghoustghoust"/' fetch_and_build.py
+
       - name: Fetch stars & build
         run: python fetch_and_build.py
+
+      - name: Rebrand page to ghoustghoust
+        run: |
+          sed -i 's/GitHub Star 收藏台 · Kwei168/GitHub Star 收藏台 · ghoustghoust/g' index.html
+          sed -i "s/user: 'Kwei168'/user: 'ghoustghoust'/g" index.html
 
       - name: Commit & push if changed
         run: |
@@ -37,7 +48,6 @@ jobs:
             echo "No changes, skip commit."
           else
             git commit -m "chore: auto update stars $(TZ=Asia/Shanghai date +%F)"
-            # 先拉取远端变更再推，避免并发提交被拒
             git pull --rebase
             git push
           fi

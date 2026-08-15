@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>GitHub Star 收藏台 · Kwei168</title>
+<title>GitHub Star 收藏台 · ghoustghoust</title>
 <style>
 :root{
   --bg:#f6f8fa; --card:#ffffff; --border:#d0d7de; --border2:#eaeef2;
@@ -969,24 +969,15 @@ function bindEvents(){
 
   $('#btnExport').onclick = exportJson;
   $('#btnImport').onclick = () => $('#fileInput').click();
-  // Vercel Function 中转触发 GitHub Actions（GH_TOKEN 存于 Vercel 环境变量）
-  const REFRESH_API = 'https://starhub-refresh.vercel.app/api/refresh';
+  // GitHub Pages 部署：无 Vercel 中转，改为打开 Actions 页手动触发刷新
+  const REFRESH_URL = 'https://github.com/ghoustghoust/starhub/actions/workflows/update.yml';
   let refreshCooldown = 0;
-  $('#btnRefresh').onclick = async () => {
-    const b = $('#btnRefresh');
+  $('#btnRefresh').onclick = () => {
     const now = Date.now();
-    if (b.disabled) return;
-    if (now - refreshCooldown < 60000) { toast('刷新请求已提交，请稍候再试'); return; }
-    b.disabled = true;
-    b.classList.add('loading');
-    try {
-      const r = await fetch(REFRESH_API, { method: 'POST' });
-      const j = await r.json().catch(() => ({}));
-      if (r.ok) { toast('已提交刷新请求，约 1-2 分钟后上线'); refreshCooldown = now; }
-      else toast('刷新失败：' + (j.error || ('HTTP ' + r.status)));
-    } catch(e) { toast('网络错误，请稍后重试'); }
-    b.disabled = false;
-    b.classList.remove('loading');
+    if (now - refreshCooldown < 60000) { toast('刷新页已打开，请稍候再试'); return; }
+    refreshCooldown = now;
+    window.open(REFRESH_URL, '_blank', 'noopener');
+    toast('已打开 GitHub Actions，点击 “Run workflow” 立即刷新');
   };
   $('#fileInput').addEventListener('change', importJson);
 
@@ -1051,7 +1042,7 @@ function saveFavs(){
 function exportJson(){
   const payload = {
     type: 'github-starhub-backup',
-    user: 'Kwei168',
+    user: 'ghoustghoust',
     exportedAt: new Date().toISOString(),
     favorites: [...favs],
   };

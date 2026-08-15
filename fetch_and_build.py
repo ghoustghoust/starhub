@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 GitHub Star 收藏台 —— 自动更新脚本
-在 GitHub Actions 中每天运行：拉取 Kwei168 的 star 列表 → 智能分类 → 重新生成 index.html。
+在 GitHub Actions 中每天运行：拉取 ghoustghoust 的 star 列表 → 智能分类 → 重新生成 index.html。
 仅依赖 Python 标准库，无需安装第三方包。
 """
 import json

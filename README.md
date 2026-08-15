@@ -2,7 +2,7 @@
 
 个人 GitHub Star 项目收藏台：自动拉取 star 列表、智能分类展示，支持模糊搜索、语言/星标筛选、收藏置顶。托管在 GitHub Pages，通过 GitHub Actions 每天自动更新。
 
-在线地址：https://Kwei168.github.io/starhub/
+在线地址：https://ghoustghoust.github.io/starhub/
 
 ## 仓库结构
 
@@ -18,4 +18,4 @@
 
 ## 自定义域名
 
-在仓库 Settings → Pages 里设置自定义域名，并在 DNS 添加一条 CNAME 记录指向 `Kwei168.github.io`，再把域名填入 Pages 的 Custom domain 即可。
+在仓库 Settings → Pages 里设置自定义域名，并在 DNS 添加一条 CNAME 记录指向 `ghoustghoust.github.io`，再把域名填入 Pages 的 Custom domain 即可。

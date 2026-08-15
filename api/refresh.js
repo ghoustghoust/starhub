@@ -16,7 +16,7 @@ export default async function handler(req, res) {
 
   try {
     const r = await fetch(
-      'https://api.github.com/repos/Kwei168/starhub/actions/workflows/update.yml/dispatches',
+      'https://api.github.com/repos/ghoustghoust/starhub/actions/workflows/update.yml/dispatches',
       {
         method: 'POST',
         headers: {

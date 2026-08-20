@@ -1,12 +1,33 @@
 // Vercel Serverless Function：中转触发 GitHub Actions workflow_dispatch
 // 用法：POST /api/refresh → 触发 starhub 仓库 update.yml（ref=main）
 // 认证令牌通过 Vercel 环境变量 GH_TOKEN 注入（fine-grained PAT，仅 starhub 仓库 + Actions:write）
+// 防护：① CORS 仅允许白名单 Origin（页面所在域名，比较时统一小写，兼容 GitHub Pages 域名大小写）；
+//       ② 请求须携带 X-Refresh-Key 头，
+//       值与 Vercel 环境变量 REFRESH_KEY 一致（弱防护，拦截无头扫描器；静态源码公开故非机密）
+const ALLOWED_ORIGINS = new Set([
+  'https://starhub-refresh.vercel.app',
+  'https://kwei168.github.io',
+]);
+
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') { res.status(204).end(); return; }
+  const origin = (req.headers['origin'] || '').toLowerCase();
+  const allowed = ALLOWED_ORIGINS.has(origin);
+  if (allowed) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Refresh-Key');
+    res.setHeader('Vary', 'Origin');
+  }
+  if (req.method === 'OPTIONS') { res.status(allowed ? 204 : 403).end(); return; }
   if (req.method !== 'POST') { res.status(405).json({ error: 'Method Not Allowed' }); return; }
+  // 非白名单来源直接拒绝（不返回 CORS 头，浏览器侧无法读取响应）
+  if (!allowed) { res.status(403).json({ error: 'Forbidden' }); return; }
+
+  const key = process.env.REFRESH_KEY;
+  if (!key || req.headers['x-refresh-key'] !== key) {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
 
   const token = process.env.GH_TOKEN;
   if (!token) {
@@ -32,10 +53,10 @@ export default async function handler(req, res) {
     if (r.status === 204) {
       res.status(200).json({ ok: true });
     } else {
-      const text = await r.text();
-      res.status(r.status).json({ error: 'GitHub API ' + r.status + ': ' + text.slice(0, 200) });
+      // 不向上游调用者回显 GitHub 错误细节（防信息泄露），细节由 Vercel 日志记录
+      res.status(r.status).json({ error: 'GitHub API 调用失败' });
     }
   } catch (e) {
-    res.status(502).json({ error: '网络错误: ' + String(e) });
+    res.status(502).json({ error: '上游服务不可用' });
   }
 }

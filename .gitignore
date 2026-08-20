@@ -1,7 +1,6 @@
 __pycache__/
 *.pyc
-.vercel/
+.vercel/*
+!.vercel/project.json
 .vercel-tmp/
 .deploy-tmp/
-
-.vercel

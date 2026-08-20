@@ -87,49 +87,52 @@ def translate_to_zh(text):
 
 
 def classify_new(fn, desc, lang, topics):
-    """对未知新项目做关键词规则分类（已有项目走 known_categories.json 保持稳定）。"""
+    """对未知新项目做关键词规则分类（已有项目走 known_categories.json 保持稳定）。
+    规则要点：避免泛词子串误伤（如「蒸馏」「思维」「chat」），用语义更明确的短语。"""
     text = (fn + " " + (desc or "") + " " + " ".join(topics or [])).lower()
     if any(k in text for k in ["trading", "finance", "fincept", "quant", "金融", "交易", "bloomberg"]):
         return "finance"
     if any(k in text for k in ["tvbox", "iptv", "直播", "电视", "crawler", "爬虫", "download", "下载",
-                               "translator", "翻译", "汉化", "网盘", "pan", "mpv", "ffmpeg", "userscript"]):
+                               "translator", "翻译", "汉化", "网盘", "pan", "mpv", "userscript"]):
         return "tools"
+    # 内容蒸馏类提前（如「把视频蒸馏成技能」类项目同时含视频/蒸馏字样，语义上属蒸馏）
+    if any(k in text for k in ["distill", "思维蒸馏", "知识蒸馏", "内容蒸馏", "蒸馏成", "蒸馏出", "蒸馏任何",
+                               "认知植入", "思维方式", "心智模型", "第一性", "first-principles",
+                               "方法论", "nuwa", "女娲", "cangjie", "仓颉", "文风"]):
+        return "distill"
+    # 视频创作类（画布/视频生成工具；置于 tools 之后，避免爬虫/下载器含「视频」字样误伤）
+    if any(k in text for k in ["video", "视频", "短剧", "drama", "film", "anime", "动漫",
+                               "movie", "montage", "hyperframe", "shot", "画布", "canvas"]):
+        return "video"
     if any(k in text for k in ["open-design", "baoyu-design", "awesome-design", "design.md",
-                               "design-system", "design system", "frontend", "react"]):
+                               "design-system", "design system", "frontend"]):
         return "frontend"
     if any(k in text for k in ["ppt", "powerpoint", "排版", "公众号", "wechat", "写作", "write",
-                               "typeset", "editor", "design"]):
+                               "typeset", "editor"]):
         return "content"
-    if any(k in text for k in ["video", "短剧", "drama", "film", "anime", "动漫", "movie", "montage",
-                               "hyperframe", "影视", "shot"]):
-        return "video"
     if any(k in text for k in ["book", "书籍", "教程", "guide", "指南", "from-scratch", "llms",
                                "learning", "入门", "weekly", "hellogithub", "实践", "tutorial",
-                               "dive-into", "deep"]):
+                               "dive-into"]):
         return "learning"
-    if any(k in text for k in ["distill", "蒸馏", "认知", "思维", "nuwa", "女娲", "cangjie", "仓颉",
-                               "first-principles", "第一性", "perspective", "文风", "methodology"]):
-        return "distill"
     if any(k in text for k in ["code-review", "officecli", "reasonix", "sub2api", "freellmapi",
                                "2api", "中转", "mimo", "cc-connect", "coding", "编程"]):
         return "coding"
-    if any(k in text for k in ["chat", "assistant", "助手", "chatbot", "librechat", "astrbot",
+    if any(k in text for k in ["chatbot", "chatgpt", "assistant", "助手", "librechat", "astrbot",
                                "qwenpaw", "nuwax", "opensquilla", "workspace", "desktop", "agent-os"]):
         return "assistant"
     if any(k in text for k in ["opc", "one-person", "一人公司", "创业", "startup", "growth", "增长",
-                               "fde", "business", "软著", "copyright", "专利", "patent", "合规",
+                               "business", "软著", "copyright", "专利", "patent", "合规",
                                "compliance", "legal"]):
         return "business"
     return "agent"
 
 
-def fetch_stars():
+def fetch_stars(token=None):
     repos = []
     page = 1
-    headers = {"Accept": "application/vnd.github+json", "User-Agent": "starhub-auto-update"}
     while True:
         url = "https://api.github.com/users/%s/starred?per_page=100&page=%d" % (USER, page)
-        req = urllib.request.Request(url, headers=headers)
+        req = urllib.request.Request(url, headers=_api_headers(token))
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
                 data = json.loads(r.read().decode("utf-8"))
@@ -209,6 +212,69 @@ def fetch_new_repos(token):
     return out
 
 
+# ==================== README 简介兜底 ====================
+def _readme_first_sentence(text):
+    """从 README 原文提取第一句像样的简介（清洗 markdown 噪音），失败返回 None。"""
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        # 跳过标题 / 代码块围栏 / 引用块（多为项目名或导航，无信息量）
+        if re.match(r"^#{1,6}\s", s) or s.startswith(("```", "~~~")) or s.startswith(">"):
+            continue
+        # 去掉图片、链接（保留链接文字）、行内代码、HTML 标签
+        s = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", s)
+        s = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", s)
+        s = re.sub(r"<[^>]+>", "", s)
+        s = re.sub(r"`[^`]*`", "", s)
+        # 去掉行内加粗/斜体标记（先于行首符号剥离，保证 **xxx** 成对匹配）
+        s = re.sub(r"\*\*([^*]+)\*\*", r"\1", s)
+        s = re.sub(r"\*([^*]+)\*", r"\1", s)
+        # 去掉行首列表符/强调符，压缩空白
+        s = re.sub(r"^[\s\-*+]+", "", s).strip()
+        s = re.sub(r"\s+", " ", s)
+        low = s.lower()
+        # 跳过徽章/导航/状态行等噪音
+        if any(k in low for k in ("img.shields.io", "badge", "build passing", "build status",
+                                  "license", "contributors", "中文", "english", "stars", "downloads")):
+            continue
+        if len(s) >= 10:
+            # 中等长度也收敛为第一句（README 首段常是多句长段）
+            if len(s) > 80:
+                for sep in (". ", "。", "！", "? "):
+                    idx = s.find(sep)
+                    if 10 < idx <= 150:
+                        return s[:idx].strip()
+            # 超长截断到 150 字符，优先在句子边界截断
+            if len(s) > 150:
+                cut = s[:150]
+                for sep in (". ", "。", "，", ", "):
+                    idx = cut.rfind(sep)
+                    if idx > 30:
+                        return cut[:idx].strip()
+                return cut.strip() + "…"
+            return s
+    return None
+
+
+def fetch_readme_summary(fn, token):
+    """无简介项目：抓 README 提取一句简介（失败/无 README 返回 None）。"""
+    url = "https://api.github.com/repos/%s/readme" % fn
+    headers = {"Accept": "application/vnd.github.raw", "User-Agent": "starhub-auto-update"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=20) as r:
+            raw = r.read(30000).decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        return None
+    summary = _readme_first_sentence(raw)
+    if summary:
+        time.sleep(1)  # 限流：GitHub 建议相邻请求间隔 ≥1s
+    return summary
+
+
 def _desc_zh(fn, desc, desc_zh):
     """排行榜项目简介：优先缓存中文，未命中则翻译并回写。"""
     if not desc:
@@ -232,6 +298,78 @@ def _fmt_zh(n):
     return str(n)
 
 
+# ==================== Trending 涨星榜（真实 stars today） ====================
+# 2026 年起 GitHub Trending 每页仅展示 7~20 个仓库，因此抓多语言页合并去重凑量
+TREND_LANG_PAGES = ["", "python", "typescript", "javascript", "rust", "go", "java",
+                    "c++", "c", "swift", "kotlin", "ruby", "php", "c#", "shell",
+                    "jupyter-notebook", "vue", "dart", "elixir", "haskell"]
+
+# AI 分类关键词（ 词边界匹配 full_name + 描述，命中即视为 AI 类项目）
+_AI_RE = re.compile(
+    r"\b(ai|ml|llm|llms|gpt|nlp|rag|agent|agents|agentic|llama|claude|openai|anthropic|"
+    r"gemini|copilot|diffusion|neural|transformer|chatbot|assistant|embedding|inference|"
+    r"genai|generative|vision|speech|voice|machine.?learning|deep.?learning|model|models)\b")
+
+
+def _is_ai_repo(fn, desc):
+    """Trending 项目是否属于 AI 分类（关键词过滤 name + 描述）。"""
+    return bool(_AI_RE.search((fn + " " + (desc or "")).lower()))
+
+
+def _parse_trending(html):
+    """解析 Trending 页单个语言维度的仓库卡片。"""
+    out = []
+    for b in re.findall(r'<article[^>]*class="[^"]*Box-row[^"]*"[\s\S]*?</article>', html):
+        m = re.search(r'<h2[^>]*>[\s\S]*?href="/([^"/]+/[^"/]+)"', b)
+        if not m:
+            continue
+        fn = m.group(1)
+        if fn.startswith("sponsors/"):  # 赞助商卡片，跳过
+            continue
+        s = re.search(r'([\d,]+)\s+stars?\s+today', b)
+        lang = re.search(r'itemprop="programmingLanguage"[^>]*>([^<]+)<', b)
+        d = re.search(r'<h2[\s\S]*?</h2>[\s\S]*?<p[^>]*>([\s\S]*?)</p>', b)
+        # 总星标：stargazers 链接内最后一个 </svg> 后的数字（2026 新版页面数字前有换行空格）
+        st = None
+        si = b.find('stargazers')
+        if si != -1:
+            ei = b.find('</a>', si)
+            if ei != -1:
+                m2 = re.search(r'</svg>\s*([\d,]+)', b[si:ei])
+                if m2:
+                    st = m2.group(1)
+        desc = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', '', d.group(1))).strip() if d else ""
+        owner, name = fn.split("/", 1)
+        out.append({
+            "name": name, "owner": owner, "full_name": fn,
+            "html_url": "https://github.com/" + fn,
+            "desc": desc, "language": lang.group(1) if lang else None,
+            "stars": int(st.replace(",", "")) if st else 0,
+            "stars_today": int(s.group(1).replace(",", "")) if s else 0,
+        })
+    return out
+
+
+def fetch_trending_daily(token=None):
+    """抓 GitHub Trending daily（多语言页合并去重）；全部失败返回 None 触发降级。"""
+    pool = {}
+    for lp in TREND_LANG_PAGES:
+        url = "https://github.com/trending/%s?since=daily" % lp
+        try:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                               " (KHTML, like Gecko) Chrome/126.0 Safari/537.36"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                html = r.read().decode("utf-8", errors="replace")
+            for p in _parse_trending(html):
+                if p["full_name"] not in pool:
+                    pool[p["full_name"]] = p
+        except Exception as e:  # noqa: BLE001
+            print("[Trending %s 失败] %s" % (lp or "全部", e), file=sys.stderr)
+        time.sleep(0.5)
+    return list(pool.values()) if pool else None
+
+
 def build_trending(token, desc_zh):
     snap = {}
     try:
@@ -244,15 +382,25 @@ def build_trending(token, desc_zh):
     # 总榜：按总星标排序
     total = sorted(pool, key=lambda x: x["stars"], reverse=True)[:TREND_TOP]
 
-    # 涨星榜：排除超巨头，只看有昨日基线的项目
+    # 涨星榜：优先 Trending daily 真实 stars today（AI 分类过滤）
     rising = []
-    for p in pool:
-        prev = snap.get(p["full_name"])
-        if prev is not None and p["stars"] <= TREND_MAX_STARS:
-            p["delta"] = p["stars"] - prev
-            rising.append(p)
-    rising.sort(key=lambda x: x["delta"], reverse=True)
-    rising = rising[:TREND_TOP]
+    trend_rows = fetch_trending_daily(token)
+    if trend_rows:
+        rising = [p for p in trend_rows if _is_ai_repo(p["full_name"], p["desc"])]
+        rising.sort(key=lambda x: x["stars_today"], reverse=True)
+        rising = rising[:TREND_TOP]
+        for p in rising:
+            p["delta"] = p["stars_today"]  # 前端 delta 徽标直接展示 stars today
+    else:
+        # 降级：Trending 抓取失败，回退到快照差值模式（排除超巨头，只看有昨日基线的项目）
+        print("[涨星榜] Trending 抓取失败，降级为快照差值模式", file=sys.stderr)
+        for p in pool:
+            prev = snap.get(p["full_name"])
+            if prev is not None and p["stars"] <= TREND_MAX_STARS:
+                p["delta"] = p["stars"] - prev
+                rising.append(p)
+        rising.sort(key=lambda x: x["delta"], reverse=True)
+        rising = rising[:TREND_TOP]
 
     # 首次运行无基线：涨星榜 fallback 到总榜，delta=None（页面显示"新上榜"）
     if not rising:
@@ -275,12 +423,17 @@ def build_trending(token, desc_zh):
     for p in new_repos:
         p["reason"] = "近 7 天新建 · %s星标" % _fmt_zh(p["stars"])
 
-    # 快照覆盖为今日星标数（作为明日基线）
-    json.dump({p["full_name"]: p["stars"] for p in pool},
-              open("trending_snapshot.json", "w", encoding="utf-8"),
-              ensure_ascii=False, indent=1)
+    # 快照覆盖为今日星标数（作为明日基线）；AI 池为空说明本次构建异常（限流/网络故障），
+    # 此时覆盖会清空全部基线且无法自愈，因此保留旧快照
+    if pool:
+        json.dump({p["full_name"]: p["stars"] for p in pool},
+                  open("trending_snapshot.json", "w", encoding="utf-8"),
+                  ensure_ascii=False, indent=1)
+    else:
+        print("[警告] AI 池为空，跳过快照更新，保留旧基线", file=sys.stderr)
 
-    return {"rising": rising, "total": total, "new": new_repos}
+    return {"rising": rising, "total": total, "new": new_repos,
+            "source": "trending" if trend_rows else "snapshot"}
 
 
 def _today_cn():
@@ -288,26 +441,26 @@ def _today_cn():
     return datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
 
 
+def _cn_dt(utc_str):
+    """UTC 时间字符串 → 北京时间 datetime（解析失败返回 None）。"""
+    if not utc_str:
+        return None
+    try:
+        return datetime.fromisoformat(utc_str.replace("Z", "+00:00")).astimezone(timezone(timedelta(hours=8)))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _cn_date(utc_str):
     """UTC 时间字符串 → 北京时间日期 YYYY-MM-DD。"""
-    if not utc_str:
-        return ""
-    try:
-        dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00")).astimezone(timezone(timedelta(hours=8)))
-        return dt.strftime("%Y-%m-%d")
-    except Exception:  # noqa: BLE001
-        return utc_str[:10]
+    dt = _cn_dt(utc_str)
+    return dt.strftime("%Y-%m-%d") if dt else (utc_str[:10] if utc_str else "")
 
 
 def _cn_time(utc_str):
     """UTC 时间字符串 → 北京时间 HH:MM。"""
-    if not utc_str:
-        return ""
-    try:
-        dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00")).astimezone(timezone(timedelta(hours=8)))
-        return dt.strftime("%H:%M")
-    except Exception:  # noqa: BLE001
-        return utc_str[11:16]
+    dt = _cn_dt(utc_str)
+    return dt.strftime("%H:%M") if dt else (utc_str[11:16] if utc_str else "")
 
 
 def fetch_following(token):
@@ -334,10 +487,10 @@ def fetch_following(token):
 
 
 def fetch_following_events(token):
-    """聚合关注账号动态（昨日 0 点至今）：新仓库 / star / 关注 / PR / 版本发布 / 公开仓库 / 提交更新。"""
+    """聚合关注账号动态（滚动 24 小时窗口）：新仓库 / star / 关注 / PR / 版本发布 / 公开仓库 / 提交更新。"""
     now_cn = datetime.now(timezone(timedelta(hours=8)))
+    cutoff = now_cn - timedelta(hours=24)  # 滚动窗口：最近 24 小时
     today = now_cn.strftime("%Y-%m-%d")
-    yesterday = (now_cn - timedelta(days=1)).strftime("%Y-%m-%d")
     following = fetch_following(token)
     feed = []
     for user in following:
@@ -353,14 +506,15 @@ def fetch_following_events(token):
             if not evs:
                 break
             for e in evs:
-                d = _cn_date(e.get("created_at"))
-                if not d or d < yesterday:
+                dt = _cn_dt(e.get("created_at"))
+                if dt is None or dt < cutoff:
                     continue
+                d = dt.strftime("%Y-%m-%d")
                 t = e.get("type")
                 payload = e.get("payload") or {}
                 actor = (e.get("actor") or {}).get("login", "")
                 repo = (e.get("repo") or {}).get("name", "")
-                tm = _cn_time(e.get("created_at"))
+                tm = dt.strftime("%H:%M")
                 day = "今天" if d == today else "昨天"
                 item = None
                 if t == "CreateEvent" and payload.get("ref_type") == "repository":
@@ -398,12 +552,19 @@ def fetch_following_events(token):
                 if item:
                     feed.append(item)
             # 事件按时间倒序返回：本页最早一条早于窗口起点则无需继续翻页
-            last = evs[-1].get("created_at") or ""
-            if last and _cn_date(last) < yesterday:
+            last_dt = _cn_dt((evs[-1].get("created_at") or ""))
+            if last_dt is None or last_dt < cutoff:
                 break
             time.sleep(1)  # 限流：GitHub 建议相邻请求间隔 ≥1s，避免二级速率限制
     feed.sort(key=lambda x: (x.get("date", ""), x.get("time", "")), reverse=True)
     return feed
+
+
+def _safe_json(obj):
+    # 转义 < 防止 </script> 注入：ensure_ascii=False 时 json.dumps 不转义 <、>，
+    # 数据内联进 <script> 块后浏览器会在第一个 </script> 处提前闭合标签执行任意 JS。
+    # \u003c 是合法 JSON 转义，json.loads 可还原，不破坏 dev_render.py 的提取流程。
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c")
 
 
 def main():
@@ -419,7 +580,8 @@ def main():
     except Exception:  # noqa: BLE001
         pass
 
-    repos = fetch_stars()
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    repos = fetch_stars(token)
     if repos is None:
         print("拉取 star 失败，保持现有 index.html 不变")
         return
@@ -433,6 +595,17 @@ def main():
         cat = known.get(fn) or classify_new(fn, r.get("description"), r.get("language"), r.get("topics"))
         known[fn] = cat
         desc = (desc_zh.get(fn) or r.get("description") or FALLBACK_DESC.get(fn, "")).strip()
+        # 无简介项目：从 README 提取一句简介，结果持久化到 desc_zh 避免重复抓取
+        if not desc and fn not in desc_zh:
+            summary = fetch_readme_summary(fn, token)
+            if summary:
+                if not has_cn(summary):
+                    translated = translate_to_zh(summary)
+                    if translated:
+                        summary = translated
+                desc = summary
+                desc_zh[fn] = summary
+                print("[README简介] %s -> %s" % (fn, summary[:60]))
         if desc:
             desc = " ".join(desc.split())
         # 新项目英文简介自动翻译为中文，并持久化到 desc_zh 避免重复翻译
@@ -460,19 +633,18 @@ def main():
             "categoryLabel": cat_label[cat],
         })
 
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     trending = build_trending(token, desc_zh)
     feed = fetch_following_events(token)
 
     template = open("template.html", encoding="utf-8").read()
     updated = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
     html = (template
-            .replace("__DATA__", json.dumps(out, ensure_ascii=False, separators=(",", ":")))
-            .replace("__CATS__", json.dumps(CATS, ensure_ascii=False, separators=(",", ":")))
-            .replace("__LANGS__", json.dumps(LANG_COLORS, ensure_ascii=False, separators=(",", ":")))
-            .replace("__FAVS__", json.dumps(DEFAULT_FAVS, ensure_ascii=False, separators=(",", ":")))
-            .replace("__TRENDING__", json.dumps(trending, ensure_ascii=False, separators=(",", ":")))
-            .replace("__FEED__", json.dumps(feed, ensure_ascii=False, separators=(",", ":")))
+            .replace("__DATA__", _safe_json(out))
+            .replace("__CATS__", _safe_json(CATS))
+            .replace("__LANGS__", _safe_json(LANG_COLORS))
+            .replace("__FAVS__", _safe_json(DEFAULT_FAVS))
+            .replace("__TRENDING__", _safe_json(trending))
+            .replace("__FEED__", _safe_json(feed))
             .replace("__UPDATED__", updated))
 
     open("index.html", "w", encoding="utf-8").write(html)

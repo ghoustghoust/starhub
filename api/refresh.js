@@ -12,19 +12,21 @@ const ALLOWED_ORIGINS = new Set([
 export default async function handler(req, res) {
   const origin = (req.headers['origin'] || '').toLowerCase();
   const allowed = ALLOWED_ORIGINS.has(origin);
-  if (allowed) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
+  // 携带正确 X-Refresh-Key 的服务端调用（如 cron-job.org）也放行
+  const key = process.env.REFRESH_KEY;
+  const keyValid = key && req.headers['x-refresh-key'] === key;
+  const pass = allowed || keyValid;
+  if (pass) {
+    res.setHeader('Access-Control-Allow-Origin', allowed ? origin : '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Refresh-Key');
     res.setHeader('Vary', 'Origin');
   }
-  if (req.method === 'OPTIONS') { res.status(allowed ? 204 : 403).end(); return; }
+  if (req.method === 'OPTIONS') { res.status(pass ? 204 : 403).end(); return; }
   if (req.method !== 'POST') { res.status(405).json({ error: 'Method Not Allowed' }); return; }
-  // 非白名单来源直接拒绝（不返回 CORS 头，浏览器侧无法读取响应）
-  if (!allowed) { res.status(403).json({ error: 'Forbidden' }); return; }
+  if (!pass) { res.status(403).json({ error: 'Forbidden' }); return; }
 
-  const key = process.env.REFRESH_KEY;
-  if (!key || req.headers['x-refresh-key'] !== key) {
+  if (!key || !keyValid) {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }

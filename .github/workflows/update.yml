@@ -32,6 +32,9 @@ jobs:
         run: sed -i 's/^USER = .*/USER = "ghoustghoust"/' fetch_and_build.py
 
       - name: Fetch stars & build
+        env:
+          # 注入 Actions 自动 token（1000 次/时），避免匿名抓取被限流 403 导致每日构建静默失败
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python fetch_and_build.py
 
       - name: Rebrand page to ghoustghoust
@@ -43,7 +46,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.html known_categories.json descriptions_zh.json trending_snapshot.json
+          git add index.html ai-daily.html rss-aggregator.html known_categories.json descriptions_zh.json trending_snapshot.json translations.json rss_cache.json rss_history.json rss_sources.json rss_api_snapshot.json
           if git diff --cached --quiet; then
             echo "No changes, skip commit."
           else

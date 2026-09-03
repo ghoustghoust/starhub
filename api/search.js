@@ -39,8 +39,11 @@ async function translateZh(zh) {
       const j = await r.json();
       const t = (j[0] || []).map(x => x && x[0]).join('').trim();
       if (t) en = t;
+      else console.error('[translate] Google 响应为空: zh=' + zh);
+    } else {
+      console.error('[translate] Google HTTP ' + r.status + ': zh=' + zh + ' body=' + (await r.text()).slice(0, 120));
     }
-  } catch (e) { /* fallthrough */ }
+  } catch (e) { console.error('[translate] Google 异常: zh=' + zh + ' err=' + (e && e.message || e)); }
   if (!en) {
     try {
       const u = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(zh) + '&langpair=zh-CN|en';
@@ -49,9 +52,15 @@ async function translateZh(zh) {
         const j = await r.json();
         const t = ((j.responseData || {}).translatedText || '').trim();
         if (t) en = t;
+        else console.error('[translate] MyMemory 响应为空: zh=' + zh);
+        const warn = ((j.responseData || {}).translatedText || '').match(/MYMEMORY WARNING[^\n]*/i);
+        if (warn) console.error('[translate] MyMemory 警告: ' + warn[0]);
+      } else {
+        console.error('[translate] MyMemory HTTP ' + r.status + ': zh=' + zh + ' body=' + (await r.text()).slice(0, 120));
       }
-    } catch (e) { /* fallthrough */ }
+    } catch (e) { console.error('[translate] MyMemory 异常: zh=' + zh + ' err=' + (e && e.message || e)); }
   }
+  if (!en) console.error('[translate] 两个端点均失败: zh=' + zh);
   cacheSet(transCache, zh, en);
   return en;
 }

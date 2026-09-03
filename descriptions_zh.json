@@ -262,5 +262,11 @@
  "lobehub/lobehub": "🤯 LobeHub 是您的首席代理运营商，通过招聘、调度和报告整个 AI 团队，将您的代理组织为 7×24 小时运营。",
  "bytedance/deer-flow": "一个开源的长期 SuperAgent 工具，用于研究、编码和创建。借助沙箱、内存、工具、技能、子代理和消息网关，它可以处理可能需要几分钟到几小时的不同级别的任务。",
  "Accio-org/CommerceAgentBench": "CommerceAgentBench：在真实在线服务的高保真、有状态和可复制副本中对长期代理进行基准测试",
- "harry0703/MangoDisk": "适用于 macOS 和 Windows 的安全第一磁盘清理器和磁盘空间分析器，具有重复文件查找器、大文件清理、应用程序卸载程序和启动管理器"
+ "harry0703/MangoDisk": "适用于 macOS 和 Windows 的安全第一磁盘清理器和磁盘空间分析器，具有重复文件查找器、大文件清理、应用程序卸载程序和启动管理器",
+ "vinhhien112/img2obj": "Codex插件，可将附加的对象图像转换为仅限代码、动画就绪的程序化Three.js模型。",
+ "pireel/pireel": "Capcut ChatCut的开源、替代品。任何AI代理都可以通过MCP驾驶。",
+ "baidu/Unlimited-OCR": "无限的OCR工作：迎接一次性长距离解析的时代。",
+ "lanxiuyun/Catrace": "Catrace ：每个通知都是插件",
+ "composio-community/skills": "为Composio开发人员提供可分发的代理技能",
+ "dadaguailhb/TCL": "安装要求："
 }

@@ -368,5 +368,10 @@
  "Hytidel/auto-tutor": "[](https://github.com/Hytidel/auto-tutor/stargazers)",
  "victorzhang016-code/victor-design": "AI 代理以证据为主导的设计技能：主题优先的艺术指导、形式理智门、密度工艺模型以及海报、演示文稿和产品 UI 的三个发布门。",
  "SYuan03/Skill-Anything": "任何来源（PDF、视频、网络、音频、文本）的交互式学习包，包括测验、抽认卡和间隔重复。一条命令，12 节学习指南。",
- "kangarooking/buffett-letters-skill": "用于价值投资、资本配置和行为纪律的人工智能技能包，从沃伦·巴菲特 60 多年的股东信中提炼而成。"
+ "kangarooking/buffett-letters-skill": "用于价值投资、资本配置和行为纪律的人工智能技能包，从沃伦·巴菲特 60 多年的股东信中提炼而成。",
+ "vercel-labs/portless": "用稳定的命名本地URL替换端口号。适用于人类和代理商。",
+ "OpenWhispr/openwhispr": "带有本地（ Nvidia Parakeet/Whisper ）和云模型（ BYOK ）的语音到文本听写应用程序。隐私至上，可跨平台使用。",
+ "garrytan/gstack": "使用Garry Tan确切的Claude Code设置： 23个自以为是的工具，分别担任首席执行官、设计师、工程经理、发布经理、文档工程师和QA",
+ "2akouwu/reverify": "读取二进制文件的人工智能代理的抗幻觉。该模型提出，确定性工具决定：每个主张都根据真实字节进行验证或反驳，并提供证据，并且基于事实在上下文重置后仍然存在。MCP服务器+ CLI。",
+ "AbuZar-Ansarii/Needle": "这款14 MB Agentic LLM （仙人掌针2 ）可以完全控制您的手机。"
 }

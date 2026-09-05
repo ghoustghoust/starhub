@@ -373,5 +373,11 @@
  "OpenWhispr/openwhispr": "带有本地（ Nvidia Parakeet/Whisper ）和云模型（ BYOK ）的语音到文本听写应用程序。隐私至上，可跨平台使用。",
  "garrytan/gstack": "使用Garry Tan确切的Claude Code设置： 23个自以为是的工具，分别担任首席执行官、设计师、工程经理、发布经理、文档工程师和QA",
  "2akouwu/reverify": "读取二进制文件的人工智能代理的抗幻觉。该模型提出，确定性工具决定：每个主张都根据真实字节进行验证或反驳，并提供证据，并且基于事实在上下文重置后仍然存在。MCP服务器+ CLI。",
- "AbuZar-Ansarii/Needle": "这款14 MB Agentic LLM （仙人掌针2 ）可以完全控制您的手机。"
+ "AbuZar-Ansarii/Needle": "这款14 MB Agentic LLM （仙人掌针2 ）可以完全控制您的手机。",
+ "glanceapp/glance": "一个自托管仪表板，将您的所有提要放在一个地方",
+ "foryourhealth111-pixel/Vibe-Skills": "AI 代理的智能技能路由和工作流程编排 — +21.12 pp 奖励，在带有 DeepSeekV4Flash-VE 的 SkillsBench 上为 −29.6% 代币。",
+ "cathrynlavery/diagram-design": "Claude Code、Codex 和 Pi 的 38 种编辑图表类型。独立的 HTML + SVG。没有阴影。没有美人鱼污水。",
+ "magnitudedev/magnitude": "开源推理服务器，运行适合您的硬件的最佳本地模型，插入您已使用的代理中。适用于 Pi、OpenCode、Hermes、OpenClaw、Codex、Claude Code、Oh My Pi 和 Cline。",
+ "icodesign/remote-installer": "通过互联网在真实设备上快速安装已签名的 iOS 和 Android 版本，无需等待 Testlight 或 Play Beta。",
+ "gesta-run/subpool": "面向团队的轻量级自托管 AI 订阅池。"
 }

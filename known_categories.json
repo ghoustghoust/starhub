@@ -279,5 +279,10 @@
  "dontbesilent2025/dbskill": "agent",
  "SYuan03/Skill-Anything": "video",
  "kangarooking/buffett-letters-skill": "distill",
- "shengjidaguai-china/goutoujunshi": "agent"
+ "shengjidaguai-china/goutoujunshi": "agent",
+ "glanceapp/glance": "agent",
+ "xiangyugongzuoliu/awesome-rss-feeds-list": "agent",
+ "sansan0/TrendRadar": "tools",
+ "ginobefun/BestBlogs": "coding",
+ "foryourhealth111-pixel/Vibe-Skills": "coding"
 }

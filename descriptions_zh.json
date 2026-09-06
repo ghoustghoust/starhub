@@ -379,5 +379,6 @@
  "cathrynlavery/diagram-design": "Claude Code、Codex 和 Pi 的 38 种编辑图表类型。独立的 HTML + SVG。没有阴影。没有美人鱼污水。",
  "magnitudedev/magnitude": "开源推理服务器，运行适合您的硬件的最佳本地模型，插入您已使用的代理中。适用于 Pi、OpenCode、Hermes、OpenClaw、Codex、Claude Code、Oh My Pi 和 Cline。",
  "icodesign/remote-installer": "通过互联网在真实设备上快速安装已签名的 iOS 和 Android 版本，无需等待 Testlight 或 Play Beta。",
- "gesta-run/subpool": "面向团队的轻量级自托管 AI 订阅池。"
+ "gesta-run/subpool": "面向团队的轻量级自托管 AI 订阅池。",
+ "pierrenade/short-video-generator-AI": "免费开源项目，旨在将 YouTube 视频转变成病毒式短视频。突出显示检测、字幕、翻译、画外音，全部为您的内容提供。"
 }

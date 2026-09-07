@@ -380,5 +380,10 @@
  "magnitudedev/magnitude": "开源推理服务器，运行适合您的硬件的最佳本地模型，插入您已使用的代理中。适用于 Pi、OpenCode、Hermes、OpenClaw、Codex、Claude Code、Oh My Pi 和 Cline。",
  "icodesign/remote-installer": "通过互联网在真实设备上快速安装已签名的 iOS 和 Android 版本，无需等待 Testlight 或 Play Beta。",
  "gesta-run/subpool": "面向团队的轻量级自托管 AI 订阅池。",
- "pierrenade/short-video-generator-AI": "免费开源项目，旨在将 YouTube 视频转变成病毒式短视频。突出显示检测、字幕、翻译、画外音，全部为您的内容提供。"
+ "pierrenade/short-video-generator-AI": "免费开源项目，旨在将 YouTube 视频转变成病毒式短视频。突出显示检测、字幕、翻译、画外音，全部为您的内容提供。",
+ "experientiallabs/experiential": "Experiential 是适用于 BYOK、自托管和 1000 多个市场模型的开源、零加价网关。它会从您的流量中学习，以降低成本、推荐更好的模型并训练您拥有的专用模型。",
+ "rtk-ai/rtk": "CLI 代理可将常见开发命令的 LLM 令牌消耗减少 60-90%。单个 Rust 二进制文件，零依赖",
+ "WorldFlowAI/everything-claude-code": "Claude Code 工具包 - 用于高效 AI 辅助开发的代理、命令、技能、规则和挂钩",
+ "coreyhaines31/marketingskills": "Claude Code 和 AI 代理的营销技巧。 CRO、文案、SEO、分析和增长工程。",
+ "ahujasid/blender-mcp": "用于通过您选择的任何 LLM 控制 Blender 3D 的社区插件"
 }

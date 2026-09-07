@@ -395,5 +395,9 @@
  "Sven233333/Atlas-geoguessr-bot": "GeoGuessr 作弊、黑客和自动猜测机器人。 ATLAS 会读取屏幕上的街景并在大约三秒钟内命名该位置。在真实游戏（111 个国家/地区）中，国家/地区准确度约为 81%。 Windows、Steam、Chrome、Firefox、macOS、iPhone 和 Android 仅需一个许可证密钥。",
  "wzhudev/reverse-linear-sync-engine": "Linear 同步引擎的逆向工程。得到 Linear 首席技术官的认可。",
  "hipcityreg/situation-monitor": "用于监控全球新闻、市场和地缘政治事件的实时仪表板",
- "truespar/paddock": "用于 NVIDIA GPU 上开放模型的本机 Rust 推理服务器。 OpenAI 和 Anthropic 兼容的 API、GGUF + safetensors、FP8/NVFP4/MXFP4/Q8/Q4、内置 Studio"
+ "truespar/paddock": "用于 NVIDIA GPU 上开放模型的本机 Rust 推理服务器。 OpenAI 和 Anthropic 兼容的 API、GGUF + safetensors、FP8/NVFP4/MXFP4/Q8/Q4、内置 Studio",
+ "agentscope-ai/agentscope": "构建和运行您可以看到、理解和信任的代理。",
+ "MemTensor/MemOS": "适用于LLM和AI代理的自我演进内存操作系统：超持久内存、混合检索和交叉任务技能重用，节省35.24%的代币并支持DeepSeek线束。",
+ "vxcontrol/pentagi": "完全自主的AI Agents系统，能够执行复杂的渗透测试任务",
+ "ConardLi/garden-skills": "ConardLi的开源Skills系列，包括网页设计、知识检索、图像生成等。"
 }

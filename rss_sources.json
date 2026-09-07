@@ -5740,26 +5740,5 @@
   "cat": "cn_tech",
   "color": "#5c6bc0",
   "url": "https://www.yystv.cn/rss/feed"
- },
- {
-  "key": "hn_openclaw_9",
-  "name": "Hacker News OpenClaw",
-  "cat": "ai",
-  "color": "#f57c00",
-  "url": "https://hnrss.org/newest?q=OpenClaw"
- },
- {
-  "key": "openclaw_rel_13",
-  "name": "OpenClaw Releases",
-  "cat": "ai",
-  "color": "#7e57c2",
-  "url": "https://github.com/openclaw/openclaw/releases.atom"
- },
- {
-  "key": "openclaw_commits_14",
-  "name": "OpenClaw Commits",
-  "cat": "ai",
-  "color": "#9575cd",
-  "url": "https://github.com/openclaw/openclaw/commits/main.atom"
  }
 ]

@@ -12,6 +12,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 from datetime import datetime, timedelta, timezone
 
 USER = "ghoustghoust"
@@ -51,8 +52,17 @@ def has_cn(s):
     return bool(re.search(r"[\u4e00-\u9fff]", s or ""))
 
 
+# 翻译熔断：连续 5 次全端点失败后暂停翻译请求 5 分钟（避免上游故障时的请求风暴与构建拖长）
+_TRANS_FAIL_STREAK = 0
+_TRANS_BLOCK_UNTIL = 0.0
+
+
 def translate_to_zh(text):
-    """把英文简介翻译成中文；全部端点失败返回 None（保留原文）。"""
+    """把英文简介翻译成中文；全部端点失败返回 None（保留原文）。
+    熔断保护：连续多次全端点失败后暂停请求，期间直接返回 None（调用方保留原文）。"""
+    global _TRANS_FAIL_STREAK, _TRANS_BLOCK_UNTIL
+    if time.time() < _TRANS_BLOCK_UNTIL:
+        return None
     if not text:
         return None
     # 端点 1：Google 翻译非官方接口
@@ -66,6 +76,7 @@ def translate_to_zh(text):
             data = json.loads(r.read().decode("utf-8"))
         result = "".join(seg[0] for seg in data[0] if seg[0]).strip()
         if result and has_cn(result):
+            _TRANS_FAIL_STREAK = 0
             return result
     except Exception:  # noqa: BLE001
         pass
@@ -80,9 +91,14 @@ def translate_to_zh(text):
             data = json.loads(r.read().decode("utf-8"))
         result = (data.get("responseData", {}).get("translatedText") or "").strip()
         if result and has_cn(result) and "MYMEMORY WARNING" not in result:
+            _TRANS_FAIL_STREAK = 0
             return result
     except Exception:  # noqa: BLE001
         pass
+    _TRANS_FAIL_STREAK += 1
+    if _TRANS_FAIL_STREAK >= 5:
+        _TRANS_BLOCK_UNTIL = time.time() + 300
+        print("[翻译熔断] 连续 %d 次全端点失败，暂停翻译请求 5 分钟" % _TRANS_FAIL_STREAK, file=sys.stderr)
     return None
 
 
@@ -155,6 +171,46 @@ AI_MIN_STARS = 500       # AI 项目池最小星标
 NEW_MIN_STARS = 50       # 新秀榜最小星标
 TREND_TOP = 20           # 每榜展示数量
 TREND_MAX_STARS = 50000  # 涨星榜排除超过此星标的巨头项目（避免 tensorflow/pytorch 霸榜）
+
+BUILD_CONFIG_FILE = "build_config.json"
+
+
+def load_build_config():
+    """读取 build_config.json 覆盖榜单参数；文件缺失/损坏/字段非法时逐项回退内置默认值（零回归）。"""
+    defaults = {
+        "trend_top": TREND_TOP,
+        "ai_min_stars": AI_MIN_STARS,
+        "new_min_stars": NEW_MIN_STARS,
+        "trend_max_stars": TREND_MAX_STARS,
+        "ai_topics": list(AI_TOPICS),
+        "ai_summary_enabled": True,
+    }
+    try:
+        cfg = json.load(open(BUILD_CONFIG_FILE, encoding="utf-8"))
+        if not isinstance(cfg, dict):
+            cfg = {}
+    except FileNotFoundError:
+        cfg = {}
+    except Exception as e:  # noqa: BLE001
+        print("[配置] %s 解析失败（%s），使用内置默认值" % (BUILD_CONFIG_FILE, e), file=sys.stderr)
+        cfg = {}
+    merged = {}
+    for key, dv in defaults.items():
+        if key in cfg:
+            v = cfg[key]
+            if key == "ai_topics":
+                ok = isinstance(v, list) and len(v) > 0 and all(isinstance(x, str) and x.strip() for x in v)
+            elif key == "ai_summary_enabled":
+                ok = isinstance(v, bool)
+            else:
+                ok = isinstance(v, int) and not isinstance(v, bool) and v > 0
+            if ok:
+                merged[key] = v
+                print("[配置] %s = %r" % (key, v))
+                continue
+            print("[配置] 字段 %s 非法，回退默认值" % key, file=sys.stderr)
+        merged[key] = dv
+    return merged
 
 
 def _api_headers(token):
@@ -436,6 +492,54 @@ def build_trending(token, desc_zh):
             "source": "trending" if trend_rows else "snapshot"}
 
 
+def generate_ai_summary(rising_top10):
+    """调用 DeepSeek API 生成 AI 态势一句话摘要。失败返回 None（静默降级）。"""
+    api_key = os.environ.get("DEEPSEEK_API_KEY")
+    if not api_key:
+        return None
+    if not rising_top10:
+        return None
+    lines = []
+    for p in rising_top10[:10]:
+        name = p.get("full_name", "")
+        delta = p.get("delta")
+        if delta is not None:
+            lines.append("%s (+%d)" % (name, delta))
+        else:
+            lines.append(name)
+    prompt = "用一句话（30字以内）概括今日 GitHub AI/开源生态态势，基于以下涨星项目：" + "、".join(lines)
+    payload = json.dumps({
+        "model": "deepseek-chat",
+        "messages": [
+            {"role": "system", "content": "你是一个简洁的 AI 开源态势分析师，回答不超过30字。"},
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 100,
+        "temperature": 0.7,
+    }).encode("utf-8")
+    try:
+        req = urllib.request.Request(
+            "https://api.deepseek.com/v1/chat/completions",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + api_key,
+                "User-Agent": "starhub-auto-update",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        if content and len(content) <= 100:
+            print("[AI摘要] %s" % content)
+            return content
+    except urllib.error.HTTPError as e:
+        print("[AI摘要] API 调用失败: HTTP %s" % e.code, file=sys.stderr)
+    except Exception as e:
+        print("[AI摘要] 失败: %s" % e, file=sys.stderr)
+    return None
+
+
 def _today_cn():
     """北京时间今天的日期字符串 YYYY-MM-DD。"""
     return datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
@@ -567,7 +671,15 @@ def _safe_json(obj):
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c")
 
 
-def main():
+def main(mode="full"):
+    global AI_TOPICS, AI_MIN_STARS, NEW_MIN_STARS, TREND_TOP, TREND_MAX_STARS
+    cfg = load_build_config()
+    AI_TOPICS = cfg["ai_topics"]
+    AI_MIN_STARS = cfg["ai_min_stars"]
+    NEW_MIN_STARS = cfg["new_min_stars"]
+    TREND_TOP = cfg["trend_top"]
+    TREND_MAX_STARS = cfg["trend_max_stars"]
+
     known = {}
     try:
         known = json.load(open("known_categories.json", encoding="utf-8"))
@@ -634,10 +746,23 @@ def main():
         })
 
     trending = build_trending(token, desc_zh)
+
+    # AI 态势一句话：构建时生成，注入涨星榜区域
+    ai_summary = ""
+    if cfg.get("ai_summary_enabled", True):
+        ai_summary = generate_ai_summary(trending.get("rising", [])[:10]) or ""
+
     feed = fetch_following_events(token)
 
     template = open("template.html", encoding="utf-8").read()
     updated = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
+    # AI 摘要占位符替换：非空则渲染为带样式的摘要条，空则不显示
+    if ai_summary:
+        ai_summary_html = ('<div class="ai-summary">'
+                           '<span class="ai-summary-icon">AI</span>'
+                           '<span class="ai-summary-text">' + ai_summary + '</span></div>')
+    else:
+        ai_summary_html = ""
     html = (template
             .replace("__DATA__", _safe_json(out))
             .replace("__CATS__", _safe_json(CATS))
@@ -645,7 +770,8 @@ def main():
             .replace("__FAVS__", _safe_json(DEFAULT_FAVS))
             .replace("__TRENDING__", _safe_json(trending))
             .replace("__FEED__", _safe_json(feed))
-            .replace("__UPDATED__", updated))
+            .replace("__UPDATED__", updated)
+            .replace("__AI_SUMMARY__", ai_summary_html))
 
     open("index.html", "w", encoding="utf-8").write(html)
     json.dump(known, open("known_categories.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
@@ -661,7 +787,7 @@ def main():
     # RSS 聚合页：生成 rss-aggregator.html（独立页面）
     try:
         import build_rss_aggregator
-        build_rss_aggregator.main()
+        build_rss_aggregator.main(mode=mode)
     except Exception as e:
         print("[RSS聚合] 生成失败: %s" % e, file=sys.stderr)
 
@@ -669,4 +795,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    mode = sys.argv[1] if len(sys.argv) > 1 else "full"
+    main(mode)

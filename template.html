@@ -421,6 +421,13 @@ mark{background:var(--mark);color:inherit;border-radius:1px;padding:0 1px}
   color:var(--brand);font-size:12px;font-weight:600;font-family:var(--font-mono);
 }
 .cover-card .open:hover{text-decoration:underline;text-underline-offset:3px}
+.copy-btn{
+  display:inline-flex;align-items:center;gap:4px;
+  color:var(--muted);font-size:12px;font-weight:600;font-family:var(--font-mono);
+  background:none;border:none;cursor:pointer;padding:2px 2px;border-radius:4px;white-space:nowrap;
+}
+.copy-btn .icon{width:13px;height:13px}
+.copy-btn:hover{color:var(--brand)}
 .card.cover-card .cat-tag{border-radius:var(--chip-pill);height:22px;padding:0 9px}
 /* 悬停：仅精确指针设备（atlasnote 同款门控 + accent 混色描边） */
 @media (hover:hover) and (pointer:fine){
@@ -467,6 +474,9 @@ mark{background:var(--mark);color:inherit;border-radius:1px;padding:0 1px}
 .trending h2,.main-title,.feed h2{display:flex;align-items:center;gap:8px;margin:0 0 2px;font-size:14px;font-weight:700;font-family:var(--font-display);letter-spacing:.02em}
 .main-title{margin:0 0 14px}
 .trending .trend-sub{font-family:var(--font-mono);font-size:10.5px;color:var(--faint);margin-bottom:12px}
+.ai-summary{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:var(--radius);background:var(--hover);margin-bottom:12px;font-size:12px;line-height:1.5}
+.ai-summary-icon{flex:none;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;background:var(--accent-solid);color:var(--on-strong);font-size:10px;font-weight:700;font-family:var(--font-mono)}
+.ai-summary-text{flex:1;color:var(--text);font-family:var(--font-display);letter-spacing:.01em}
 .trend-tabs{display:flex;gap:0;margin-bottom:12px;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
 .trend-tab{
   flex:1;height:30px;border:0;border-left:1px solid var(--border);border-radius:0;background:var(--card);
@@ -508,7 +518,7 @@ mark{background:var(--mark);color:inherit;border-radius:1px;padding:0 1px}
   display:inline-flex;align-items:center;gap:2px;background:var(--upd-bg);color:var(--upd-color);
   border-radius:2px;padding:1px 7px;font-size:11px;font-weight:700;line-height:17px;white-space:nowrap;font-family:var(--font-mono)
 }
-.trend-item .delta.neg,.trend-item .delta.new{background:var(--hover);color:var(--muted)}
+.trend-item .delta.neg,.trend-item .delta.new,.trend-item .delta.flat{background:var(--hover);color:var(--muted)}
 .trending[data-tab="new"] .reason{color:var(--t-new)}
 .trend-item .lg{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);flex:none}
 .trend-item .lg .c{width:8px;height:8px;border-radius:0;transform:rotate(45deg);flex:none}
@@ -586,6 +596,12 @@ mark{background:var(--mark);color:inherit;border-radius:1px;padding:0 1px}
 .modal .m-tabs .trend-tab{border-radius:var(--radius) var(--radius) 0 0;border:1px solid transparent;border-bottom:0;background:transparent;height:32px}
 .modal .m-tabs .trend-tab:hover{background:var(--hover)}
 .modal .m-tabs .trend-tab.on{border-color:var(--border) var(--border) var(--card)}
+/* 修复：modal 内激活态被 .modal .m-tabs .trend-tab 的 transparent 背景覆盖，
+   导致彩色背景丢失、前景色（为彩底设计的 fg）在明暗模式下均不可见 */
+.modal .m-tabs .trend-tab[data-tab="rising"].on{background:var(--t-rising);border-color:var(--t-rising) var(--t-rising) var(--t-rising);color:var(--t-rising-fg)}
+.modal .m-tabs .trend-tab[data-tab="new"].on{background:var(--t-new);border-color:var(--t-new) var(--t-new) var(--t-new);color:var(--t-new-fg)}
+.modal .m-tabs .trend-tab[data-tab="total"].on{background:var(--t-total);border-color:var(--t-total) var(--t-total) var(--t-total);color:var(--on-strong)}
+.modal .m-tabs .trend-tab[data-sort].on{background:var(--accent-solid);border-color:var(--accent-solid) var(--accent-solid) var(--accent-solid);color:var(--on-strong)}
 .modal .m-list{flex:1;min-height:0;overflow-y:auto;padding:6px 18px 16px;scrollbar-width:thin;scrollbar-color:var(--track) transparent}
 .modal .m-list .trend-item{padding:10px 4px}
 .modal .m-list .trend-item:hover{background:var(--hover)}
@@ -755,6 +771,7 @@ mark{background:var(--mark);color:inherit;border-radius:1px;padding:0 1px}
           <a href="https://notes.kamacoder.com/" target="_blank" rel="noopener">KamaCoder<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
           <a href="https://huggingface.co/learn/agents-course/unit0/introduction" target="_blank" rel="noopener">Agents Course<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
           <a href="https://www.runoob.com/vibe-coding/skills-agent.html" target="_blank" rel="noopener">Vibe Coding<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+          <a href="https://agihunt.info/" target="_blank" rel="noopener">AGI Hunt<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
         </div>
       </div>
       <div class="nav-drop">
@@ -886,6 +903,7 @@ mark{background:var(--mark);color:inherit;border-radius:1px;padding:0 1px}
     <div class="trending on">
       <h2>每日 AI 排行榜</h2>
       <div class="trend-sub" id="trendUpdated"></div>
+      __AI_SUMMARY__
       <div class="trend-tabs" id="trendTabs">
         <button class="trend-tab on" data-tab="rising">涨星榜</button>
         <button class="trend-tab" data-tab="total">总星标榜</button>
@@ -987,7 +1005,8 @@ const $ = s => document.querySelector(s);
 const icon = {
   star: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 2l2.9 6.3 6.9.6-5.2 4.6 1.6 6.8L12 16.9 5.8 20.3l1.6-6.8L2.2 8.9l6.9-.6L12 2z"/></svg>',
   starFilled: '<svg class="icon filled" viewBox="0 0 24 24"><path d="M12 2l2.9 6.3 6.9.6-5.2 4.6 1.6 6.8L12 16.9 5.8 20.3l1.6-6.8L2.2 8.9l6.9-.6L12 2z"/></svg>',
-  link: '<svg class="icon" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>'
+  link: '<svg class="icon" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
+  copy: '<svg class="icon" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
 };
 
 // ---- 主题 ----
@@ -1187,6 +1206,7 @@ function buildCard(d, isFav){
       '<div class="foot-row">' +
         '<a class="cat-tag" style="color:'+catColorVal+';background:'+catColorVal+'1f" href="javascript:void 0" data-act="cattag" data-cat="'+d.category+'">' +
           '<span class="dot"></span>'+d.categoryLabel+'</a>' +
+        '<button class="copy-btn" data-act="copy" title="复制名称与链接">'+icon.copy+'复制</button>' +
         '<a class="open" href="'+d.html_url+'" target="_blank" rel="noopener">'+icon.link+'打开</a>' +
       '</div>' +
     '</div>';
@@ -1208,6 +1228,7 @@ function buildRow(d, isFav){
       (d.language ? '<span class="lg"><span class="c" style="background:'+(LANG_COLORS[d.language]||'#8b949e')+'"></span>'+d.language+'</span>' : '') +
       '<span class="st">'+icon.starFilled+''+fmtStars(d.stars)+'</span>' +
       '<span class="cat-tag" style="color:'+catColorVal+';background:'+catColorVal+'1f"><span class="dot"></span>'+d.categoryLabel+'</span>' +
+      '<button class="copy-btn" data-act="copy" title="复制名称与链接">'+icon.copy+'复制</button>' +
       '<a class="st" style="color:var(--accent);font-weight:600" href="'+d.html_url+'" target="_blank" rel="noopener">'+icon.link+'打开</a>' +
     '</div>';
   return div;
@@ -1441,7 +1462,9 @@ function buildTrendItem(p, i, full){
     ? (hasDelta
         ? (p.delta > 0
             ? '<span class="delta">▲ +' + p.delta + '</span>'
-            : '<span class="delta' + (p.delta < 0 ? ' neg':'') + '">' + p.delta + '</span>')
+            : (p.delta === 0
+                ? '<span class="delta flat">➖</span>'
+                : '<span class="delta neg">▼ ' + Math.abs(p.delta) + '</span>'))
         : '<span class="delta new">新</span>')
     : '';
   const rank = '<span class="rank">' + (i+1) + '</span>';
@@ -1628,6 +1651,29 @@ function updateAihotMore(){
   if(loadMore) loadMore.style.display = (aihotCursor && aihotFilter === 'all') ? '' : 'none';
 }
 
+// 检测标题是否主要为非中文（需要翻译）
+function _needsTranslation(t){ if(!t) return false; const cjk=(t.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g)||[]).length; return cjk < t.replace(/[\s\d\p{P}]/gu,'').length * 0.3; }
+// 批量翻译 AI 动态流英文标题（Google Translate GTX 端点；5s 超时兜底，防 GFW 挂死）
+function _translateAihotItems(){
+  const toTranslate = aihotItems.filter(it => !it._zh && _needsTranslation(it.title));
+  if(!toTranslate.length) return;
+  const texts = toTranslate.map(it => it.title);
+  const chunks = []; for(let i=0;i<texts.length;i+=10) chunks.push(texts.slice(i,i+10));
+  let done = 0;
+  chunks.forEach(chunk => {
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    const tmr = ctrl ? setTimeout(() => ctrl.abort(), 5000) : null;
+    const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=' + encodeURIComponent(chunk.join('\n'));
+    fetch(url, ctrl ? { signal: ctrl.signal } : {}).then(r => r.json()).then(j => {
+      if(tmr) clearTimeout(tmr);
+      const translated = []; try{ j[0].forEach(s => translated.push(s[0])); }catch(e){}
+      const offset = chunks.indexOf(chunk) * 10;
+      translated.forEach((zh, idx) => { if(zh && toTranslate[offset+idx]) toTranslate[offset+idx]._zh = zh; });
+      if(++done >= chunks.length) renderAihot();
+    }).catch(() => { if(tmr) clearTimeout(tmr); if(++done >= chunks.length) renderAihot(); });
+  });
+}
+
 function renderAihot(){
   const list = $('#aihotList');
   renderAihotFilter();
@@ -1648,7 +1694,7 @@ function renderAihot(){
     row.innerHTML =
       '<span class="cat" style="color:'+cat[1]+';background:'+cat[1]+'1a">'+escHtml(cat[0])+'</span>' +
       '<div class="body">' +
-        '<a class="t" href="'+escHtml(url)+'" target="_blank" rel="noopener" title="'+escHtml(it.title||'')+'">'+escHtml(it.title||'')+'</a>' +
+        '<a class="t" href="'+escHtml(url)+'" target="_blank" rel="noopener" title="'+escHtml(it.title||'')+'">'+escHtml(it._zh || it.title||'')+'</a>' +
         '<span class="meta">'+escHtml(src)+(src && tmStr ? ' · ' : '')+escHtml(tmStr)+(it.selected ? ' · ★ 精选' : '')+'</span>' +
       '</div>';
     list.appendChild(row);
@@ -1672,6 +1718,7 @@ async function loadAihotMore(){
     const seen = new Set(aihotItems.map(x => normTitle(x.title)));
     (j.items || []).forEach(it => { const k = normTitle(it.title); if(!seen.has(k)){ seen.add(k); aihotItems.push(it); } });
     renderAihot();
+    _translateAihotItems();
   }catch(e){
     toast('加载更多失败，请稍后重试');
   }finally{
@@ -1687,13 +1734,25 @@ async function loadAihot(){
   $('#aihotUpdated').textContent = '加载中…';
   list.innerHTML = '';
   try{
-    // ① 主源 AIHOT 先拉取、先渲染（通常 1-2s），不让新闻源拖慢首屏
-    const aiRes = await fetch(AIHOT_API).then(r => r.ok ? r.json() : null).catch(() => null);
+    // ① 主源 AIHOT 先拉取、先渲染；超时 10s 放弃（移动端弱网兜底）
+    const aiCtrl = typeof AbortController === 'function' ? new AbortController() : null;
+    const aiTimer = aiCtrl ? setTimeout(() => aiCtrl.abort(), 10000) : null;
+    const aiRes = await fetch(AIHOT_API, aiCtrl ? { signal: aiCtrl.signal } : {})
+      .then(r => r.ok ? r.json() : null)
+      .catch(() => null);
+    if(aiTimer) clearTimeout(aiTimer);
     let items = (aiRes && aiRes.items) ? aiRes.items.slice() : [];
-    if(!items.length) throw new Error('empty');
+    // 空数据友好提示（凌晨/维护期间 AIHOT 可能返回 0 条，不应视为错误）
+    if(!items.length){
+      aihotLoaded = true;
+      $('#aihotUpdated').textContent = '数据源：AIHOT 公开池';
+      list.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:16px 0">近 24 小时暂无新动态</div>';
+      return;
+    }
     aihotItems = items;
     aihotCursor = (aiRes.page && aiRes.page.hasMore) ? (aiRes.page.nextCursor || '') : '';
     renderAihot();
+    _translateAihotItems();
     $('#aihotUpdated').textContent = '数据源：AIHOT 公开池 · 近 24 小时 · 更新于 ' + new Date().toLocaleTimeString('zh-CN', {hour12:false});
     aihotLoaded = true;
 
@@ -1707,12 +1766,13 @@ async function loadAihot(){
       newsItems.forEach(n => { const k = normTitle(n.title); if(!seen.has(k)){ seen.add(k); aihotItems.push(n); } });
       aihotItems.sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''));
       renderAihot();
+      _translateAihotItems();
       const extraSrcs = [...new Set(newsItems.map(n => n.source.name))];
       $('#aihotUpdated').textContent = '数据源：AIHOT 公开池 / ' + extraSrcs.join(' / ') + ' · 近 24 小时 · 更新于 ' + new Date().toLocaleTimeString('zh-CN', {hour12:false});
     }
   }catch(e){
     $('#aihotUpdated').textContent = '数据源：AIHOT 公开池';
-    list.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:16px 0">动态流加载失败，稍后重试</div>';
+    list.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:16px 0">动态流加载失败，请检查网络后点击 AI 动态标签重试</div>';
   }finally{
     aihotLoading = false;
   }
@@ -1729,7 +1789,7 @@ function startFeedPolling(){
   document.addEventListener('visibilitychange', () => {
     if(document.hidden) return;
     refreshFeed();
-    if(state.sideTab === 'aihot') loadAihot();
+    if(state.sideTab === 'aihot'){ aihotLoaded = false; loadAihot(); }
   });
 }
 
@@ -1806,6 +1866,10 @@ function bindEvents(){
     if(act === 'fav') toggleFav(fn);
     if(act === 'cattag'){ state.cat = el.dataset.cat; renderCats(); renderList(); }
     if(act === 'expand'){ const d = card ? card.querySelector('.desc') : null; if(!d) return; const expanded = d.classList.toggle('expand'); el.textContent = expanded ? '收起' : '展开'; }
+    if(act === 'copy'){
+      const nameA = card ? card.querySelector('a.name') : null;
+      if(fn && nameA && nameA.href) copyRepoInfo(fn, nameA.href);
+    }
   });
 
   window.addEventListener('resize', updateCatsMask);
@@ -1879,7 +1943,17 @@ function bindEvents(){
     const tag = (e.target.tagName || '').toLowerCase();
     const typing = tag === 'input' || tag === 'textarea' || e.target.isContentEditable;
     if(e.key === '/' && !typing){
+      if($('#searchModal').classList.contains('open')) return; // 搜索工作台打开时不抢焦点
       e.preventDefault(); $('#q').focus();
+    }
+    if((e.key === 'd' || e.key === 'D') && !typing && !e.ctrlKey && !e.metaKey && !e.altKey){
+      if($('#searchModal').classList.contains('open')) return;
+      $('#btnTheme').click(); // 复用现有切换逻辑（含 localStorage 与重渲染）
+    }
+    if(e.key === '?' && !typing && !e.ctrlKey && !e.metaKey && !e.altKey){
+      if($('#searchModal').classList.contains('open')) return;
+      e.preventDefault();
+      toast('快捷键：/ 聚焦搜索 · d 切换主题 · ? 本说明 · Esc 关闭弹层');
     }
     if(e.key === 'Escape'){
       if($('#trendModal').classList.contains('open')){ closeTrendModal(); return; }
@@ -1941,6 +2015,26 @@ function toast(msg){
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=>t.classList.remove('show'), 2000);
+}
+
+// ---- 复制名称与链接（clipboard API 优先，execCommand 降级） ----
+function copyRepoInfo(fn, url){
+  const text = fn + ' ' + url;
+  const done = () => toast('已复制：' + fn);
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(() => copyFallback(text, done));
+  } else copyFallback(text, done);
+}
+function copyFallback(text, done){
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try{ if(document.execCommand('copy')) done(); else toast('复制失败，请手动复制'); }
+  catch(e){ toast('复制失败，请手动复制'); }
+  document.body.removeChild(ta);
 }
 
 // ---- init ----

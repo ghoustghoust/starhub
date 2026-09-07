@@ -4,6 +4,9 @@ __pycache__/
 !.vercel/project.json
 .vercel-tmp/
 .deploy-tmp/
+# fork 个性化：上游作者的本地工作区/调试文件不纳入版本控制
 .workbuddy/
 .qoder/
 *.png
+# 构建期缓存（TTL 30 分钟，跨 run 基本全过期；仅本地构建加速用，不进 git/Vercel）
+rss_cache.json

@@ -98,13 +98,14 @@ def _parse_rss_date(s):
 
 def _strip_html(text):
     """从 HTML 片段中提取纯文本。"""
-    text = re.sub(r"<[^>]+>", "", text)
     text = re.sub(r"&amp;", "&", text)
     text = re.sub(r"&lt;", "<", text)
     text = re.sub(r"&gt;", ">", text)
     text = re.sub(r"&quot;", '"', text)
     text = re.sub(r"&#39;", "'", text)
     text = re.sub(r"&nbsp;", " ", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"<[^>]*$", "", text)
     return text.strip()
 
 

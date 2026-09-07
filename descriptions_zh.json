@@ -385,5 +385,15 @@
  "rtk-ai/rtk": "CLI 代理可将常见开发命令的 LLM 令牌消耗减少 60-90%。单个 Rust 二进制文件，零依赖",
  "WorldFlowAI/everything-claude-code": "Claude Code 工具包 - 用于高效 AI 辅助开发的代理、命令、技能、规则和挂钩",
  "coreyhaines31/marketingskills": "Claude Code 和 AI 代理的营销技巧。 CRO、文案、SEO、分析和增长工程。",
- "ahujasid/blender-mcp": "用于通过您选择的任何 LLM 控制 Blender 3D 的社区插件"
+ "ahujasid/blender-mcp": "用于通过您选择的任何 LLM 控制 Blender 3D 的社区插件",
+ "xintaofei/codeg": "协作式多代理 AI 编码工作区：聚合来自 Claude Code、Codex、OpenCode、Pi、Grok Build 等桌面应用程序、自托管服务器或 Docker 的会话。",
+ "TokenRhythm/opensquilla": "OpenSquilla — 具有相同预算、更高智能密度的代币高效 AI 代理",
+ "deusyu/translate-book": "Codex、Claude Code 和 OpenClaw 的代理技能，可使用并行子代理将整本书 (PDF/DOCX/EPUB) 翻译成任何语言。",
+ "NVIDIA/SkillSpector": "AI 代理技能的安全扫描器。在安装之前检测 Claude Code、Codex 和 MCP 技能中的漏洞、恶意模式、安全风险、提示注入、数据泄露和供应链风险。",
+ "Seanium/FeedMe": "😋 由人工智能驱动的轻量级 RSS 阅读器。支持：GitHub 页面 |韦尔塞尔 |阿里云ESA页面|码头工人",
+ "xai-org/x-algorithm": "为 X 上的 For You feed 提供支持的算法",
+ "Sven233333/Atlas-geoguessr-bot": "GeoGuessr 作弊、黑客和自动猜测机器人。 ATLAS 会读取屏幕上的街景并在大约三秒钟内命名该位置。在真实游戏（111 个国家/地区）中，国家/地区准确度约为 81%。 Windows、Steam、Chrome、Firefox、macOS、iPhone 和 Android 仅需一个许可证密钥。",
+ "wzhudev/reverse-linear-sync-engine": "Linear 同步引擎的逆向工程。得到 Linear 首席技术官的认可。",
+ "hipcityreg/situation-monitor": "用于监控全球新闻、市场和地缘政治事件的实时仪表板",
+ "truespar/paddock": "用于 NVIDIA GPU 上开放模型的本机 Rust 推理服务器。 OpenAI 和 Anthropic 兼容的 API、GGUF + safetensors、FP8/NVFP4/MXFP4/Q8/Q4、内置 Studio"
 }

@@ -286,5 +286,21 @@
  "ginobefun/BestBlogs": "coding",
  "foryourhealth111-pixel/Vibe-Skills": "coding",
  "larashero3-dotcom/writing-dna-skill": "distill",
- "LPY0925/vibe-coding-radar": "coding"
+ "LPY0925/vibe-coding-radar": "coding",
+ "Kwei168/werss": "content",
+ "MStarlogo/awesome-spider": "tools",
+ "THU-MAIC/OpenMAIC": "learning",
+ "xintaofei/codeg": "coding",
+ "Natsummerance/readMD": "content",
+ "debpalash/VoiceStudio": "video",
+ "langchain-ai/langchain": "assistant",
+ "TokenRhythm/opensquilla": "learning",
+ "JCodesMore/ai-website-cloner-template": "coding",
+ "deusyu/translate-book": "learning",
+ "helloianneo/ian-xiaohei-illustrations": "agent",
+ "HandsOnLLM/Hands-On-Large-Language-Models": "learning",
+ "Seanium/FeedMe": "agent",
+ "xai-org/x-algorithm": "agent",
+ "wzhudev/reverse-linear-sync-engine": "agent",
+ "hipcityreg/situation-monitor": "agent"
 }

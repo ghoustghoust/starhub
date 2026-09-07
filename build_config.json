@@ -1,0 +1,7 @@
+{
+  "trend_top": 20,
+  "ai_min_stars": 500,
+  "new_min_stars": 50,
+  "trend_max_stars": 50000,
+  "ai_topics": ["ai", "machine-learning", "deep-learning", "llm", "gpt", "agent"]
+}

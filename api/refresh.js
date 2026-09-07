@@ -53,12 +53,14 @@ export default async function handler(req, res) {
       }
     );
     if (r.status === 204) {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'refresh', origin, key_valid: keyValid, status: 204, ok: true }));
       res.status(200).json({ ok: true });
     } else {
-      // 不向上游调用者回显 GitHub 错误细节（防信息泄露），细节由 Vercel 日志记录
+      console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'refresh', origin, key_valid: keyValid, status: r.status, ok: false, error: 'GitHub API 调用失败' }));
       res.status(r.status).json({ error: 'GitHub API 调用失败' });
     }
   } catch (e) {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'refresh', origin, key_valid: keyValid, status: 502, ok: false, error: e.message }));
     res.status(502).json({ error: '上游服务不可用' });
   }
 }

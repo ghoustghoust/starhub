@@ -399,5 +399,14 @@
  "agentscope-ai/agentscope": "构建和运行您可以看到、理解和信任的代理。",
  "MemTensor/MemOS": "适用于LLM和AI代理的自我演进内存操作系统：超持久内存、混合检索和交叉任务技能重用，节省35.24%的代币并支持DeepSeek线束。",
  "vxcontrol/pentagi": "完全自主的AI Agents系统，能够执行复杂的渗透测试任务",
- "ConardLi/garden-skills": "ConardLi的开源Skills系列，包括网页设计、知识检索、图像生成等。"
+ "ConardLi/garden-skills": "ConardLi的开源Skills系列，包括网页设计、知识检索、图像生成等。",
+ "k2-fsa/OmniVoice": "600多种语言的高质量语音克隆TTS",
+ "The-Swarm-Corporation/AutoHedge": "在几分钟内建立您的自主对冲基金。AutoHedge利用群体智能和人工智能代理的强大功能，实现市场分析、风险管理和交易的自动化。",
+ "Anil-matcha/Open-Generative-AI": "人工智能视频平台的无限制开源替代品—免费的人工智能图像和视频生成工作室，拥有600多名模特（ Flux、Midjourney、Kling、Sora、Veo ）。无内容过滤器。自托管，麻省理工学院许可。",
+ "jo-inc/camofox-browser": "适用于AI代理的隐形无头浏览器—绕过Cloudflare、机器人检测和反抓取。代替偶人/剧作家。",
+ "lightpanda-io/browser": "Lightpanda ：专为人工智能和自动化设计的无头浏览器",
+ "Nutlope/logocreator": "由Flux on Together AI提供支持的免费+ OSS徽标生成器",
+ "openai/skills": "法典技能目录",
+ "mksglu/context-mode": "AI 编码代理的上下文窗口优化。沙箱工具输出（减少 98%）、保留会话内存，并通过 MCP + 挂钩强制跨 17 个平台进行路由。",
+ "nashsu/llm_wiki": "LLM Wiki 是一个跨平台桌面应用程序，可自动将您的文档转变为有组织的、相互关联的知识库。法学硕士不是传统的 RAG（每次从头开始检索并回答），而是从您的来源逐步构建和维护持久的 wiki。"
 }

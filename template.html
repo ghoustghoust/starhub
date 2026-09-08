@@ -2081,7 +2081,7 @@ document.addEventListener('error', e => {
 renderList();
 renderTrending();
 renderFeed();
-refreshFeed(); // 打开页面即拉取实时关注动态（静默失败，静态数据兑底）
+refreshFeed(); // 打开页面即拉取实时关注动态（静默失败，静态数据兜底）
 startFeedPolling(); // 每 30 分钟轮询（页面不可见时暂停）
 switchSideTab(state.sideTab);
 bindEvents();

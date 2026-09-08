@@ -49,7 +49,9 @@ RSS_HISTORY_HOURS = 72
 _rss_history = {}  # {link: {source, source_key, cat, color, title, title_zh, summary, summary_zh, pub_date, time_str}}
 
 # ── 翻译统计 
-_TRANS_STATS = {"google": 0, "bing": 0, "mymemory": 0, "dict": 0, "skip": 0, "fail": 0, "cache_hit": 0}
+_TRANS_STATS = {"agnes": 0, "google": 0, "bing": 0, "mymemory": 0, "dict": 0, "skip": 0, "fail": 0, "cache_hit": 0}
+# GA 免费翻译端点已被数据中心 IP 封锁（429/timeout），AGNES_API_KEY 存在时首选 Agnes AI。
+_AGNES_KEY = os.environ.get("AGNES_API_KEY", "")
 # 翻译熔断：连续 5 次全端点失败后暂停翻译请求 5 分钟（避免上游故障时的请求风暴与构建拖长）
 _TRANS_FAIL_STREAK = 0
 _TRANS_BLOCK_UNTIL = 0.0
@@ -1434,8 +1436,38 @@ def _detect_lang(text):
     return 'zh-CN'
 
 
+def _agnes_translate(text, timeout=20):
+    """Agnes AI 翻译（OpenAI 兼容接口，agnes-2.5-flash）。失败返回 None。"""
+    payload = json.dumps({
+        "model": "agnes-2.5-flash",
+        "messages": [
+            {"role": "system", "content": "你是翻译引擎。把用户输入翻译成简体中文，只输出译文，不要解释。"},
+            {"role": "user", "content": text[:1500]},
+        ],
+        "max_tokens": 400,
+        "temperature": 0.2,
+        # 思考型模型：关闭思考避免 token 被推理耗尽，也加速响应
+        "chat_template_kwargs": {"enable_thinking": False},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://apihub.agnes-ai.com/v1/chat/completions",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + _AGNES_KEY,
+            "User-Agent": "starhub-auto-update",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip() or None
+    except Exception:
+        return None
+
+
 def _translate_to_zh(text, timeout=TRANSLATE_TIMEOUT):
-    """四端点降级翻译链：Google → MyMemory → Google dict-chrome（带缓存）。"""
+    """翻译降级链：Agnes AI（首选，无 IP 封锁）→ Google → MyMemory → Google dict-chrome（带缓存）。"""
     if not text:
         return ""
     # 先清理 HTML 标签
@@ -1462,6 +1494,18 @@ def _translate_to_zh(text, timeout=TRANSLATE_TIMEOUT):
         return text
 
     encoded = urllib.parse.quote(text[:500])
+
+    # 0) Agnes AI（首选：GA 免费端点全被封，付费接口无 IP 限制）
+    if _AGNES_KEY:
+        try:
+            cand = _agnes_translate(text, timeout=timeout)
+            if cand and len(cand) > len(text) * 0.2:
+                _TRANS_STATS["agnes"] += 1
+                _TRANS_FAIL_STREAK = 0
+                _trans_cache[text_hash] = cand  # 写入缓存
+                return cand
+        except Exception:
+            pass
 
     # 1) Google gtx
     try:
@@ -1718,6 +1762,8 @@ header { position:sticky; top:0; z-index:40; background:rgba(250,249,247,.94); b
 .unread-toggle svg{width:13px;height:13px;}
 .back-top{position:fixed;bottom:24px;right:24px;width:40px;height:40px;border-radius:50%;background:var(--card);border:1px solid var(--line);color:var(--muted);display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:0;pointer-events:none;transition:all .2s;z-index:90;box-shadow:0 2px 8px rgba(0,0,0,.08);}
 .back-top.show{opacity:1;pointer-events:auto;}
+/* 抽屉面板打开时隐藏回到顶部按钮，避免浮在面板内容之上 */
+body.ai-open .back-top{opacity:0;pointer-events:none;}
 .back-top:hover{color:var(--brand-strong);border-color:var(--brand-line);background:var(--brand-weak);}
 .back-top svg{width:18px;height:18px;}
 .bm-btn{width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;color:var(--faint);border:1px solid transparent;transition:all .15s;cursor:pointer;background:none;padding:0;flex:none;position:relative;}
@@ -1975,19 +2021,21 @@ body.reading .reader2 { transform:translate(-50%,-50%) scale(1); opacity:1; poin
 .r2-share-btn svg{width:15px;height:15px;}
 
 /* ── Share modal ── */
-.share-modal{position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;}
+.share-modal{position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;padding:16px;}
 .share-modal.open{display:flex;}
 .share-backdrop{position:absolute;inset:0;background:rgba(28,25,23,.55);}
-.share-panel{position:relative;z-index:1;width:min(400px,90vw);background:var(--bg);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,.25);padding:20px;text-align:center;}
-.share-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+/* 面板高度自适应内容且封顶视口（vh→dvh 双写兜底旧浏览器）：
+   超出时图片区内部滚动（overflow-y:auto），头部/提示/按钮区 flex:none 恒定可见，长文分享不再截断操作按钮 */
+.share-panel{position:relative;z-index:1;width:min(400px,90vw);max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);display:flex;flex-direction:column;overflow:hidden;background:var(--bg);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,.25);padding:20px;text-align:center;}
+.share-hd{flex:none;display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
 .share-hd h3{font-family:var(--display);font-size:15px;font-weight:900;margin:0;}
 .share-close{width:28px;height:28px;border-radius:999px;border:1px solid var(--line);background:var(--card);font-size:16px;color:var(--muted);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s;}
 .share-close:hover{border-color:var(--line-strong);color:var(--ink);}
-.share-img-wrap{border-radius:10px;overflow:hidden;border:1px solid var(--line);background:var(--card);}
-.share-textcard{display:none;text-align:left;white-space:pre-wrap;word-break:break-word;background:var(--card);border:1px dashed var(--line-strong);border-radius:10px;padding:16px;font-size:13px;line-height:1.7;color:var(--ink);max-height:340px;overflow:auto;font-family:var(--body);}
+.share-img-wrap{flex:0 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;border-radius:10px;border:1px solid var(--line);background:var(--card);}
+.share-textcard{display:none;text-align:left;white-space:pre-wrap;word-break:break-word;background:var(--card);border:1px dashed var(--line-strong);border-radius:10px;padding:16px;font-size:13px;line-height:1.7;color:var(--ink);flex:0 1 auto;min-height:0;max-height:340px;overflow:auto;font-family:var(--body);}
 .share-img-wrap img{width:100%;display:block;}
-.share-hint{font-size:12px;color:var(--faint);margin:12px 0 14px;}
-.share-actions{display:flex;gap:10px;justify-content:center;}
+.share-hint{flex:none;font-size:12px;color:var(--faint);margin:12px 0 14px;}
+.share-actions{flex:none;display:flex;flex-wrap:wrap;gap:10px;justify-content:center;}
 .btn-share-save,.btn-share-copy{padding:8px 22px;border-radius:8px;font-size:13px;font-weight:600;border:1px solid var(--brand-line);transition:all .15s;cursor:pointer;font-family:var(--body);}
 .btn-share-save{background:var(--brand-strong);color:#fff;}
 .btn-share-save:hover{opacity:.9;}
@@ -2025,11 +2073,20 @@ body.reading .reader2 { transform:translate(-50%,-50%) scale(1); opacity:1; poin
 .ai-feed-btn svg{width:13px;height:13px;}
 
 /* ── AI Feed panel (right side drawer) ── */
-.ai-feed-panel{position:fixed;top:0;right:0;bottom:0;width:min(400px,92vw);z-index:80;background:var(--card);border-left:1px solid var(--line);transform:translateX(103%);transition:transform .28s cubic-bezier(.32,.72,.28,1);display:flex;flex-direction:column;box-shadow:-18px 0 50px rgba(0,0,0,.12);}
+.ai-feed-panel{position:fixed;top:0;right:0;bottom:0;width:min(400px,92vw);z-index:95;background:var(--card);border-left:1px solid var(--line);transform:translateX(103%);transition:transform .28s cubic-bezier(.32,.72,.28,1);display:flex;flex-direction:column;box-shadow:-18px 0 50px rgba(0,0,0,.12);}
 body.ai-open .ai-feed-panel{transform:none;}
 body.ai-open .scrim{opacity:1;pointer-events:auto;}
 .af-head{flex:none;padding:14px 16px 10px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;}
-.af-head h2{font-family:var(--display);font-size:15px;font-weight:900;flex:1;}
+/* ── 面板主 Tab：AI 快讯 / 全网热榜（选中态用 --ink/--bg 反转对，明暗主题下文字均保证可读） ── */
+.af-tabs{flex:1;display:flex;gap:5px;min-width:0;}
+.af-tab{flex:1;max-width:132px;height:30px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--muted);font-size:12.5px;font-weight:600;font-family:inherit;cursor:pointer;transition:all .15s;white-space:nowrap;}
+.af-tab:hover{border-color:var(--line-strong);color:var(--ink);}
+.af-tab.on{background:var(--ink);border-color:var(--ink);color:var(--bg);}
+/* Tab 内容切换：默认显示 AI 快讯区；body.af-tab-hot 时热榜区接管面板。
+   overflow:hidden 兜底：内容超出时由 hp-body 内部滚动，绝不溢出面板可视区 */
+.hp-wrap{display:none;flex-direction:column;flex:1;min-height:0;overflow:hidden;}
+body.af-tab-hot .hp-wrap{display:flex;}
+body.af-tab-hot .af-sub,body.af-tab-hot .af-filter,body.af-tab-hot .af-body,body.af-tab-hot .af-more{display:none!important;}
 .af-close{width:26px;height:26px;border-radius:999px;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--muted);transition:all .15s;flex:none;}
 .af-close:hover{border-color:var(--line-strong);color:var(--ink);}
 .af-close svg{width:12px;height:12px;}
@@ -2072,6 +2129,7 @@ body.ai-open .scrim{opacity:1;pointer-events:auto;}
   body.ai-open .scrim { opacity:0; pointer-events:none; }
   .af-close { display:none; }
   .ai-feed-btn { display:none; }
+  .hot-btn { display:none; }
 }
 
 @media (max-width:700px) {
@@ -2080,35 +2138,31 @@ body.ai-open .scrim{opacity:1;pointer-events:auto;}
   .af-body{padding:4px 14px 14px;}
 }
 
-/* ── Hot panel toolbar button ── */
+/* ── Hot toolbar button（移动端快捷入口：打开 AI 面板并切到热榜 Tab；桌面端面板常驻后隐藏，直接点 Tab） ── */
 .hot-btn{display:inline-flex;align-items:center;gap:5px;padding:4px 13px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid #f59e0b33;background:#f59e0b14;color:#b45309;transition:all .15s;cursor:pointer;}
 .hot-btn:hover{background:#f59e0b;color:#fff;}
 .hot-btn.on{background:#f59e0b;color:#fff;}
 .hot-btn svg{width:13px;height:13px;}
 
-/* ── Hot panel (right side drawer) ── */
-.hot-panel{position:fixed;top:0;right:0;bottom:0;width:min(400px,92vw);z-index:80;background:var(--card);border-left:1px solid var(--line);transform:translateX(103%);transition:transform .28s cubic-bezier(.32,.72,.28,1);display:flex;flex-direction:column;box-shadow:-18px 0 50px rgba(0,0,0,.12);}
-body.hot-open .hot-panel{transform:none;}
-body.hot-open .scrim{opacity:1;pointer-events:auto;}
-.hp-head{flex:none;padding:14px 16px 10px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;}
-.hp-head h2{margin:0;font-size:15px;font-weight:700;flex:1;}
-.hp-close{background:none;border:none;cursor:pointer;color:var(--faint);padding:4px;border-radius:6px;display:flex;align-items:center;justify-content:center;}
-.hp-close:hover{background:var(--hover);color:var(--ink);}
-.hp-close svg{width:18px;height:18px;}
-.hp-body{flex:1;overflow-y:auto;padding:8px 0;-webkit-overflow-scrolling:touch;}
-.hp-src{padding:10px 16px 4px;font-size:13px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;gap:6px;}
-.hp-src-dot{width:8px;height:8px;border-radius:50%;flex:none;}
-.hp-item{display:flex;align-items:flex-start;gap:8px;padding:8px 16px;cursor:pointer;transition:background .12s;text-decoration:none;color:inherit;}
-.hp-item:hover{background:var(--hover);}
-.hp-rank{flex:none;width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;font-family:var(--mono);background:var(--bg);color:var(--faint);}
+/* ── 热榜内容区：平台子 Tab + 卡片列表（条目色彩区分靠圆点/选中实底，文字始终用高对比色） ── */
+/* 子 Tab 换行显示（不横向滚动）：窄屏最多两行，任何平台按钮完整可见，杜绝截断/溢出 */
+.hp-tabs{flex:none;display:flex;flex-wrap:wrap;gap:5px;padding:8px 12px 2px;}
+.hp-tab{flex:none;height:24px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--muted);font-size:11.5px;font-weight:600;font-family:inherit;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;}
+.hp-tab:hover{border-color:var(--line-strong);color:var(--ink);}
+.hp-tab .dot{width:7px;height:7px;border-radius:50%;flex:none;}
+/* 选中态实底色由 JS 注入加深品牌色（白字对比 ≥4.4:1），文字固定 #fff；未选中态文字用 --muted 保证明暗主题可读 */
+.hp-tab.on{color:#fff;border-color:transparent;}
+.hp-body{flex:1;overflow-y:auto;padding:8px 12px 16px;-webkit-overflow-scrolling:touch;}
+.hp-item{display:flex;align-items:flex-start;gap:8px;padding:9px 10px;margin-bottom:6px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg);cursor:pointer;transition:all .12s;text-decoration:none;color:inherit;}
+.hp-item:hover{border-color:var(--line-strong);background:var(--hover);}
+.hp-rank{flex:none;width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;font-family:var(--mono);background:var(--hover);color:var(--faint);}
 .hp-rank.top3{background:var(--brand-weak);color:var(--brand-strong);}
-.hp-title{flex:1;font-size:13px;line-height:1.5;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+.hp-title{flex:1;font-size:13px;line-height:1.5;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word;}
 .hp-hot{flex:none;font-size:11px;color:var(--faint);font-family:var(--mono);margin-top:3px;}
 .hp-empty{padding:40px 16px;text-align:center;color:var(--faint);font-size:13px;}
 @media (max-width:700px) {
-  .hot-panel{width:100vw;}
-  .hp-head{padding:12px 14px 8px;}
-  .hp-body{padding:4px 14px 14px;}
+  .hp-tabs{padding:8px 10px 2px;gap:4px;}
+  .hp-body{padding:6px 10px 14px;}
 }
 """
 
@@ -2490,6 +2544,7 @@ def _build_js(sources_with_items, build_ts_ms=0):
     }
     wall.innerHTML=h;
     wallLimit=end;
+    _scheduleWallTranslate();
   }
   /* 轻量更新：仅更新卡片已读/打开状态的 CSS 类，不重建 DOM */
   function updateCardStates(){
@@ -2797,26 +2852,37 @@ def _build_js(sources_with_items, build_ts_ms=0):
 
   /* ── Client translate ── */
   var _ctCache={},_ctPend={};
+  /* 全文/摘要翻译：Agnes API 主力（服务端代理，密钥不落前端），失败块由服务端 GTX 兜底（mode:'full'），
+     最终兜底原文。2026-09-08 实证修正：gtx 端点响应带 ACAO:*（浏览器可直连），当年「必遭 CORS」
+     实为 GFW/网络因素误判；但全文按钮仍走服务端（质量优先 Agnes），浏览器直连仅用于批量补翻主力。 */
   function _clientTranslate(text,cb){
     if(!text||isMostlyZh(text)){cb(text);return;}
     var k=text.substring(0,100);
     if(_ctCache[k]){cb(_ctCache[k]);return;}
     if(_ctPend[k]){_ctPend[k].push(cb);return;}
     _ctPend[k]=[cb];
-    /* 长文本分块翻译：每块 450 字，串行拼接 */
+    /* 长文本分块翻译：每块 450 字，Agnes 每请求 ≤20 块，批间串行 */
     var chunks=[],pos=0;
     while(pos<text.length){var end=Math.min(pos+450,text.length);chunks.push(text.substring(pos,end));pos=end;}
-    var results=[],done=0;
-    function _next(i){
-      if(i>=chunks.length){var tr=results.join('');_ctCache[k]=tr;var p=_ctPend[k]||[];delete _ctPend[k];p.forEach(function(f){f(tr);});return;}
-      var url='https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q='+encodeURIComponent(chunks[i]);
-      fetch(url).then(function(r){return r.json();}).then(function(d){
-        var res='';if(d&&d[0])for(var j=0;j<d[0].length;j++)if(d[0][j]&&d[0][j][0])res+=d[0][j][0];
-        results.push((res&&res.length>chunks[i].length*0.3)?res:chunks[i]);
-        _next(i+1);
-      }).catch(function(){results.push(chunks[i]);_next(i+1);});
-    }
-    _next(0);
+    var _finished=0;
+    function _finish(tr){ if(_finished) return; _finished=1; _ctCache[k]=tr; var p=_ctPend[k]||[]; delete _ctPend[k]; p.forEach(function(f){f(tr);}); }
+    (function _agiBatch(bi){
+      if(_finished) return;
+      var start=bi*20,end=Math.min(start+20,chunks.length);
+      if(start>=chunks.length){ _finish(chunks.join('')); return; }
+      var ctrl=(typeof AbortController==='function')?new AbortController():null;
+      /* 服务端 full 最坏路径（非 429 慢挂起情形）= Agnes 12s×2+400ms + GTX 6s×2+600ms ≈ 37s，
+         前端 25s 超时只保证一轮 Agnes+GTX 在用户侧可见；429 快速失败路径 <10s 必然可见，
+         慢路径的 GTX 兜底仍会在服务端完成并写缓存（下次点击命中） */
+      var tmr=ctrl?setTimeout(function(){ctrl.abort();},25000):null;
+      fetch(TR_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({texts:chunks.slice(start,end),mode:'full'}),signal:ctrl?ctrl.signal:undefined})
+      .then(function(r){ if(tmr)clearTimeout(tmr); return r.ok?r.json():Promise.reject(new Error('http '+r.status)); })
+      .then(function(j){
+        if(!j||!j.ok||!j.translations||j.translations.length!==(end-start)) throw new Error('bad payload');
+        for(var i=start;i<end;i++){ var t=(j.translations[i-start]||'').trim(); if(t)chunks[i]=t; }
+        _agiBatch(bi+1);
+      }).catch(function(){ if(tmr)clearTimeout(tmr); _agiBatch(bi+1); });
+    })(0);
   }
 
   // ── OPML export ──
@@ -2860,7 +2926,7 @@ def _build_js(sources_with_items, build_ts_ms=0):
   // ── Window exports ──
   window.ART = ART;
   window.closeReader = function(){ _cleanupMedia(); document.body.classList.remove('reading'); curArt=null; window.curArt=null; updateCardStates(); if(_prevFocusEl){try{_prevFocusEl.focus();}catch(e){}_prevFocusEl=null;} };
-  window.closeOverlays = function(){ document.body.classList.remove('src-open','hot-open'); window.closeReader(); };
+  window.closeOverlays = function(){ document.body.classList.remove('src-open'); window.closeReader(); };
   window.clearSrcF = function(e){ e.stopPropagation(); var uo=filter.unreadOnly,bm=filter.filterBm; filter={type:'all',unreadOnly:uo,filterBm:bm}; curArt=null; wallLimit=WALL_STEP; renderChips(); renderWall(); renderPanel(); updateTitle(); updateHash(); updateUnreadBtn(); updateBmChip(); };
   window.toggleSrcPanel = toggleSrcPanel;
   window.selectSrc = selectSrc;
@@ -3205,7 +3271,7 @@ def _build_js(sources_with_items, build_ts_ms=0):
   }
 
   /* QR 库已构建时内嵌（typeof qrcode==='function' 即同步可用）；
-     此函数仅作为内嵌缺失时的 CDN 兑底，带 8s 超时防止 CDN 挂起 */
+     此函数仅作为内嵌缺失时的 CDN 兜底，带 8s 超时防止 CDN 挂起 */
   function loadQRLib(){
     if(_qrLoaded) return Promise.resolve();
     return new Promise(function(resolve,reject){
@@ -3630,33 +3696,142 @@ def _build_js(sources_with_items, build_ts_ms=0):
   function _normT(s){ return (s||'').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,''); }
   // \u68c0\u6d4b\u6807\u9898\u662f\u5426\u4e3b\u8981\u4e3a\u975e\u4e2d\u6587\uff08\u9700\u8981\u7ffb\u8bd1\uff09
   function _needsTranslation(t){ if(!t) return false; var cjk=(t.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g)||[]).length; return cjk < t.replace(/[\s\d\p{P}]/gu,'').length * 0.3; }
-  // \u6279\u91cf\u7ffb\u8bd1 AI \u52a8\u6001\u6d41\u82f1\u6587\u6807\u9898\uff08Google Translate GTX \u7aef\u70b9\uff1b5s \u8d85\u65f6\u5146\u5e95\uff0c\u9632 GFW \u6302\u6b7b\uff09
+  // 批量翻译 AI 动态流英文标题：主力 = 浏览器端 GTX 直连（用户本地 IP，端点响应带 ACAO:* 实证开放；
+  // 服务端共享 DC 出口反而会被 Google 频率限流——线上实测 gtx 429）；失败条目再走服务端 API 兜底
+  // （api/translate mode:'bulk'：GTX 尽力 → Agnes 限量）。引擎分流策略（用户定版）：Agnes 仅留
+  // 给全文/摘要按钮（mode:'full'）与兜底，绝不作为批量主力。
+  var TR_API = 'https://starhub-refresh.vercel.app/api/translate';
+  /* 浏览器端 GTX 批量直译：并发 3，返回与 texts 等长的译文数组（失败为 ''，由调用方决定服务端兜底） */
+  function _browserGtx(texts){
+    var out=[],i=0,done=0;
+    for(var k=0;k<texts.length;k++) out.push('');
+    return new Promise(function(resolve){
+      if(!texts.length){ resolve(out); return; }
+      function one(){
+        if(i>=texts.length) return;
+        var idx=i++;
+        var ctrl=(typeof AbortController==='function')?new AbortController():null;
+        var tmr=ctrl?setTimeout(function(){ctrl.abort();},8000):null;
+        fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q='+encodeURIComponent(String(texts[idx]).slice(0,500)),{signal:ctrl?ctrl.signal:undefined})
+        .then(function(r){ if(tmr)clearTimeout(tmr); return r.ok?r.json():Promise.reject(new Error('gtx '+r.status)); })
+        .then(function(j){
+          var tr=((j[0]||[]).map(function(x){ return (x&&x[0])||''; }).join('')||'').trim();
+          if(tr) out[idx]=tr;
+        }).catch(function(){ if(tmr)clearTimeout(tmr); })
+        .then(function(){ done++; if(done>=texts.length){ resolve(out); } else { one(); } });
+      }
+      for(var w=0;w<Math.min(3,texts.length);w++) one();
+    });
+  }
   function _translateAfItems(){
     var toTranslate = afItems.filter(function(it){ return !it._zh && _needsTranslation(it.title); });
     if(!toTranslate.length) return;
-    var texts = toTranslate.map(function(it){ return it.title; });
-    var chunks = []; for(var i=0;i<texts.length;i+=10) chunks.push(texts.slice(i,i+10));
-    var done = 0;
-    chunks.forEach(function(chunk){
-      var ctrl = (typeof AbortController === 'function') ? new AbortController() : null;
-      var tmr = ctrl ? setTimeout(function(){ ctrl.abort(); }, 5000) : null;
-      var url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=' + encodeURIComponent(chunk.join('\\n'));
-      fetch(url, ctrl ? { signal: ctrl.signal } : {}).then(function(r){return r.json();}).then(function(j){
-        if(tmr) clearTimeout(tmr);
-        var translated = []; try{ j[0].forEach(function(s){ translated.push(s[0]); }); }catch(e){}
-        var offset = chunks.indexOf(chunk) * 10;
-        translated.forEach(function(zh, idx){
-          if(zh && toTranslate[offset+idx]) toTranslate[offset+idx]._zh = zh;
+    // 每批 15 条（与服务端兜底上限匹配），最多 8 批（120 条，覆盖 AIHOT+AGI 全量）
+    var batches = []; for(var i=0;i<toTranslate.length && batches.length<8;i+=15) batches.push(toTranslate.slice(i,i+15));
+    var applied = 0;
+    function _apply(trs, batch){
+      batch.forEach(function(it, idx){
+        var zh = (trs[idx]||'').trim();
+        if(zh && !it._zh){ it._zh = zh; applied++; }
+      });
+    }
+    /* 服务端兜底：仅浏览器端 GTX 失败的零星条目（TR_API bulk：GTX 尽力 → Agnes 限量） */
+    function _serverFallback(texts){
+      return new Promise(function(resolve){
+        var ctrl = (typeof AbortController === 'function') ? new AbortController() : null;
+        var tmr = ctrl ? setTimeout(function(){ ctrl.abort(); }, 12000) : null;
+        fetch(TR_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ texts: texts, mode: 'bulk' }),
+          signal: ctrl ? ctrl.signal : undefined
+        }).then(function(r){
+          if(tmr) clearTimeout(tmr);
+          return r.ok ? r.json() : Promise.reject(new Error('http ' + r.status));
+        }).then(function(j){
+          if(!j || !j.ok || !j.translations || j.translations.length !== texts.length) throw new Error('bad payload');
+          resolve(j.translations);
+        }).catch(function(){
+          if(tmr) clearTimeout(tmr);
+          resolve(null);
         });
-        if(++done >= chunks.length) _renderAll();
-      }).catch(function(){ if(tmr) clearTimeout(tmr); if(++done >= chunks.length) _renderAll(); });
+      });
+    }
+    // 逐批推进：浏览器直连主力，批间 300ms 温和节奏（服务端仅承接零星失败）
+    (async function(){
+      for(var b=0;b<batches.length;b++){
+        var batch = batches[b];
+        var trs = await _browserGtx(batch.map(function(it){ return it.title; }));
+        _apply(trs, batch);
+        var failed = [];
+        trs.forEach(function(z, idx){ if(!z) failed.push(idx); });
+        if(failed.length){
+          var fb = await _serverFallback(failed.map(function(k){ return batch[k].title; }));
+          if(fb) failed.forEach(function(k, fi){ var zh=(fb[fi]||'').trim(); if(zh && !batch[k]._zh){ batch[k]._zh = zh; applied++; } });
+        }
+        if(b+1<batches.length) await new Promise(function(rs){ setTimeout(rs,300); });
+      }
+      if(applied) _renderAll();
+    })();
+  }
+  /* ── RSS 卡片墙运行时翻译兜底：构建期翻译熔断/漏网的英文条目，挂载于 renderWall 末尾；
+     主力 = 浏览器端 GTX 直连，失败条目走服务端 API 兜底；_zhTried 标记防重复请求，
+     完成后重渲染刷新卡片（终止条件：cands 耗尽）。 */
+  var _wallTrBusy=0,_wallDirty=0;
+  function _scheduleWallTranslate(){ setTimeout(_translateWallItems,120); }
+  function _translateWallItems(){
+    if(_wallTrBusy) return;
+    var cands=ART.filter(function(a){ return !a._zhTried && (_needsTranslation(a.t)||(a.s&&_needsTranslation(a.s))); });
+    if(!cands.length) return;
+    var batch=cands.slice(0,10);
+    batch.forEach(function(a){ a._zhTried=1; });
+    _wallTrBusy=1;
+    var texts=[],map=[];
+    batch.forEach(function(a){
+      if(_needsTranslation(a.t)){ texts.push(a.t); map.push({a:a,f:'t'}); }
+      if(a.s&&_needsTranslation(a.s)){ texts.push(a.s); map.push({a:a,f:'s'}); }
     });
+    if(!texts.length){ _wallTrBusy=0; return; }
+    (async function(){
+      var trs = await _browserGtx(texts);
+      var failed=[];
+      trs.forEach(function(zhRaw,idx){
+        var m=map[idx]; if(!m) return;
+        var zh=(zhRaw||'').trim(); if(!zh){ failed.push(idx); return; }
+        if(m.f==='t'&&_needsTranslation(m.a.t)) m.a.t=zh;
+        else if(m.f==='s'&&m.a.s&&_needsTranslation(m.a.s)) m.a.s=zh;
+      });
+      if(failed.length){
+        var fbTexts=failed.map(function(k){ return texts[k]; });
+        var ctrl=(typeof AbortController==='function')?new AbortController():null;
+        var tmr=ctrl?setTimeout(function(){ctrl.abort();},12000):null;
+        try{
+          var resp=await fetch(TR_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({texts:fbTexts,mode:'bulk'}),signal:ctrl?ctrl.signal:undefined});
+          if(tmr)clearTimeout(tmr);
+          var j=(resp&&resp.ok)?(await resp.json().catch(function(){ return null; })):null;
+          if(j&&j.ok&&j.translations&&j.translations.length===fbTexts.length){
+            fbTexts.forEach(function(_,fi){
+              var m=map[failed[fi]]; if(!m) return;
+              var zh=(j.translations[fi]||'').trim(); if(!zh) return;
+              if(m.f==='t'&&_needsTranslation(m.a.t)) m.a.t=zh;
+              else if(m.f==='s'&&m.a.s&&_needsTranslation(m.a.s)) m.a.s=zh;
+            });
+          }
+        }catch(e){ if(tmr)clearTimeout(tmr); }
+      }
+      _wallDirty=1;
+      _wallTrBusy=0;
+      if(_wallDirty){ _wallDirty=0; renderWall(); }
+      // 批间节流：温和节奏防单 IP 突发高频（失败条目保留原文，下批继续）
+      setTimeout(_translateWallItems,2500);
+    })();
   }
   function _fmtRel(s){ if(!s) return ''; try{ var d=new Date(s),n=Date.now(),diff=n-d.getTime(); if(diff<0)return ''; var m=Math.floor(diff/60000); if(m<1)return '\u521a\u521a'; if(m<60)return m+' \u5206\u949f\u524d'; var h=Math.floor(m/60); if(h<24)return h+' \u5c0f\u65f6\u524d'; return Math.floor(h/24)+' \u5929\u524d'; }catch(e){return '';} }
 
   function toggleAiFeed(){
     var open = document.body.classList.toggle('ai-open');
     document.getElementById('btnAiFeed').classList.toggle('on', open);
+    var hb=document.getElementById('btnHot'); if(hb) hb.classList.toggle('on', open && afTab==='hot');
     if(open && !afLoaded) _loadAll();
   }
   window.toggleAiFeed = toggleAiFeed;
@@ -3886,6 +4061,7 @@ def _build_js(sources_with_items, build_ts_ms=0):
       var seen = new Set(afItems.map(function(x){return _normT(x.title);}));
       (j.items||[]).forEach(function(it){var k=_normT(it.title);if(!seen.has(k)){seen.add(k);afItems.push(Object.assign({},it,{_src:'aihot'}));}});
       _renderAll();
+      _translateAfItems();
     }catch(e){ /* ignore */ }
     btn.disabled = false; btn.textContent = '\u52a0\u8f7d\u66f4\u591a';
   });
@@ -3907,6 +4083,7 @@ def _build_js(sources_with_items, build_ts_ms=0):
       });
       afItems.sort(function(a,b){return (b.publishedAt||b.published_at||'').localeCompare(a.publishedAt||a.published_at||'');});
       _renderAll();
+      _translateAfItems();
     }catch(e){ /* ignore */ }
   }
 
@@ -3921,16 +4098,30 @@ def _build_js(sources_with_items, build_ts_ms=0):
   if(_aiDesktop() && !afLoaded) _loadAll();
 
   /* ══════════════════════════════════════════
-     Hot Panel: 全网热榜（newsnow 快照）
+     面板双 Tab：AI 快讯 / 全网热榜（newsnow 快照，首次切到热榜 Tab 才懒加载）
      ══════════════════════════════════════════ */
-  var _hotLoaded=false, _hotLoading=false;
+  var afTab='feed';
+  var _hotLoaded=false,_hotLoading=false,_hotData=null;
+  function switchAfTab(tab){
+    afTab=tab;
+    document.body.classList.toggle('af-tab-hot',tab==='hot');
+    var tf=document.getElementById('afTabFeed'),th=document.getElementById('afTabHot');
+    if(tf){tf.classList.toggle('on',tab==='feed');tf.setAttribute('aria-selected',tab==='feed'?'true':'false');}
+    if(th){th.classList.toggle('on',tab==='hot');th.setAttribute('aria-selected',tab==='hot'?'true':'false');}
+    var rb=document.getElementById('afRefreshBtn'); if(rb) rb.style.display=(tab==='feed')?'':'none';
+    var hb=document.getElementById('btnHot'); if(hb) hb.classList.toggle('on',tab==='hot'&&document.body.classList.contains('ai-open'));
+    if(tab==='hot'&&!_hotLoaded) loadHotSnapshot();
+  }
+  window.switchAfTab=switchAfTab;
   var _hotPlatformNames={weibo:'微博',zhihu:'知乎','zhihu-daily':'知乎日报',baidu:'百度',bilibili:'B站',douyin:'抖音'};
-  var _hotPlatformColors={weibo:'#ff4500',zhihu:'#0066ff','zhihu-daily':'#0066ff',baidu:'#2932e1',bilibili:'#fb7299',douyin:'#111'};
+  /* dot：平台品牌色（未选中态圆点，提供平台色差区分）；deep：选中态实底色（加深变体，白字对比 ≥4.4:1，明暗主题均可读） */
+  var _hotPlatformColors={weibo:'#ff4400',zhihu:'#0066ff','zhihu-daily':'#0084ff',baidu:'#2932e1',bilibili:'#fb7299',douyin:'#fe2c55'};
+  var _hotPlatformDeep={weibo:'#d5380f',zhihu:'#0052cc','zhihu-daily':'#0066cc',baidu:'#1f28b8',bilibili:'#c73a6c',douyin:'#d9284a'};
   window.toggleHotPanel=function(){
-    var open=document.body.classList.toggle('hot-open');
-    var btn=document.getElementById('btnHot');
-    if(btn) btn.classList.toggle('on',open);
-    if(open && !_hotLoaded) loadHotSnapshot();
+    var panelOpen=document.body.classList.contains('ai-open');
+    if(panelOpen&&afTab==='hot'){toggleAiFeed();return;} /* 已在热榜 Tab→再次点击关闭抽屉（移动端习惯） */
+    if(!panelOpen) toggleAiFeed();
+    switchAfTab('hot');
   };
   function loadHotSnapshot(){
     if(_hotLoading || _hotLoaded) return;
@@ -3943,28 +4134,45 @@ def _build_js(sources_with_items, build_ts_ms=0):
       return r.json();
     }).then(function(data){
       _hotLoaded=true;_hotLoading=false;
-      if(!data||!data.length){list.innerHTML='<div class="hp-empty">暂无热榜数据</div>';return;}
-      var h='';
-      for(var s=0;s<data.length;s++){
-        var src=data[s],pn=_hotPlatformNames[src.platform]||src.platform,pc=_hotPlatformColors[src.platform]||'#888';
-        h+='<div class="hp-src"><span class="hp-src-dot" style="background:'+pc+'"></span>'+pn+'</div>';
-        var items=src.items||[];
-        if(!items.length) continue;
-        for(var i=0;i<items.length;i++){
-          var it=items[i],rk=it.rank||(i+1),cls=rk<=3?' top3':'';
-          var hotTxt=it.hot?(''+it.hot).replace(/^(\d+)(\d{4,})$/,function(m,a,b){return a+'万';}):'';
-          h+='<a class="hp-item" href="'+(it.url||'#')+'" target="_blank" rel="noopener">';
-          h+='<span class="hp-rank'+cls+'">'+rk+'</span>';
-          h+='<span class="hp-title">'+(it.title||'')+'</span>';
-          if(hotTxt) h+='<span class="hp-hot">'+hotTxt+'</span>';
-          h+='</a>';
-        }
-      }
-      list.innerHTML=h||'<div class="hp-empty">暂无热榜数据</div>';
+      _hotData=(data||[]).filter(function(s){return s.items&&s.items.length;});
+      if(!_hotData.length){list.innerHTML='<div class="hp-empty">暂无热榜数据</div>';return;}
+      /* 平台子 Tab：仅渲染有数据的平台 */
+      var tabs=document.getElementById('hpTabs');
+      tabs.innerHTML=_hotData.map(function(s){
+        var p=s.platform;
+        return '<button class="hp-tab" data-p="'+p+'"><span class="dot" style="background:'+(_hotPlatformColors[p]||'#888')+'"></span>'+(_hotPlatformNames[p]||p)+'</button>';
+      }).join('');
+      tabs.querySelectorAll('.hp-tab').forEach(function(b){
+        b.addEventListener('click',function(){renderHotPlat(b.getAttribute('data-p'));});
+      });
+      renderHotPlat(_hotData[0].platform);
     }).catch(function(){
       _hotLoading=false;
       list.innerHTML='<div class="hp-empty">加载失败，请稍后重试</div>';
     });
+  }
+  function renderHotPlat(p){
+    var tabs=document.getElementById('hpTabs');
+    tabs.querySelectorAll('.hp-tab').forEach(function(b){
+      var on=b.getAttribute('data-p')===p;
+      b.classList.toggle('on',on);
+      b.style.background=on?(_hotPlatformDeep[p]||'#555'):'';
+    });
+    var list=document.getElementById('hotList');
+    var src=null;
+    for(var i=0;i<_hotData.length;i++){ if(_hotData[i].platform===p){src=_hotData[i];break;} }
+    if(!src){list.innerHTML='<div class="hp-empty">暂无热榜数据</div>';return;}
+    var h='';
+    for(var j=0;j<src.items.length;j++){
+      var it=src.items[j],rk=it.rank||(j+1),cls=rk<=3?' top3':'';
+      var hotTxt=it.hot?(''+it.hot).replace(/^(\d+)(\d{4,})$/,function(m,a,b){return a+'万';}):'';
+      h+='<a class="hp-item" href="'+_escH(it.url||'#')+'" target="_blank" rel="noopener">';
+      h+='<span class="hp-rank'+cls+'">'+rk+'</span>';
+      h+='<span class="hp-title">'+_escH(it.title||'')+'</span>';
+      if(hotTxt) h+='<span class="hp-hot">'+hotTxt+'</span>';
+      h+='</a>';
+    }
+    list.innerHTML=h||'<div class="hp-empty">暂无热榜数据</div>';
   }
 
 })();
@@ -4062,19 +4270,21 @@ def build_html(sources_with_items, build_time, total_items, build_ts_ms=0):
         '<div class="build-bar">\u81ea\u52a8\u751f\u6210\u4e8e ' + _esc(build_time) + '\uff08\u5317\u4eac\u65f6\u95f4\uff09\u00b7 \u5171 ' + str(total_items) + ' \u7bc7 \u00b7 <span id="buildRel"></span><span id="liveStatus"></span></div>\n'
         '<div class="wall-wrap">\n'
         '<aside class="ai-feed-panel" id="aiFeedPanel">\n'
-        '<div class="af-head"><h2>AI \u52a8\u6001\u6d41</h2>\n'
+        '<div class="af-head">\n'
+        '<div class="af-tabs" role="tablist">\n'
+        '<button class="af-tab on" id="afTabFeed" role="tab" aria-selected="true" onclick="switchAfTab(\'feed\')">AI \u5feb\u8baf</button>\n'
+        '<button class="af-tab" id="afTabHot" role="tab" aria-selected="false" onclick="switchAfTab(\'hot\')">\u70ed\u699c</button>\n'
+        '</div>\n'
         '<button class="af-refresh" id="afRefreshBtn" onclick="refreshAiFeed()" title="\u5237\u65b0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg></button>\n'
         '<button class="af-close" onclick="toggleAiFeed()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>\n'
-
+        '<div class="hp-wrap" id="hpWrap">\n'
+        '<div class="hp-tabs" id="hpTabs"></div>\n'
+        '<div class="hp-body" id="hotList"><div class="hp-empty">\u70b9\u51fb\u52a0\u8f7d\u70ed\u699c</div></div></div>\n'
         '<div class="af-sub" id="afUpdated"></div>\n'
         '<div class="af-filter" id="afFilter" style="display:none"></div>\n'
         '<div class="af-body" id="afList"><div class="af-empty">\u70b9\u51fb\u67e5\u770b AI \u52a8\u6001</div></div>\n'
         '<button class="af-more" id="afLoadMore" style="display:none">\u52a0\u8f7d\u66f4\u591a</button></aside>\n'
         '<div class="wall" id="wall" role="feed" aria-label="\u6587\u7ae0\u5217\u8868"><div class="boot-loading" id="bootLoading"><span class="boot-spin"></span>\u6b63\u5728\u52a0\u8f7d\u5185\u5bb9\u2026</div></div>\n'
-        '<aside class="hot-panel" id="hotPanel">\n'
-        '<div class="hp-head"><h2>\u5168\u7f51\u70ed\u699c</h2>\n'
-        '<button class="hp-close" onclick="toggleHotPanel()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>\n'
-        '<div class="hp-body" id="hotList"><div class="hp-empty">\u70b9\u51fb\u52a0\u8f7d\u70ed\u699c</div></div></aside>\n'
         '</div>\n'
         '<div class="scrim" aria-hidden="true" onclick="closeOverlays()"></div>\n'
         '<aside class="src-panel" id="srcPanel" role="dialog" aria-modal="true" aria-label="\u4fe1\u6e90\u9762\u677f">\n'
@@ -4264,8 +4474,8 @@ def main(mode="full"):
     print("[RSS聚合] 生成完成 → %s（%d 源成功，共 %d 篇）" % (OUT, ok_count, total_items))
 
     # 打印翻译统计
-    print("[翻译统计] 缓存命中: %d, Google: %d, MyMemory: %d, Dict: %d, 跳过: %d, 失败: %d" % (
-        _TRANS_STATS["cache_hit"], _TRANS_STATS["google"], _TRANS_STATS["mymemory"],
+    print("[翻译统计] 缓存命中: %d, Agnes: %d, Google: %d, MyMemory: %d, Dict: %d, 跳过: %d, 失败: %d" % (
+        _TRANS_STATS["cache_hit"], _TRANS_STATS["agnes"], _TRANS_STATS["google"], _TRANS_STATS["mymemory"],
         _TRANS_STATS["dict"], _TRANS_STATS["skip"], _TRANS_STATS["fail"]
     ))
 

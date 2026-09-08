@@ -1,0 +1,41 @@
+# 一次性工具：将 AGNES_API_KEY 同步到 Vercel 项目环境变量并触发生产重新部署。
+# 用途：api/translate.js（Agnes 翻译代理）依赖 Vercel 侧 AGNES_API_KEY；
+#       key 轮换或首次配置时手动触发本 workflow 即可，无需登录 Vercel CLI。
+# 前提：仓库 Secrets 已配置 VERCEL_TOKEN（需 env 写入权限）与 AGNES_API_KEY。
+name: Sync Agnes Env to Vercel
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      # 必须 checkout：CLI 从当前目录上传部署，缺 checkout 会用空目录覆盖生产
+      - uses: actions/checkout@v4
+      - name: Upsert AGNES_API_KEY on Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
+          VERCEL_PROJECT_ID: prj_7gK5d3EOJYTC8AmUxR2cNuHi7arB
+        run: |
+          payload=$(jq -n --arg k "AGNES_API_KEY" --arg v "$AGNES_API_KEY" \
+            '{key:$k, value:$v, type:"encrypted", target:["production","preview","development"]}')
+          resp=$(curl -s -o /tmp/env_resp.json -w "%{http_code}" -X POST \
+            "https://api.vercel.com/v10/projects/${VERCEL_PROJECT_ID}/env?upsert=true" \
+            -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+          echo "upsert http: $resp"
+          head -c 300 /tmp/env_resp.json; echo
+          if [ "$resp" != "200" ] && [ "$resp" != "201" ]; then exit 1; fi
+
+      - name: Trigger production redeploy (vercel CLI)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          # CLI 必需：scope 与项目定位（缺失时 scoped token 报 User not found）
+          VERCEL_ORG_ID: team_iovvEy0us9KkCNkuMRLQrIeA
+          VERCEL_PROJECT_ID: prj_7gK5d3EOJYTC8AmUxR2cNuHi7arB
+        run: |
+          set -o pipefail
+          npx --yes vercel --prod --yes --token "$VERCEL_TOKEN" 2>&1 | tail -n 5

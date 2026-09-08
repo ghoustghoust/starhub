@@ -524,8 +524,11 @@ def _has_cn(s):
 
 
 _TRANS_CACHE = {}
-_TRANS_STATS = {"google": 0, "bing": 0, "mymemory": 0, "google_alt": 0, "fail": 0, "skip": 0}
+_TRANS_STATS = {"agnes": 0, "google": 0, "bing": 0, "mymemory": 0, "google_alt": 0, "fail": 0, "skip": 0}
 _BING_TOKENS = None  # 构建内缓存，token 有效期 1 小时
+# GA 免费翻译端点（Google/Bing/MyMemory）已被数据中心 IP 封锁（429/401/timeout），
+# AGNES_API_KEY 存在时优先走 Agnes AI 付费接口（无 IP 封锁、稳定 ~1s/条），免费链降级为本地回退。
+_AGNES_KEY = os.environ.get("AGNES_API_KEY", "")
 
 
 def _fetch_bing_tokens():
@@ -582,8 +585,41 @@ def _bing_translate(text):
     return None
 
 
+def _agnes_translate(text):
+    """Agnes AI 翻译（OpenAI 兼容接口，agnes-2.5-flash）。失败返回 None。"""
+    payload = json.dumps({
+        "model": "agnes-2.5-flash",
+        "messages": [
+            {"role": "system", "content": "你是翻译引擎。把用户输入的英文翻译成简体中文，只输出译文，不要解释。"},
+            {"role": "user", "content": text[:1500]},
+        ],
+        "max_tokens": 400,
+        "temperature": 0.2,
+        # 思考型模型：关闭思考避免 token 被推理耗尽，也加速响应
+        "chat_template_kwargs": {"enable_thinking": False},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://apihub.agnes-ai.com/v1/chat/completions",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + _AGNES_KEY,
+            "User-Agent": "starhub-auto-update",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        cand = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        return cand or None
+    except Exception as ex:
+        print("[AI晨报] Agnes 翻译失败: %s: %s" % (type(ex).__name__, ex), file=sys.stderr)
+        return None
+
+
 def _translate_to_zh(text):
     """英译中；全部端点失败返回 None（调用方保留原文）。
+    端点 0: Agnes AI（配了 AGNES_API_KEY 时首选，GA 免费端点全被封）
     端点 1: Google gtx（429 限流时退避重试）
     端点 2: Bing 网页版（免费，token 缓存 1h）
     端点 3: MyMemory（带 2 次重试 + 指数退避）
@@ -596,32 +632,40 @@ def _translate_to_zh(text):
         return hit or None
     result = None
 
-    # ── 端点 1：Google gtx ──
-    params = urllib.parse.urlencode({"client": "gtx", "sl": "auto", "tl": "zh-CN", "dt": "t", "q": text})
-    for attempt in range(2):
-        try:
-            req = urllib.request.Request(
-                "https://translate.googleapis.com/translate_a/single?" + params,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
-            )
-            with urllib.request.urlopen(req, timeout=10) as r:
-                data = json.loads(r.read().decode("utf-8"))
-            cand = "".join(seg[0] for seg in data[0] if seg[0]).strip()
-            if cand and _has_cn(cand):
-                result = cand
-                _TRANS_STATS["google"] += 1
-            break
-        except urllib.error.HTTPError as e:
-            if e.code == 429 and attempt == 0:
-                time.sleep(3)
-                continue
-            if attempt == 1:
-                print("[AI晨报] Google-gtx 端点失败: HTTP %s" % e.code, file=sys.stderr)
-            break
-        except Exception as ex:
-            if attempt == 1:
-                print("[AI晨报] Google-gtx 端点失败: %s: %s" % (type(ex).__name__, ex), file=sys.stderr)
-            break
+    # ── 端点 0：Agnes AI（首选，无 IP 封锁）──
+    if not result and _AGNES_KEY:
+        cand = _agnes_translate(text)
+        if cand and _has_cn(cand):
+            result = cand
+            _TRANS_STATS["agnes"] += 1
+
+    # ── 端点 1：Google gtx（Agnes 已成功时跳过）──
+    if not result:
+        params = urllib.parse.urlencode({"client": "gtx", "sl": "auto", "tl": "zh-CN", "dt": "t", "q": text})
+        for attempt in range(2):
+            try:
+                req = urllib.request.Request(
+                    "https://translate.googleapis.com/translate_a/single?" + params,
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                )
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    data = json.loads(r.read().decode("utf-8"))
+                cand = "".join(seg[0] for seg in data[0] if seg[0]).strip()
+                if cand and _has_cn(cand):
+                    result = cand
+                    _TRANS_STATS["google"] += 1
+                break
+            except urllib.error.HTTPError as e:
+                if e.code == 429 and attempt == 0:
+                    time.sleep(3)
+                    continue
+                if attempt == 1:
+                    print("[AI晨报] Google-gtx 端点失败: HTTP %s" % e.code, file=sys.stderr)
+                break
+            except Exception as ex:
+                if attempt == 1:
+                    print("[AI晨报] Google-gtx 端点失败: %s: %s" % (type(ex).__name__, ex), file=sys.stderr)
+                break
 
     # ── 端点 2：Bing 网页版（免费，无需 API key）──
     if not result:
@@ -714,8 +758,8 @@ def translate_extra_items(items):
                 it["summary"] = s
     # 翻译统计：按端点报告成败，方便在 GA 日志中定位哪个端点哑了
     s = _TRANS_STATS
-    detail = "Google=%d Bing=%d MyMemory=%d Google-chrome=%d 失败=%d 跳过=%d" % (
-        s["google"], s["bing"], s["mymemory"], s["google_alt"], s["fail"], s["skip"])
+    detail = "Agnes=%d Google=%d Bing=%d MyMemory=%d Google-chrome=%d 失败=%d 跳过=%d" % (
+        s["agnes"], s["google"], s["bing"], s["mymemory"], s["google_alt"], s["fail"], s["skip"])
     print("[AI晨报] 英文条目翻译完成，%d 条标题已中文化（%s）" % (n, detail))
 
 

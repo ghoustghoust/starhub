@@ -493,11 +493,13 @@ def build_trending(token, desc_zh):
 
 
 def generate_ai_summary(rising_top10):
-    """调用 DeepSeek API 生成 AI 态势一句话摘要。失败返回 None（静默降级）。"""
-    api_key = os.environ.get("DEEPSEEK_API_KEY")
+    """调用 Agnes AI API 生成 AI 态势一句话摘要。失败返回 None（静默降级）。"""
+    api_key = os.environ.get("AGNES_API_KEY")
     if not api_key:
+        print("[AI摘要] 跳过: 未配置 AGNES_API_KEY", file=sys.stderr)
         return None
     if not rising_top10:
+        print("[AI摘要] 跳过: rising 列表为空", file=sys.stderr)
         return None
     lines = []
     for p in rising_top10[:10]:
@@ -509,17 +511,19 @@ def generate_ai_summary(rising_top10):
             lines.append(name)
     prompt = "用一句话（30字以内）概括今日 GitHub AI/开源生态态势，基于以下涨星项目：" + "、".join(lines)
     payload = json.dumps({
-        "model": "deepseek-chat",
+        "model": "agnes-2.5-flash",
         "messages": [
             {"role": "system", "content": "你是一个简洁的 AI 开源态势分析师，回答不超过30字。"},
             {"role": "user", "content": prompt}
         ],
-        "max_tokens": 100,
+        "max_tokens": 200,
         "temperature": 0.7,
+        # agnes-2.5-flash 是思考型模型：不关闭思考时 max_tokens 会被推理耗尽，content 为空
+        "chat_template_kwargs": {"enable_thinking": False},
     }).encode("utf-8")
     try:
         req = urllib.request.Request(
-            "https://api.deepseek.com/v1/chat/completions",
+            "https://apihub.agnes-ai.com/v1/chat/completions",
             data=payload,
             headers={
                 "Content-Type": "application/json",
@@ -527,12 +531,16 @@ def generate_ai_summary(rising_top10):
                 "User-Agent": "starhub-auto-update",
             },
         )
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=30) as r:
             data = json.loads(r.read().decode("utf-8"))
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        choice = data.get("choices", [{}])[0]
+        content = (choice.get("message", {}).get("content") or "").strip()
         if content and len(content) <= 100:
             print("[AI摘要] %s" % content)
             return content
+        # content 为空/超长：打印诊断，避免静默失败
+        print("[AI摘要] 响应不合格: content_len=%d finish_reason=%r usage=%s"
+              % (len(content), choice.get("finish_reason"), data.get("usage")), file=sys.stderr)
     except urllib.error.HTTPError as e:
         print("[AI摘要] API 调用失败: HTTP %s" % e.code, file=sys.stderr)
     except Exception as e:
@@ -750,7 +758,10 @@ def main(mode="full"):
     # AI 态势一句话：构建时生成，注入涨星榜区域
     ai_summary = ""
     if cfg.get("ai_summary_enabled", True):
+        print("[AI摘要] enabled, rising=%d" % len(trending.get("rising", [])))
         ai_summary = generate_ai_summary(trending.get("rising", [])[:10]) or ""
+    else:
+        print("[AI摘要] 已禁用 (ai_summary_enabled=false)")
 
     feed = fetch_following_events(token)
 

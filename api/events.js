@@ -16,6 +16,8 @@ const TTL = 10 * 60 * 1000;
 const CONCURRENCY = 3;
 
 let cache = { t: 0, v: null };
+// 速率限制追踪：记录 GitHub API 响应头中的额度信息，用于自适应降频
+let rateLimitInfo = { limit: 5000, remaining: 5000, reset: 0, tracked: false };
 
 function cacheGet() {
   if (cache.v && Date.now() - cache.t < TTL) return cache.v;
@@ -48,6 +50,28 @@ async function gh(url, token) {
     },
     signal: AbortSignal.timeout(12000),
   });
+  // 追踪速率限制头（每次响应都更新，即使成功）
+  const rlLimit = r.headers.get('x-ratelimit-limit');
+  const rlRemain = r.headers.get('x-ratelimit-remaining');
+  const rlReset = r.headers.get('x-ratelimit-reset');
+  if (rlLimit) {
+    rateLimitInfo = {
+      limit: Number(rlLimit) || 5000,
+      remaining: Number(rlRemain) || 0,
+      reset: Number(rlReset) || 0,
+      tracked: true,
+    };
+  }
+  // 触发主限流：403 + remaining=0 → 等到 reset 时间
+  if (r.status === 403 && rateLimitInfo.remaining === 0) {
+    const waitSec = Math.max(0, rateLimitInfo.reset - Math.floor(Date.now() / 1000));
+    throw new Error('rate_limited|reset_in=' + waitSec + 's');
+  }
+  // 触发次级限流：429 → 按 Retry-After 等待
+  if (r.status === 429) {
+    const retryAfter = Number(r.headers.get('retry-after')) || 60;
+    throw new Error('abuse_limited|retry_after=' + retryAfter + 's');
+  }
   if (!r.ok) throw new Error('gh ' + r.status);
   return r.json();
 }
@@ -130,7 +154,23 @@ export default async function handler(req, res) {
   }
 
   const hit = cacheGet();
-  if (hit) { res.status(200).json(hit); return; }
+  if (hit) {
+    // 缓存命中也附带速率信息，前端可据此判断健康度
+    hit.rate_limit = { ...rateLimitInfo, cached: true };
+    res.status(200).json(hit);
+    return;
+  }
+
+  // 自适应降频：剩余额度低于 20% 时延长缓存 TTL 到 30 分钟
+  const lowQuota = rateLimitInfo.tracked && rateLimitInfo.remaining < rateLimitInfo.limit * 0.2;
+  if (lowQuota) {
+    const staleHit = cache.v && Date.now() - cache.t < 30 * 60 * 1000;
+    if (staleHit) {
+      cache.v.rate_limit = { ...rateLimitInfo, cached: true, throttled: true };
+      res.status(200).json(cache.v);
+      return;
+    }
+  }
 
   try {
     const now = cnNow();
@@ -151,10 +191,21 @@ export default async function handler(req, res) {
       updated_at: cnStr(now).date + ' ' + cnStr(now).time,
       window: '24h',
       items: all,
+      rate_limit: { ...rateLimitInfo, cached: false },
     };
     cache = { t: Date.now(), v: body };
     res.status(200).json(body);
   } catch (e) {
-    res.status(502).json({ error: '上游服务不可用' });
+    // 区分限流错误 vs 其他错误
+    const msg = e.message || '';
+    if (msg.startsWith('rate_limited') || msg.startsWith('abuse_limited')) {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'events', error: 'rate_limited', detail: msg, rate_limit: rateLimitInfo }));
+      // 限流时返回 429 + Retry-After，前端据此降频
+      const retryAfter = msg.includes('reset_in=') ? Number(msg.split('reset_in=')[1]) || 60 : 60;
+      res.setHeader('Retry-After', String(retryAfter));
+      res.status(429).json({ error: 'GitHub API 限流', retry_after: retryAfter, rate_limit: rateLimitInfo });
+    } else {
+      res.status(502).json({ error: '上游服务不可用' });
+    }
   }
 }

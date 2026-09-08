@@ -1590,15 +1590,31 @@ function renderFeed(){
 }
 
 // 实时拉取关注动态（Vercel 代理聚合）：成功替换 FEED 重渲染，失败静默保持静态数据
+// 自适应轮询：根据 rate_limit 信息和 429 响应动态调整下次轮询间隔
+let feedPollInterval = 30 * 60 * 1000; // 默认 30 分钟
 async function refreshFeed(){
   try{
     const r = await fetch(EVENTS_API);
+    if(r.status === 429){
+      // GitHub API 限流：按 Retry-After 延长下次轮询
+      const retryAfter = Number(r.headers.get('retry-after')) || 60;
+      feedPollInterval = Math.max(feedPollInterval, (retryAfter + 30) * 1000);
+      console.log('[feed] Rate limited, next poll in', Math.round(feedPollInterval/60000), 'min');
+      return;
+    }
     if(!r.ok) return;
     const j = await r.json();
     if(!j || !Array.isArray(j.items)) return;
     FEED = j.items;
     feedUpdated = j.updated_at || '';
     feedLive = true;
+    // 根据剩余额度自适应：低于 20% 时延长到 60 分钟
+    if(j.rate_limit && j.rate_limit.tracked){
+      const pct = j.rate_limit.remaining / j.rate_limit.limit;
+      if(pct < 0.2) feedPollInterval = 60 * 60 * 1000;
+      else if(pct < 0.5) feedPollInterval = 45 * 60 * 1000;
+      else feedPollInterval = 30 * 60 * 1000;
+    }
     renderFeed();
   }catch(e){ /* 静默降级：网络异常时保持静态数据 */ }
 }
@@ -1778,19 +1794,28 @@ async function loadAihot(){
   }
 }
 
-// 30 分钟轮询：页面不可见时暂停（回调内检查 document.hidden），回到页面立即拉取一次
+// 自适应轮询：页面不可见时暂停，回到页面立即拉取一次
+// 使用 setTimeout 递归实现动态间隔（根据 rate_limit 信息调整）
 function startFeedPolling(){
   if(feedTimer) return;
-  feedTimer = setInterval(() => {
-    if(document.hidden) return;
-    refreshFeed();
-    if(aihotLoaded){ aihotLoaded = false; loadAihot(); }
-  }, 30 * 60 * 1000);
+  function scheduleNext(){
+    feedTimer = setTimeout(() => {
+      if(document.hidden){ scheduleNext(); return; }
+      refreshFeed().finally(() => {
+        if(aihotLoaded){ aihotLoaded = false; loadAihot(); }
+        scheduleNext();
+      });
+    }, feedPollInterval);
+  }
   document.addEventListener('visibilitychange', () => {
     if(document.hidden) return;
-    refreshFeed();
-    if(state.sideTab === 'aihot'){ aihotLoaded = false; loadAihot(); }
+    clearTimeout(feedTimer);
+    refreshFeed().finally(() => {
+      if(state.sideTab === 'aihot'){ aihotLoaded = false; loadAihot(); }
+      scheduleNext();
+    });
   });
+  scheduleNext();
 }
 
 // ---- 事件绑定 ----

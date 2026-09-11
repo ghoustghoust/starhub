@@ -5,10 +5,12 @@
 布局：卡片墙 + 抽屉阅读器（信源面板 | 卡片墙 | 阅读抽屉）
 功能：信源分类筛选、全局搜索、标题/摘要翻译、响应式三端适配、主题切换。
 """
+import collections
 import html as html_mod
 import datetime
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -36,12 +38,53 @@ RSS_CACHE_TTL = 1800  # RSS 缓存有效期：30 分钟
 NEWSNOW_API_TMPL = "https://newsnow.busiyi.world/api/s?id=%s"
 NEWSNOW_TIMEOUT = 10
 HOT_SNAPSHOT_FILE = "hot_snapshot.json"
+HOT_HISTORY_FILE = "hot_history.json"  # 热榜轨迹历史（保留 7 天）
 # 期望的热榜源（按优先级排序，构建时按此顺序提取）
 NEWSNOW_PLATFORMS = ["weibo", "zhihu", "zhihu-daily", "baidu", "bilibili", "douyin"]
 
 # ── 缓存数据 ──
 _trans_cache = {}  # {text_hash: translated_text}
 _rss_cache = {}    # {source_key: {"items": [...], "fetched_at": timestamp}}
+
+# ── 智能分析配置 ──
+ANALYSIS_SNAPSHOT_FILE = "analysis_snapshot.json"
+SOURCE_QUALITY_FILE = "source_quality.json"
+RSS_TREND_HISTORY_FILE = "rss_trend_history.json"  # RSS 内容趋势历史（保留 14 天）
+# 中英文停用词表（关键词提取时过滤）
+_STOP_WORDS_ZH = set("的了是在我有和就不人都一个上也这到说们为你会对" +
+    "他就是那要被她它自己什么没有可以已经还是或者虽然但是因此如果" +
+    "而且并且或者以及不过然后所以因为于在与及等和而关于中从把被让给" +
+    "向由按照根据为了因作为以更最非常再又还已经正在才刚各每全部" +
+    "表示指出认为透露宣布发布推出上线下线升级更新修复" +  # 新闻动词（过于通用）
+    "据悉据报道消息称知情人士透露" +  # 新闻套话
+    "相关有关涉及方面部门机构组织" +  # 泛化名词
+    "进行开展实施推进落实加强深化" +  # 公文动词
+    "重要重大显著明显突出关键核心" +  # 泛化形容词
+    "发展建设改革完善优化提升推动促进")  # 泛化动词
+_STOP_WORDS_EN = set(("the a an is are was were be been being have has had do does did will would shall should may might can could " +
+    "i me my we our you your he him his she her it its they them their " +
+    "this that these those there here what which who whom whose when where why how " +
+    "and or but not no nor so yet for to of in on at by with from as into about through during before after above below between under " +
+    "again further then once also just than very too only same other some such all each every both few more most " +
+    "new old first last long great little own right big high small next early young important public bad able " +
+    # URL / HTML 残留噪声
+    "https http ftp com org net edu gov io co www " +
+    "id item html htm url href src png jpg gif css js xml json nbsp div span class " +
+    "amp lt gt quot mdash ndash laquo raquo " +
+    "aihot ycombinator").split())
+_STOP_WORDS = _STOP_WORDS_ZH | _STOP_WORDS_EN
+
+# ── 分析功能开关（从 build_config.json 读取） ──
+def _load_analysis_enabled():
+    """从 build_config.json 读取 analysis_enabled 开关，文件缺失或损坏时默认开启。"""
+    try:
+        with open("build_config.json", "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        return bool(cfg.get("analysis_enabled", True))
+    except Exception:
+        return True
+
+ANALYSIS_ENABLED = _load_analysis_enabled()
 
 # ── 72 小时内容累积 ──
 RSS_HISTORY_FILE = "rss_history.json"
@@ -2164,6 +2207,131 @@ body.af-tab-hot .af-sub,body.af-tab-hot .af-filter,body.af-tab-hot .af-body,body
   .hp-tabs{padding:8px 10px 2px;gap:4px;}
   .hp-body{padding:6px 10px 14px;}
 }
+
+/* ── Insight Bar（每日洞察面板） ── */
+.insight-btn{display:inline-flex;align-items:center;gap:5px;padding:4px 13px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid #6366f133;background:#6366f114;color:#4338ca;transition:all .15s;cursor:pointer;}
+.insight-btn:hover{background:#6366f1;color:#fff;}
+.insight-btn.on{background:#6366f1;color:#fff;}
+.insight-btn svg{width:13px;height:13px;}
+.insight-bar{display:none;margin:0 16px 8px;border:1px solid var(--line);border-radius:var(--radius);background:var(--card);overflow:hidden;animation:insightSlide .25s ease;}
+.insight-bar.open{display:block;}
+@keyframes insightSlide{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+.ib-head{display:flex;align-items:center;justify-content:space-between;padding:10px 16px 6px;border-bottom:1px solid var(--line);}
+.ib-head h3{margin:0;font-size:14px;font-weight:700;display:flex;align-items:center;gap:6px;}
+.ib-head h3 svg{width:16px;height:16px;color:var(--brand);}
+.ib-close{background:none;border:none;cursor:pointer;padding:4px;border-radius:6px;color:var(--faint);transition:all .15s;}
+.ib-close:hover{background:var(--hover);color:var(--ink);}
+.ib-close svg{width:16px;height:16px;}
+.ib-body{padding:12px 16px 16px;}
+.ib-section{margin-bottom:14px;}
+.ib-section:last-child{margin-bottom:0;}
+.ib-label{font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;}
+.ib-summary{font-size:13.5px;line-height:1.7;color:var(--ink);padding:8px 12px;background:var(--brand-weak);border-radius:8px;border-left:3px solid var(--brand);}
+.ib-sub-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.ib-sub-section{padding:8px 12px;border-radius:8px;border-left:3px solid;font-size:13px;line-height:1.65;}
+.ib-sub-section.sub-core{background:#6366f10a;border-color:#6366f1;}
+.ib-sub-section.sub-signal{background:#f59e0b0a;border-color:#f59e0b;}
+.ib-sub-section.sub-rss{background:#10b9810a;border-color:#10b981;}
+.ib-sub-section.sub-outlook{background:#ef44440a;border-color:#ef4444;}
+.ib-sub-label{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;opacity:.7;}
+.ib-sub-section.sub-core .ib-sub-label{color:#6366f1;}
+.ib-sub-section.sub-signal .ib-sub-label{color:#b45309;}
+.ib-sub-section.sub-rss .ib-sub-label{color:#059669;}
+.ib-sub-section.sub-outlook .ib-sub-label{color:#dc2626;}
+.ib-narrative{padding:10px 14px;border-radius:10px;background:linear-gradient(135deg,#6366f10a,#8b5cf60a);border-left:3px solid #7c3aed;font-size:13px;line-height:1.7;color:var(--ink);margin-bottom:10px;}
+.ib-chain-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;margin-bottom:10px;}
+.ib-chain-card{padding:8px 12px;border-radius:8px;background:var(--card);border:1px solid var(--line);font-size:12px;line-height:1.6;}
+.ib-chain-title{font-weight:600;color:var(--brand);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;}
+.ib-chain-steps{color:var(--ink);}
+.ib-signal-grid{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;}
+.ib-signal-card{padding:6px 12px;border-radius:8px;background:#f59e0b0a;border:1px solid #f59e0b30;font-size:12px;color:#b45309;}
+.ib-outlook{padding:10px 14px;border-radius:10px;background:#10b9810a;border-left:3px solid #10b981;font-size:13px;line-height:1.7;color:var(--ink);}
+.ib-cluster-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px;}
+.ib-cluster-card{padding:10px 14px;border-radius:10px;background:var(--card);border:1px solid var(--line);cursor:pointer;transition:all .15s;}
+.ib-cluster-card:hover{border-color:var(--brand);box-shadow:0 2px 8px #0001;}
+.ib-cluster-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+.ib-cluster-label{font-weight:600;font-size:13px;color:var(--ink);}
+.ib-cluster-count{font-size:11px;color:var(--muted);background:var(--bg);padding:2px 8px;border-radius:999px;}
+.ib-cluster-bar{height:4px;border-radius:2px;background:var(--line);overflow:hidden;}
+.ib-cluster-bar-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--brand),#8b5cf6);transition:width .3s;}
+.ib-sub-text{color:var(--ink);}
+.ib-kw-list{display:flex;flex-wrap:wrap;gap:6px;}
+.ib-kw{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:500;border:1px solid var(--line);background:var(--bg);color:var(--muted);cursor:pointer;transition:all .12s;}
+.ib-kw:hover{border-color:var(--brand);color:var(--brand);background:var(--brand-weak);}
+.ib-kw.rising{border-color:#f59e0b55;background:#f59e0b0e;color:#b45309;}
+.ib-kw.rising::after{content:"↑";margin-left:3px;font-size:10px;font-weight:700;}
+.ib-topic-list{display:flex;flex-direction:column;gap:6px;}
+.ib-topic{display:flex;align-items:center;gap:8px;padding:7px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);cursor:pointer;transition:all .12s;}
+.ib-topic:hover{border-color:var(--brand);background:var(--brand-weak);}
+.ib-topic-rank{flex:none;width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;font-family:var(--mono);background:var(--hover);color:var(--faint);}
+.ib-topic-rank.top3{background:var(--brand-weak);color:var(--brand-strong);}
+.ib-topic-title{flex:1;font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ib-topic-meta{flex:none;font-size:11px;color:var(--faint);font-family:var(--mono);}
+.ib-stats{display:flex;gap:16px;padding:6px 0;font-size:12px;color:var(--faint);font-family:var(--mono);}
+.ib-stats span{display:flex;align-items:center;gap:4px;}
+.ib-no-data{padding:20px;text-align:center;color:var(--faint);font-size:13px;}
+@media (max-width:700px) {
+  .insight-bar{margin:0 8px 6px;}
+  .ib-body{padding:10px 12px 14px;}
+  .ib-kw-list{gap:4px;}
+  .ib-kw{padding:2px 8px;font-size:11px;}
+  .ib-sub-grid{grid-template-columns:1fr;}
+}
+
+/* ── Source Quality Badge（信源质量指示器） ── */
+.sq-badge{flex:none;display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:18px;padding:0 5px;border-radius:9px;font-size:10px;font-weight:700;font-family:var(--mono);line-height:1;}
+.sq-badge.sq-high{background:#10b98118;color:#059669;border:1px solid #10b98133;}
+.sq-badge.sq-mid{background:#f59e0b18;color:#b45309;border:1px solid #f59e0b33;}
+.sq-badge.sq-low{background:#ef444418;color:#dc2626;border:1px solid #ef444433;}
+.sp-health{display:flex;align-items:center;gap:8px;padding:8px 14px;font-size:11.5px;color:var(--muted);border-bottom:1px solid var(--line);}
+.sp-health-dot{width:8px;height:8px;border-radius:50%;}
+.sp-health-dot.good{background:#10b981;}
+.sp-health-dot.warn{background:#f59e0b;}
+.sp-health-dot.bad{background:#ef4444;}
+
+/* ── Hot Trend Arrows（热榜趋势箭头） ── */
+.hp-trend{flex:none;display:inline-flex;align-items:center;gap:2px;font-size:10px;font-weight:700;font-family:var(--mono);padding:1px 5px;border-radius:4px;line-height:1;}
+.hp-trend.t-up{color:#dc2626;background:#dc26260e;}
+.hp-trend.t-down{color:#6b7280;background:#6b72800e;}
+.hp-trend.t-new{color:#059669;background:#0596690e;}
+/* ── Cross Platform（跨平台共振） ── */
+.ib-cross{margin-top:10px;}
+.ib-cross-list{display:flex;flex-direction:column;gap:5px;}
+.ib-cross-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font-size:12.5px;}
+.ib-cross-label{flex:1;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ib-cross-plats{display:flex;gap:4px;}
+.ib-cross-plat{font-size:10px;padding:1px 6px;border-radius:4px;background:var(--hover);color:var(--faint);font-weight:600;}
+.ib-trend{margin-top:12px;}
+.ib-trend-title{font-size:12px;font-weight:600;color:var(--faint);margin-bottom:6px;}
+.ib-trend-list{display:flex;flex-direction:column;gap:4px;}
+.ib-trend-item{display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid var(--line);border-radius:8px;font-size:12px;}
+.ib-trend-label{flex:1;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ib-trend-count{font-size:11px;color:var(--faint);min-width:40px;text-align:right;}
+.ib-trend-arrow{font-weight:700;font-size:13px;}
+.ib-trend-arrow.t-up{color:#e74c3c;}
+.ib-trend-arrow.t-down{color:#95a5a6;}
+.ib-trend-arrow.t-hot{color:#e67e22;}
+.ib-trend-arrow.t-new{color:#27ae60;}
+.ib-trend-lc{font-size:10px;padding:1px 6px;border-radius:4px;font-weight:600;}
+.ib-trend-lc.lc-emerging{background:#eaf4fe;color:#2980b9;border:1px solid #b3d7f7;}
+.ib-trend-lc.lc-hot{background:#fef5e7;color:#e67e22;border:1px solid #f5cba7;}
+.ib-trend-lc.lc-cooling{background:#f4f6f7;color:#7f8c8d;border:1px solid #d5d8dc;}
+.ib-trend-lc.lc-cold{background:#f9f9f9;color:#bdc3c7;border:1px solid #e5e8e8;}
+.ib-ccat{margin-top:12px;}
+.ib-ccat-list{display:flex;flex-wrap:wrap;gap:5px;}
+.ib-ccat-item{display:flex;align-items:center;gap:5px;padding:4px 10px;border:1px solid var(--line);border-radius:8px;font-size:12px;background:var(--bg);}
+.ib-ccat-kw{font-weight:600;color:var(--fg);}
+.ib-ccat-cats{display:flex;gap:3px;}
+.ib-ccat-cat{font-size:10px;padding:1px 5px;border-radius:4px;background:var(--hover);color:var(--faint);}
+.kw-tag{position:relative;cursor:default;}
+.kw-tag.kw-emergent{border-color:#3498db !important;color:#2980b9 !important;}
+.kw-tag.kw-rising{border-color:#e67e22 !important;color:#d35400 !important;}
+.kw-tag.kw-peaking{border-color:#27ae60 !important;color:#1e8449 !important;}
+.kw-tag.kw-declining{border-color:#95a5a6 !important;color:#7f8c8d !important;}
+.kw-tag.kw-gone{border-color:#bdc3c7 !important;color:#bdc3c7 !important;text-decoration:line-through;}
+.kw-tag::after{content:'';position:absolute;top:-2px;right:-2px;width:6px;height:6px;border-radius:50%;}
+.kw-tag.kw-rising::after{background:#e67e22;}
+.kw-tag.kw-emergent::after{background:#3498db;}
 """
 
 
@@ -2188,7 +2356,7 @@ def _build_header():
 """
 
 
-def _build_js(sources_with_items, build_ts_ms=0):
+def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     """Generate core JS for card wall + drawer reader."""
     cat_labels_json = json.dumps(CATEGORY_LABELS, ensure_ascii=False)
     # 内嵌 QR 生成库：国内移动端 jsdelivr/unpkg 常不可达且请求会长时间挂起，
@@ -2207,6 +2375,7 @@ def _build_js(sources_with_items, build_ts_ms=0):
   var BUILD_TS = """ + str(int(build_ts_ms)) + """;
   var SOURCES = [];
   var CAT_LABELS = """ + cat_labels_json + """;
+  var ANALYSIS_DATA = """ + (analysis_json if analysis_json else 'null') + """;
 
   /* ── Data ── */
   var CAT_ORDER = """ + json.dumps(CATEGORY_ORDER, ensure_ascii=False) + """;
@@ -2252,6 +2421,10 @@ def _build_js(sources_with_items, build_ts_ms=0):
       });
     }
     else ART.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
+    if(sortMode==='quality' && ANALYSIS_DATA && ANALYSIS_DATA.quality){
+      var qm=ANALYSIS_DATA.quality;
+      ART.sort(function(a,b){ return (qm[b.sk]||0)-(qm[a.sk]||0); });
+    }
   }
   var _sortEl = document.getElementById('sortSelect');
   if(_sortEl){ _sortEl.value=sortMode; _sortEl.addEventListener('change',function(){ sortMode=this.value; localStorage.setItem('rss_sort_mode',sortMode); applySort(); wallLimit=WALL_STEP; curArt=null; renderWall(); }); }
@@ -2362,7 +2535,24 @@ def _build_js(sources_with_items, build_ts_ms=0):
   window.selectSrc=selectSrc;
   function renderPanel(){
     var q=(document.getElementById('spSearch').value||'').trim().toLowerCase();
-    var h='<div class="sp-all'+(filter.type!=='src'?' on':'')+'" onclick="selectSrc(null)">\u2630 \u5168\u90e8\u4fe1\u6e90<span class="n">'+ART.length+'</span></div>';
+    // 信源健康度总览
+    var healthHtml='';
+    if(ANALYSIS_DATA&&ANALYSIS_DATA.quality){
+      var qm=ANALYSIS_DATA.quality,vals=Object.values(qm),n=vals.length;
+      if(n>0){
+        var avg=vals.reduce(function(a,b){return a+b;},0)/n;
+        var good=vals.filter(function(v){return v>=70;}).length;
+        var warn=vals.filter(function(v){return v>=40&&v<70;}).length;
+        var bad=vals.filter(function(v){return v<40;}).length;
+        healthHtml='<div class="sp-health">';
+        healthHtml+='<span class="sp-health-dot good"></span>'+good+' \u5065\u5eb7';
+        healthHtml+='<span class="sp-health-dot warn"></span>'+warn+' \u8b66\u544a';
+        healthHtml+='<span class="sp-health-dot bad"></span>'+bad+' \u5f02\u5e38';
+        healthHtml+='<span style="margin-left:auto;color:var(--faint)">\u5747\u5206 '+Math.round(avg)+'</span>';
+        healthHtml+='</div>';
+      }
+    }
+    var h=healthHtml+'<div class="sp-all'+(filter.type!=='src'?' on':'')+'" onclick="selectSrc(null)">\u2630 \u5168\u90e8\u4fe1\u6e90<span class="n">'+ART.length+'</span></div>';
     var byCat={};
     SOURCES.forEach(function(s){
       if(!q||s.name.toLowerCase().indexOf(q)>=0){
@@ -2381,7 +2571,9 @@ def _build_js(sources_with_items, build_ts_ms=0):
       h+='<div class="sp-cat-body" data-body="'+c+'">';
       arr.forEach(function(s){
         var on=filter.type==='src'&&filter.src===s.key;
-        h+='<div class="sp-src'+(on?' on':'')+'" data-k="'+s.key+'"><span class="src-dot" style="--sc:'+s.color+'"></span><span class="nm">'+esc(s.name)+'</span><span class="n">'+s.items.length+'</span></div>';
+        h+='<div class="sp-src'+(on?' on':'')+'" data-k="'+s.key+'"><span class="src-dot" style="--sc:'+s.color+'"></span><span class="nm">'+esc(s.name)+'</span><span class="n">'+s.items.length+'</span>';
+        if(ANALYSIS_DATA&&ANALYSIS_DATA.quality){var qs=ANALYSIS_DATA.quality[s.key];if(qs!=null){var qc=qs>=70?'sq-high':qs>=40?'sq-mid':'sq-low';h+='<span class="sq-badge '+qc+'">'+Math.round(qs)+'</span>';}}
+        h+='</div>';
       });
       h+='</div>';
     });
@@ -2409,7 +2601,6 @@ def _build_js(sources_with_items, build_ts_ms=0):
       if(filter.type==='cat' && !filter.cats[a.c]) return false;
       if(filter.type==='src' && a.sk!==filter.src) return false;
       if(filter.filterBm && !_bookmarks[artKey(a)]) return false;
-      /* F2 修复：BestBlogs UI 已移除，清除残留引用 */
       if(filter.unreadOnly && visited[artKey(a)]) return false;
       if(q) {
         if(_searchSrcMatch) return a.sk === _searchSrcMatch;
@@ -4098,7 +4289,7 @@ def _build_js(sources_with_items, build_ts_ms=0):
   if(_aiDesktop() && !afLoaded) _loadAll();
 
   /* ══════════════════════════════════════════
-     面板双 Tab：AI 快讯 / 全网热榜（newsnow 快照，首次切到热榜 Tab 才懒加载）
+     面板 Tab：AI 快讯 / 全网热榜
      ══════════════════════════════════════════ */
   var afTab='feed';
   var _hotLoaded=false,_hotLoading=false,_hotData=null;
@@ -4108,6 +4299,8 @@ def _build_js(sources_with_items, build_ts_ms=0):
     var tf=document.getElementById('afTabFeed'),th=document.getElementById('afTabHot');
     if(tf){tf.classList.toggle('on',tab==='feed');tf.setAttribute('aria-selected',tab==='feed'?'true':'false');}
     if(th){th.classList.toggle('on',tab==='hot');th.setAttribute('aria-selected',tab==='hot'?'true':'false');}
+    var hw=document.getElementById('hpWrap');
+    if(hw) hw.style.display=(tab==='hot')?'flex':'none';
     var rb=document.getElementById('afRefreshBtn'); if(rb) rb.style.display=(tab==='feed')?'':'none';
     var hb=document.getElementById('btnHot'); if(hb) hb.classList.toggle('on',tab==='hot'&&document.body.classList.contains('ai-open'));
     if(tab==='hot'&&!_hotLoaded) loadHotSnapshot();
@@ -4163,17 +4356,249 @@ def _build_js(sources_with_items, build_ts_ms=0):
     for(var i=0;i<_hotData.length;i++){ if(_hotData[i].platform===p){src=_hotData[i];break;} }
     if(!src){list.innerHTML='<div class="hp-empty">暂无热榜数据</div>';return;}
     var h='';
+    var platTrends=(ANALYSIS_DATA&&ANALYSIS_DATA.hot_trends&&ANALYSIS_DATA.hot_trends[p])||{};
     for(var j=0;j<src.items.length;j++){
       var it=src.items[j],rk=it.rank||(j+1),cls=rk<=3?' top3':'';
-      var hotTxt=it.hot?(''+it.hot).replace(/^(\d+)(\d{4,})$/,function(m,a,b){return a+'万';}):'';
+      var hotTxt=it.hot?(''+it.hot).replace(/^(\d+)(\d{4,})$/,function(m,a,b){return a+'\u4e07';}):'';
       h+='<a class="hp-item" href="'+_escH(it.url||'#')+'" target="_blank" rel="noopener">';
       h+='<span class="hp-rank'+cls+'">'+rk+'</span>';
       h+='<span class="hp-title">'+_escH(it.title||'')+'</span>';
       if(hotTxt) h+='<span class="hp-hot">'+hotTxt+'</span>';
+      var td=platTrends[it.title||''];
+      if(td&&td.trend==='rising') h+='<span class="hp-trend t-up">\u2191'+td.rise+'</span>';
+      else if(td&&td.trend==='falling') h+='<span class="hp-trend t-down">\u2193'+Math.abs(td.rise)+'</span>';
+      else if(td&&td.trend==='new') h+='<span class="hp-trend t-new">\u65b0</span>';
       h+='</a>';
     }
     list.innerHTML=h||'<div class="hp-empty">暂无热榜数据</div>';
   }
+
+  /* ── Insight Panel（每日洞察） ── */
+  function toggleInsight(){
+    var bar=document.getElementById('insightBar');
+    var btn=document.getElementById('btnInsight');
+    if(!bar)return;
+    var opening=!bar.classList.contains('open');
+    bar.classList.toggle('open',opening);
+    if(btn)btn.classList.toggle('on',opening);
+    if(opening) renderInsight();
+  }
+  window.toggleInsight=toggleInsight;
+
+  function renderInsight(){
+    var el=document.getElementById('insightBody');
+    if(!el||!ANALYSIS_DATA)return;
+    var d=ANALYSIS_DATA, h='';
+    // 统计摘要
+    if(d.stats||d.generated_at){
+      h+='<div class="ib-stats">';
+      if(d.stats){
+        h+='<span>\U0001f4ca \u6587\u7ae0: '+d.stats.total_articles+'</span>';
+        h+='<span>\U0001f514 \u8fd124h: '+d.stats.recent_count+'</span>';
+        h+='<span>\U0001f4e1 \u4fe1\u6e90: '+d.stats.source_count+'</span>';
+      }
+      if(d.generated_at) h+='<span>\u23f0 '+(d.generated_at||'').slice(0,16).replace('T',' ')+'</span>';
+      h+='</div>';
+      h+='<div style="font-size:10.5px;color:var(--faint);padding:0 0 6px;">\u6570\u636e\u8303\u56f4: \u8fd1 72 \u5c0f\u65f6\u6eda\u52a8\u7a97\u53e3</div>';
+    }
+    // AI 摘要（支持结构化 dict 和旧格式 string）
+    if(d.summary){
+      if(typeof d.summary==='object'&&!Array.isArray(d.summary)){
+        h+='<div class="ib-section"><div class="ib-label">AI 情报分析</div>';
+        h+='<div class="ib-sub-grid">';
+        var sections=[
+          {k:'core_trends',cls:'sub-core',l:'\u6838\u5fc3\u6001\u52bf'},
+          {k:'signals',cls:'sub-signal',l:'\u5f02\u52a8\u4fe1\u53f7'},
+          {k:'rss_insights',cls:'sub-rss',l:'RSS\u6d1e\u5bdf'},
+          {k:'outlook',cls:'sub-outlook',l:'\u7814\u5224\u5efa\u8bae'}
+        ];
+        sections.forEach(function(s){
+          if(d.summary[s.k]){
+            h+='<div class="ib-sub-section '+s.cls+'">';
+            h+='<div class="ib-sub-label">'+s.l+'</div>';
+            h+='<div class="ib-sub-text">'+esc(d.summary[s.k])+'</div>';
+            h+='</div>';
+          }
+        });
+        h+='</div></div>';
+      } else if(typeof d.summary==='string'){
+        h+='<div class="ib-section"><div class="ib-label">AI \u6458\u8981</div>';
+        h+='<div class="ib-summary">'+esc(d.summary)+'</div></div>';
+      }
+    }
+    // \u6df1\u5ea6\u6d1e\u5bdf (deep_insights)
+    if(d.deep_insights){
+      var di=d.deep_insights;
+      if(di.narrative){
+        h+='<div class="ib-section"><div class="ib-label">\U0001f50d \u53d9\u4e8b\u8109\u7edc</div>';
+        h+='<div class="ib-narrative">'+esc(di.narrative)+'</div></div>';
+      }
+      if(di.causal_chains&&di.causal_chains.length){
+        h+='<div class="ib-section"><div class="ib-label">\u26a1 \u56e0\u679c\u94fe</div><div class="ib-chain-grid">';
+        di.causal_chains.forEach(function(c){
+          h+='<div class="ib-chain-card">';
+          if(typeof c==='string'){
+            h+='<div class="ib-chain-steps">'+esc(c)+'</div>';
+          } else {
+            h+='<div class="ib-chain-title">'+esc(c.title||c.name||'\u56e0\u679c\u5173\u7cfb')+'</div>';
+            h+='<div class="ib-chain-steps">'+esc(c.chain||c.description||'')+'</div>';
+          }
+          h+='</div>';
+        });
+        h+='</div></div>';
+      }
+      if(di.signals&&di.signals.length){
+        h+='<div class="ib-section"><div class="ib-label">\U0001f4e1 \u4fe1\u53f7\u770b\u677f</div><div class="ib-signal-grid">';
+        di.signals.forEach(function(s){
+          h+='<div class="ib-signal-card">'+esc(s.label||s.name||s.text||s.signal||'')+'</div>';
+        });
+        h+='</div></div>';
+      }
+      if(di.outlook){
+        h+='<div class="ib-section"><div class="ib-label">\U0001f52e \u8d8b\u52bf\u5c55\u671b</div>';
+        h+='<div class="ib-outlook">'+esc(di.outlook)+'</div></div>';
+      }
+    }
+    // \u8bdd\u9898\u805a\u7c7b (topic_clusters)
+    if(d.topic_clusters&&d.topic_clusters.length){
+      var maxCnt=0;
+      d.topic_clusters.forEach(function(c){if(c.count>maxCnt)maxCnt=c.count;});
+      h+='<div class="ib-section"><div class="ib-label">\U0001f4ca \u8bdd\u9898\u805a\u7c7b</div><div class="ib-cluster-list">';
+      d.topic_clusters.slice(0,12).forEach(function(c){
+        var pct=maxCnt>0?Math.round(c.count/maxCnt*100):0;
+        h+='<div class="ib-cluster-card" data-kw="'+esc(c.label||'')+'" onclick="insightSearch(this.dataset.kw)">';
+        h+='<div class="ib-cluster-head"><span class="ib-cluster-label">'+esc(c.label||'\u672a\u547d\u540d')+'</span>';
+        h+='<span class="ib-cluster-count">'+c.count+' \u7bc7</span></div>';
+        h+='<div class="ib-cluster-bar"><div class="ib-cluster-bar-fill" style="width:'+pct+'%"></div></div>';
+        h+='</div>';
+      });
+      h+='</div></div>';
+    }
+    // 热门关键词（带生命周期标记）
+    if(d.keywords&&d.keywords.global&&d.keywords.global.length){
+      var risingSet={};
+      if(d.rising) d.rising.forEach(function(r){risingSet[r.word]=r.rise;});
+      var kwTraj=(d.rss_trajectories&&d.rss_trajectories.keywords)||{};
+      h+='<div class="ib-section"><div class="ib-label">\u70ed\u95e8\u5173\u952e\u8bcd</div><div class="ib-kw-list">';
+      d.keywords.global.slice(0,30).forEach(function(kw,idx){
+        var w=kw[0],score=kw[1],isRising=risingSet[w];
+        var traj=kwTraj[w]||{};
+        var lc=traj.lifecycle||'';
+        var tip='#'+(idx+1)+' \u5f97\u5206:'+score.toFixed(2);
+        if(isRising) tip+=' (\u4e0a\u5347'+isRising+'\u4f4d)';
+        if(lc) tip+=' | \u8f68\u8ff9:'+lc;
+        if(traj.first_seen) tip+=' | \u9996\u6b21:'+traj.first_seen.slice(5,16).replace('T',' ');
+        if(traj.duration) tip+=' | \u6301\u7eed:'+traj.duration+'\u5468\u671f';
+        var cls='ib-kw';
+        if(lc==='emergent') cls+=' kw-emergent kw-tag';
+        else if(lc==='rising') cls+=' kw-rising kw-tag';
+        else if(lc==='peaking') cls+=' kw-peaking kw-tag';
+        else if(lc==='declining') cls+=' kw-declining kw-tag';
+        else if(lc==='gone') cls+=' kw-gone kw-tag';
+        else if(isRising) cls+=' rising';
+        h+='<span class="'+cls+'" data-kw="'+esc(w)+'" title="'+tip+'" onclick="insightSearch(this.dataset.kw)">'+esc(w)+'</span>';
+      });
+      h+='</div></div>';
+    }
+    // 升温关键词
+    if(d.rising&&d.rising.length){
+      h+='<div class="ib-section"><div class="ib-label">\u2b06\ufe0f 升温词</div><div class="ib-kw-list">';
+      d.rising.forEach(function(r){
+        h+='<span class="ib-kw rising" data-kw="'+esc(r.word)+'" onclick="insightSearch(this.dataset.kw)" title="排名上升 '+r.rise+' 位">'+esc(r.word)+'</span>';
+      });
+      h+='</div></div>';
+    }
+    // 今日话题
+    if(d.topics&&d.topics.length){
+      h+='<div class="ib-section"><div class="ib-label">今日话题</div><div class="ib-topic-list">';
+      d.topics.slice(0,12).forEach(function(t,i){
+        var rk=i+1, cls=rk<=3?' top3':'';
+        var tl=(t.label||(t.labels&&t.labels.length?t.labels.join(' '):''));
+        var src=t.sources?(Array.isArray(t.sources)?t.sources.length:t.sources):0;
+        h+='<div class="ib-topic" data-kw="'+esc(tl)+'" onclick="insightSearch(this.dataset.kw)">';
+        h+='<span class="ib-topic-rank'+cls+'">'+rk+'</span>';
+        h+='<span class="ib-topic-title">'+esc(tl)+'</span>';
+        h+='<span class="ib-topic-meta">'+t.count+' 篇 · '+src+' 源</span>';
+        h+='</div>';
+      });
+      h+='</div></div>';
+    }
+    // 话题趋势（跨周期轨迹）
+    var topicTraj=(d.rss_trajectories&&d.rss_trajectories.topics)||{};
+    if(d.topics&&d.topics.length&&Object.keys(topicTraj).length>0){
+      h+='<div class="ib-section ib-trend"><div class="ib-trend-title">\U0001f4c8 \u8bdd\u9898\u8d8b\u52bf</div><div class="ib-trend-list">';
+      d.topics.slice(0,10).forEach(function(t){
+        var tl=(t.label||(t.labels&&t.labels.length?t.labels.join(' '):''));
+        var traj=topicTraj[tl]||{};
+        var lc=traj.lifecycle||'emerging';
+        var cnt=t.count||0;
+        var arrow='', arrowCls='';
+        if(lc==='hot'){arrow='\U0001f525';arrowCls='t-hot';}
+        else if(lc==='emerging'){arrow='\u2b06';arrowCls='t-up';}
+        else if(lc==='cooling'){arrow='\u2b07';arrowCls='t-down';}
+        else if(lc==='cold'){arrow='\u2744';arrowCls='t-down';}
+        var lcLabel={emerging:'\u65b0\u5174',hot:'\u706b\u7206',cooling:'\u964d\u6e29',cold:'\u51b7\u5374'}[lc]||lc;
+        h+='<div class="ib-trend-item" data-kw="'+esc(tl)+'" onclick="insightSearch(this.dataset.kw)">';
+        h+='<span class="ib-trend-label">'+esc(tl)+'</span>';
+        h+='<span class="ib-trend-count">'+cnt+'\u7bc7</span>';
+        if(arrow) h+='<span class="ib-trend-arrow '+arrowCls+'">'+arrow+'</span>';
+        h+='<span class="ib-trend-lc lc-'+lc+'">'+lcLabel+'</span>';
+        h+='</div>';
+      });
+      h+='</div></div>';
+    }
+    // 跨平台共振
+    if(d.cross_platform&&d.cross_platform.length){
+      h+='<div class="ib-section ib-cross"><div class="ib-label">\u8de8\u5e73\u53f0\u5171\u632f</div><div class="ib-cross-list">';
+      d.cross_platform.slice(0,8).forEach(function(m){
+        h+='<div class="ib-cross-item">';
+        if(m.platforms&&m.platforms.length){
+          h+='<span class="ib-cross-label">'+esc(m.label)+'</span>';
+          h+='<span class="ib-cross-plats">';
+          m.platforms.forEach(function(p){
+            h+='<span class="ib-cross-plat">'+esc(p.name)+'</span>';
+          });
+          h+='</span>';
+        } else {
+          h+='<span class="ib-cross-label">'+esc(m.title_a||m.label||'')+'</span>';
+          h+='<span class="ib-cross-plats">';
+          h+='<span class="ib-cross-plat">'+esc(m.platform_a||'')+'</span>';
+          h+='<span class="ib-cross-plat">'+esc(m.platform_b||'')+'</span>';
+          h+='</span>';
+        }
+        h+='</div>';
+      });
+      h+='</div></div>';
+    }
+    // 跨分类热点
+    if(d.cross_category&&d.cross_category.length){
+      h+='<div class="ib-section ib-ccat"><div class="ib-label">\U0001f310 \u8de8\u5206\u7c7b\u70ed\u70b9</div><div class="ib-ccat-list">';
+      d.cross_category.slice(0,12).forEach(function(cc){
+        h+='<div class="ib-ccat-item" data-kw="'+esc(cc.keyword)+'" onclick="insightSearch(this.dataset.kw)">';
+        h+='<span class="ib-ccat-kw">'+esc(cc.keyword)+'</span>';
+        h+='<span class="ib-ccat-cats">';
+        cc.categories.forEach(function(c){
+          h+='<span class="ib-ccat-cat">'+esc(c)+'</span>';
+        });
+        h+='</span></div>';
+      });
+      h+='</div></div>';
+    }
+    if(!h) h='<div class="ib-no-data">\u6682\u65e0\u5206\u6790\u6570\u636e</div>';
+    el.innerHTML=h;
+  }
+
+  function insightSearch(keyword){
+    var si=document.getElementById('globalSearch');
+    if(si){si.value=keyword;si.dispatchEvent(new Event('input'));}
+    window.scrollTo({top:0,behavior:'smooth'});
+    // 延迟滚动到首篇匹配卡片（等待渲染完成）
+    setTimeout(function(){
+      var first=document.querySelector('.wall .card');
+      if(first) first.scrollIntoView({behavior:'smooth',block:'center'});
+    },150);
+  }
+  window.insightSearch=insightSearch;
 
 })();
 </script>
@@ -4236,8 +4661,33 @@ def write_data_chunks(sources, chunk0_size=CHUNK0_SIZE):
     print("[数据分块] chunk0 %d 篇 / chunk1 %d 篇（共 %d）" % (n0, n1, n0 + n1))
 
 
-def build_html(sources_with_items, build_time, total_items, build_ts_ms=0):
+def build_html(sources_with_items, build_time, total_items, build_ts_ms=0, analysis_data=None):
     """生成完整 HTML 页面 — 卡片墙 + 抽屉阅读器。"""
+    # 构建洞察面板 HTML（仅当分析数据存在时显示按钮）
+    insight_btn = ''
+    insight_bar = ''
+    if analysis_data:
+        insight_btn = (
+            '<button class="insight-btn" id="btnInsight" onclick="toggleInsight()" title="每日洞察">'
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">'
+            '<path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>'
+            '</svg> 洞察</button>\n'
+        )
+        insight_bar = (
+            '<div class="insight-bar" id="insightBar">\n'
+            '<div class="ib-head">\n'
+            '<h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">'
+            '<path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>'
+            ' 每日洞察</h3>\n'
+            '<button class="ib-close" onclick="toggleInsight()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>\n'
+            '</div>\n'
+            '<div class="ib-body" id="insightBody"></div>\n'
+            '</div>\n'
+        )
+    # 分析数据 JSON 注入到 JS
+    analysis_json = ''
+    if analysis_data:
+        analysis_json = json.dumps(analysis_data, ensure_ascii=False, separators=(',', ':'))
     return (
         '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n'
         '<meta charset="utf-8">\n'
@@ -4258,6 +4708,7 @@ def build_html(sources_with_items, build_time, total_items, build_ts_ms=0):
                 '<button class="unread-toggle" id="markAllReadBtn" onclick="markAllRead()" title="\u5168\u90e8\u6807\u8bb0\u5df2\u8bfb" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg> \u5168\u90e8\u5df2\u8bfb</button>\n'
         '<button class="ai-feed-btn" id="btnAiFeed" onclick="toggleAiFeed()" title="AI \u52a8\u6001\u6d41"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> AI \u52a8\u6001</button>\n'
         '<button class="hot-btn" id="btnHot" onclick="toggleHotPanel()" title="\u5168\u7f51\u70ed\u699c"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2c1 3-2 5-2 8a4 4 0 0 0 8 0c0-3-2-5-2-8"/><path d="M8.5 14.5A5 5 0 0 0 12 22a5 5 0 0 0 3.5-7.5"/></svg> \u70ed\u699c</button>\n'
+        + insight_btn +
         
         '<span id="fpillWrap"></span>\n'
         '<span class="tool-meta" id="toolMeta"></span>\n'
@@ -4265,8 +4716,9 @@ def build_html(sources_with_items, build_time, total_items, build_ts_ms=0):
         '<div class="search-row">\n'
         '<span class="global-search" id="globalSearchWrap"><input id="globalSearch" placeholder="\u641c\u7d22\u6587\u7ae0\u6807\u9898\u3001\u6458\u8981\u6216\u4fe1\u606f\u6e90\u540d\u79f0\u2026" autocomplete="off"><span class="sx" id="globalSearchClear">\u2715</span></span>\n'
                 '<span class="src-match-label" id="srcMatchLabel" style="display:none" aria-live="polite"></span>\n'
-        '<select class="sort-select" id="sortSelect" title="\u6392\u5e8f\u65b9\u5f0f"><option value="newest">\u6700\u65b0\u53d1\u5e03</option><option value="oldest">\u6700\u65e9\u53d1\u5e03</option><option value="active">\u6700\u8fd1\u6d3b\u8dc3</option></select>\n'
+        '<select class="sort-select" id="sortSelect" title="\u6392\u5e8f\u65b9\u5f0f"><option value="newest">\u6700\u65b0\u53d1\u5e03</option><option value="oldest">\u6700\u65e9\u53d1\u5e03</option><option value="active">\u6700\u8fd1\u6d3b\u8dc3</option><option value="quality">\u4fe1\u6e90\u8d28\u91cf</option></select>\n'
         '</div>\n'
+        + insight_bar +
         '<div class="build-bar">\u81ea\u52a8\u751f\u6210\u4e8e ' + _esc(build_time) + '\uff08\u5317\u4eac\u65f6\u95f4\uff09\u00b7 \u5171 ' + str(total_items) + ' \u7bc7 \u00b7 <span id="buildRel"></span><span id="liveStatus"></span></div>\n'
         '<div class="wall-wrap">\n'
         '<aside class="ai-feed-panel" id="aiFeedPanel">\n'
@@ -4318,9 +4770,1328 @@ def build_html(sources_with_items, build_time, total_items, build_ts_ms=0):
         '</div>\n'
         '</div>\n'
         + '<script src="rss-data-0.js?v=' + str(int(build_ts_ms)) + '"></' + 'script>\n'
-+ _build_js(sources_with_items, build_ts_ms) +
++ _build_js(sources_with_items, build_ts_ms, analysis_json=analysis_json) +
         '</body>\n</html>'
     )
+
+
+# ──────────────────────────── 智能分析模块 ────────────────────────────
+
+# 科技/AI/热点领域术语词典（硬编码，按长度降序排列用于贪心最长匹配）
+_TECH_DICT = sorted({
+    # AI / 大模型
+    '大模型', '人工智能', '机器学习', '深度学习', '自然语言处理', '神经网络',
+    '多模态', '扩散模型', '生成式', 'Transformer', '注意力机制', '预训练',
+    '微调', '提示词', 'Agent', '智能体', 'RAG', '检索增强', '向量数据库',
+    '大语言模型', '通用人工智能', 'AGI', 'LLM', 'GPT',
+    # 芯片 / 硬件
+    '半导体', '芯片', '制程', '光刻机', '先进封装', 'HBM', '存储芯片',
+    'GPU', 'CPU', 'NPU', '算力', '数据中心', '服务器',
+    # 互联网 / 科技
+    '自动驾驶', '机器人', '元宇宙', '数字孪生', '边缘计算', '云计算',
+    '区块链', 'Web3', '去中心化', '开源', '操作系统', '浏览器',
+    '智能手机', '折叠屏', '卫星通信', '低轨卫星', '6G', '5G',
+    # 热点 / 社会
+    '泥石流', '地震', '台风', '洪水', '应急响应', '救援',
+    '高考', '考研', '就业', '裁员', 'IPO', '上市', '融资',
+    '监管', '合规', '反垄断', '数据安全', '隐私保护',
+    # 国际 / 政治
+    '首相', '总统', '大选', '制裁', '关税', '贸易', '地缘政治',
+    # 金融 / 经济
+    '股市', 'A股', '港股', '美股', '比特币', '加密货币', '央行',
+    '降息', '加息', '通胀', 'GDP', 'CPI',
+    # 通用高频词（避免被切散）
+    '审核', '一审', '二审', '判决', '法院', '检察院', '立案',
+    '报道', '据悉', '表示', '指出', '认为', '透露', '宣布',
+    '发布', '推出', '上线', '下线', '升级', '更新', '修复',
+    '漏洞', '安全', '攻击', '黑客', '恶意软件', '病毒',
+    '用户', '开发者', '程序员', '工程师', '科学家', '研究员',
+    '公司', '企业', '机构', '政府', '部门', '组织',
+    '中国', '美国', '日本', '欧洲', '全球', '国内', '海外',
+    '科技', '技术', '创新', '突破', '进展', '成果',
+    '产品', '服务', '平台', '应用', '软件', '硬件', '系统',
+    '数据', '算法', '模型', '训练', '推理', '部署',
+    '网络', '互联网', '移动', '无线', '通信', '信号',
+    '能源', '电池', '电动车', '新能源', '光伏', '风电',
+    '医疗', '健康', '生物', '基因', '疫苗', '药物',
+    '教育', '学校', '大学', '研究', '学术', '论文',
+    '文化', '娱乐', '电影', '音乐', '游戏', '电竞',
+    '体育', '奥运', '足球', '篮球', '赛事',
+    '环境', '气候', '碳排放', '绿色', '可持续',
+    '军事', '国防', '武器', '导弹', '演习',
+    '外交', '谈判', '协议', '条约', '峰会',
+}, key=len, reverse=True)
+
+# 已知无意义双字组合（滑动窗口回退时过滤）
+_NOISE_BIGRAMS = {'军一', '核被', '审一', '已故', '人称', '据报',
+                  '的的', '了了', '是是', '在在', '有有', '和和'}
+
+
+def _has_repeated_chars(text, min_repeats=2, min_run=2):
+    """检测文本中是否有过多连续重复字符（OCR 错误 / 病句信号）。
+    例如 '被被' '审审' '一一' 等。"""
+    count = 0
+    for i in range(len(text) - 1):
+        if text[i] == text[i + 1] and '\u4e00' <= text[i] <= '\u9fff':
+            count += 1
+    return count >= min_repeats
+
+
+def _is_valid_ngram(word):
+    """判断 n-gram 是否有意义（质量过滤）。"""
+    # 排除连续相同字符（被被、一一、审审）
+    if len(set(word)) == 1:
+        return False
+    # 排除停用词
+    if word in _STOP_WORDS:
+        return False
+    # 排除已知无意义组合
+    if word in _NOISE_BIGRAMS:
+        return False
+    return True
+
+
+def _tokenize(text):
+    """分词：术语词典优先 + 贪心最长匹配 + 英文单词。返回小写 token 列表。"""
+    if not text:
+        return []
+    text = text.lower()
+    tokens = []
+
+    # 1. 英文单词（保持原逻辑）
+    en_words = re.findall(r'[a-z][a-z0-9_-]{1,}', text)
+    tokens.extend(w for w in en_words if w not in _STOP_WORDS and len(w) > 1)
+
+    # 2. 中文：术语词典优先匹配，剩余用改进的 n-gram
+    cn_text = re.sub(r'[a-z0-9_\-\s]+', ' ', text)  # 去掉英文片段
+    cn_text = re.sub(r'[\u3000-\u303f\uff00-\uffef]', ' ', cn_text)  # 去掉全角标点
+
+    i = 0
+    chars = list(cn_text)
+    while i < len(chars):
+        ch = chars[i]
+        # 跳过非中文字符
+        if not ('\u4e00' <= ch <= '\u9fff'):
+            i += 1
+            continue
+        # 贪心最长匹配：从最长术语开始尝试
+        matched = False
+        for term in _TECH_DICT:
+            if i + len(term) <= len(chars):
+                candidate = ''.join(chars[i:i + len(term)])
+                if candidate == term:
+                    tokens.append(term)
+                    i += len(term)
+                    matched = True
+                    break
+        if not matched:
+            # 未命中词典：尝试 2-3 字 n-gram（仅保留有意义的）
+            found_ngram = False
+            for span in [3, 2]:
+                if i + span <= len(chars):
+                    ngram = ''.join(chars[i:i + span])
+                    if _is_valid_ngram(ngram):
+                        tokens.append(ngram)
+                        i += span
+                        found_ngram = True
+                        break
+            if not found_ngram:
+                i += 1  # 跳过单字
+    return tokens
+
+
+def _tfidf_keywords(texts, top_n=50, per_doc_top=10):
+    """从文本列表中提取全局 TF-IDF 关键词。返回 [(keyword, score), ...]。"""
+    if not texts:
+        return []
+    # 每篇文章的 token 集合
+    doc_tokens = [_tokenize(t) for t in texts]
+    n_docs = len(doc_tokens)
+    # DF: 每个 token 出现在多少篇文档中
+    df = collections.Counter()
+    for tokens in doc_tokens:
+        unique = set(tokens)
+        for t in unique:
+            df[t] += 1
+    # TF: 全局词频
+    tf = collections.Counter()
+    for tokens in doc_tokens:
+        tf.update(tokens)
+    # TF-IDF 评分
+    scores = {}
+    for word, freq in tf.items():
+        if len(word) < 2 or df[word] < 2:
+            continue  # 过滤太短或只出现一次的词
+        idf = math.log(1 + n_docs / (1 + df[word]))
+        scores[word] = freq * idf
+    # 过滤无意义关键词
+    scores = {w: s for w, s in scores.items() if _is_valid_ngram(w)}
+    return sorted(scores.items(), key=lambda x: -x[1])[:top_n]
+
+
+def _extract_keywords(rss_history, now_bj):
+    """从 72h 历史中提取关键词。返回 {global: [...], by_cat: {cat: [...]}}。"""
+    cutoff_24h = now_bj.replace(tzinfo=None) - datetime.timedelta(hours=24)
+    # 近 24h 文章用于热点提取
+    recent_texts = []
+    cat_texts = collections.defaultdict(list)
+    for item in rss_history.values():
+        pd_str = item.get('pub_date', '')
+        if pd_str:
+            try:
+                pd = datetime.datetime.fromisoformat(pd_str)
+                if pd.tzinfo:
+                    pd = pd.astimezone(datetime.timezone(datetime.timedelta(hours=8))).replace(tzinfo=None)
+            except ValueError:
+                pd = now_bj.replace(tzinfo=None)
+        else:
+            pd = now_bj.replace(tzinfo=None)
+        title = item.get('title_zh', '') or item.get('title', '')
+        summary = item.get('summary_zh', '') or item.get('summary', '')
+        text = (title + ' ' + summary).strip()
+        if not text:
+            continue
+        if pd >= cutoff_24h:
+            recent_texts.append(text)
+        cat_texts[item.get('cat', 'other')].append(text)
+    # 全局关键词（近 24h 优先，但用全部 72h 数据）
+    all_texts = recent_texts * 2 + [t for cat_ts in cat_texts.values() for t in cat_ts]  # 近 24h 权重 x2
+    global_kw = _tfidf_keywords(all_texts, top_n=50)
+    # 按分类关键词
+    by_cat = {}
+    for cat, texts in cat_texts.items():
+        if len(texts) >= 3:
+            by_cat[cat] = _tfidf_keywords(texts, top_n=20)
+    return {"global": global_kw, "by_cat": by_cat, "recent_count": len(recent_texts)}
+
+
+def _score_sources(sources_with_items, rss_history):
+    """信源质量评分。返回 {source_key: {score, metrics}}。"""
+    result = {}
+    # 按源统计历史数据
+    src_stats = collections.defaultdict(lambda: {
+        'total': 0, 'has_summary': 0, 'has_fullcontent': 0,
+        'bad_date_count': 0, 'total_with_date': 0,
+    })
+    for item in rss_history.values():
+        sk = item.get('source_key', '')
+        if not sk:
+            continue
+        s = src_stats[sk]
+        s['total'] += 1
+        summary = item.get('summary', '') or item.get('summary_zh', '')
+        if len(summary) > 60:
+            s['has_summary'] += 1
+        fc = item.get('full_content', '')
+        if fc and len(fc) > 100:
+            s['has_fullcontent'] += 1
+        if item.get('pub_date'):
+            s['total_with_date'] += 1
+        if item.get('bad_date'):
+            s['bad_date_count'] += 1
+    for src in sources_with_items:
+        sk = src['key']
+        s = src_stats.get(sk, {'total': 0, 'has_summary': 0, 'has_fullcontent': 0, 'bad_date_count': 0, 'total_with_date': 0})
+        n = s['total']
+        if n == 0:
+            result[sk] = {'score': 0, 'metrics': {}, 'article_count': 0}
+            continue
+        freshness = min(1.0, n / 10.0)              # 72h 内文章数 / 10 篇满分
+        coverage = s['has_summary'] / n if n > 0 else 0
+        date_trust = 1.0 - (s['bad_date_count'] / s['total_with_date'] if s['total_with_date'] > 0 else 0)
+        fulltext = s['has_fullcontent'] / n if n > 0 else 0
+        # 抓取成功率从 sources_with_items 的 items 是否为空推断
+        reliability = 1.0 if n > 0 else 0.0
+        score = (freshness * 0.25 + coverage * 0.20 + date_trust * 0.20 +
+                 fulltext * 0.15 + reliability * 0.20) * 100
+        result[sk] = {
+            'score': round(score, 1),
+            'metrics': {
+                'freshness': round(freshness * 100, 1),
+                'coverage': round(coverage * 100, 1),
+                'date_trust': round(date_trust * 100, 1),
+                'fulltext': round(fulltext * 100, 1),
+                'reliability': round(reliability * 100, 1),
+            },
+            'article_count': n,
+        }
+    return result
+
+
+def _is_numeric_unit_phrase(s):
+    """判断字符串是否为纯数值单位短语（如 '亿欧元'、'万美元'、'千亿元'）。
+    这类短语不适合作为话题标签。
+    """
+    # 匹配模式：可选数字 + 单位词（亿/万/千/百）+ 货币/量词
+    if re.match(r'^[\d零一二三四五六七八九十百千万]*[亿万万千百]?[元美元欧元英镑日元份项笔台架艘辆匹头只条块片张本座栋层等级场次局盘局]+$', s):
+        return True
+    # 纯数字 + 单位
+    if re.match(r'^[\d零一二三四五六七八九十百千万]+[个只条台架艘辆匹头元美元欧元英镑日元份项笔]+$', s):
+        return True
+    return False
+
+
+def _is_ascii_alpha(ch):
+    """判断字符是否为 ASCII 字母（a-z, A-Z）。"""
+    return 'a' <= ch <= 'z' or 'A' <= ch <= 'Z'
+
+
+def _find_cn_boundary(text, pos):
+    """从 pos 位置开始，找到下一个中文语义边界的位置。
+
+    边界定义：标点符号、空格、数字、ASCII 字母、或字符串末尾。
+    用于确保截取的标签片段在语义上完整，不会在词组中间断开。
+    返回边界位置的索引（即边界字符的位置），若 pos 已在边界则返回 pos。
+    """
+    if pos >= len(text):
+        return pos
+    ch = text[pos]
+    # 当前字符本身就是边界
+    if ch in '，。：！？、；""''（）()【】[]《》<>,. \t\n\r':
+        return pos
+    if ch.isdigit() or _is_ascii_alpha(ch):
+        return pos
+    # 从 pos 开始向后找第一个边界
+    for i in range(pos, len(text)):
+        c = text[i]
+        if c in '，。：！？、；""''（）()【】[]《》<>,. \t\n\r':
+            return i
+        if c.isdigit() or _is_ascii_alpha(c):
+            return i
+    return len(text)
+
+
+def _extract_meaningful_phrase(title, max_len=14):
+    """从单个标题中提取一个语义完整的短语（不超过 max_len 字符）。
+
+    优先在标点/空格/数字/拉丁字母处截断，确保不会出现半截词组。
+    """
+    if not title or len(title) <= max_len:
+        return title
+    # 在 max_len 附近找最近的语义边界
+    # 先检查 max_len 位置是否已经是边界
+    boundary = _find_cn_boundary(title, max_len)
+    if boundary == max_len:
+        return title[:max_len]
+    # 如果边界在 max_len 之后不远（<= 3 字符），延伸到边界
+    if boundary > max_len and boundary - max_len <= 3:
+        return title[:boundary]
+    # 否则在 max_len 之前找最近的边界（往回找最多 5 字符）
+    for i in range(max_len - 1, max(0, max_len - 6), -1):
+        c = title[i]
+        if c in '，。：！？、；""''（）()【】[]《》<>,. \t\n\r':
+            return title[:i]
+        if c.isdigit() or _is_ascii_alpha(c):
+            return title[:i]
+    # 找不到好边界，就截取到 max_len
+    return title[:max_len]
+
+
+def _extract_topic_label_from_titles(cluster_articles):
+    """从簇内文章标题中提取语义通顺的话题标签。
+
+    优先级：
+    1. 术语词典精确命中（标题中出现最多的 _TECH_DICT 词条）
+    2. 最长公共子串 + 边界延伸（跨标题重复的连续中文片段，合并相邻 token 保留邻接关系）
+    3. 标题内相邻 2-3 个高质量 token 拼接（分词错误检测 + 边界感知过滤）
+    4. 兜底：从代表性标题中智能截取语义完整片段
+    返回 (label_str, labels_list)。
+    """
+    _LABEL_NOISE_LOCAL = set('的了是在我有和就不都一个上也这到说们为你对被把让给用从向')
+
+    # 收集合格标题（去重、去病句）
+    good_titles = []
+    seen_titles = set()
+    for art in cluster_articles:
+        t = art.get('title', '')
+        if not t or len(t) < 4 or _has_repeated_chars(t, min_repeats=2, min_run=2):
+            continue
+        t_key = t[:30]  # 前 30 字去重
+        if t_key in seen_titles:
+            continue
+        seen_titles.add(t_key)
+        good_titles.append(t)
+
+    if not good_titles:
+        return '', []
+
+    # ── 策略 1+2 联合决策：先算公共子串（带边界延伸），再与词典术语比较覆盖度 ──
+
+    # 策略 2：最长公共子串 + 边界延伸
+    best_substr = None
+    best_substr_cnt = 0
+    if len(good_titles) >= 2:
+        # 预计算去空格标题：用于子串匹配和延伸，确保标签不含空格
+        titles_stripped = [t.replace(' ', '').replace('\u3000', '') for t in good_titles]
+        cn_fragments = []
+        for ts in titles_stripped:
+            # 逐 token 提取中文部分，再合并相邻 token 的中文片段
+            # 这样 '多模态 发布全新' → 去空格 '多模态发布全新' → 单一片段
+            # 保留跨空格的邻接关系，避免 '多模态' 和 '发布' 被拆成独立片段
+            cn_only = re.sub(r'[^\u4e00-\u9fff]', '', ts)
+            if len(cn_only) >= 3:
+                cn_fragments.append(cn_only)
+        substr_score = collections.Counter()
+        for frag in cn_fragments:
+            max_len = min(len(frag), 12)
+            for slen in range(2, max_len + 1):
+                for start in range(len(frag) - slen + 1):
+                    sub = frag[start:start + slen]
+                    if sub[0] in _LABEL_NOISE_LOCAL or sub[-1] in _LABEL_NOISE_LOCAL:
+                        continue
+                    cnt = sum(1 for ts in titles_stripped if sub in ts)
+                    if cnt >= 2:
+                        # 评分改为覆盖度优先：cnt × len，避免短子串因位置多而得分虚高
+                        substr_score[sub] = cnt * slen
+        if substr_score:
+            # 覆盖度优先 + 同覆盖度选最长：先找最高覆盖度，再在同等覆盖度中选最长子串
+            max_cnt = 0
+            for sub in substr_score:
+                cnt = sum(1 for ts in titles_stripped if sub in ts)
+                if cnt > max_cnt:
+                    max_cnt = cnt
+            # 在最高覆盖度的子串中选最长的
+            best_candidates = [(sub, len(sub)) for sub, score in substr_score.items()
+                               if sum(1 for ts in titles_stripped if sub in ts) == max_cnt]
+            best_candidates.sort(key=lambda x: x[1], reverse=True)
+            # 对每个候选尝试边界延伸，然后选最优
+            for candidate, cand_len in best_candidates[:20]:  # 最多处理前20个最长候选
+                cand_cnt = max_cnt
+                # 尝试延伸子串到语义边界
+                extended = candidate
+                extended_cnt = cand_cnt
+                # 在去空格标题中找到 candidate，尝试向后延伸到边界
+                for ts in titles_stripped:
+                    idx = ts.find(candidate)
+                    if idx < 0:
+                        continue
+                    end_pos = idx + len(candidate)
+                    if end_pos >= len(ts):
+                        continue  # 已在标题末尾
+                    next_ch = ts[end_pos]
+                    # 如果下一个字符是数字/拉丁字母，延伸到边界
+                    if next_ch.isdigit() or _is_ascii_alpha(next_ch):
+                        boundary_pos = _find_cn_boundary(ts, end_pos)
+                        if boundary_pos > end_pos and boundary_pos - end_pos <= 4:
+                            ext = ts[idx:boundary_pos]
+                            ext_cnt = sum(1 for tt in titles_stripped if ext in tt)
+                            if ext_cnt >= max(2, cand_cnt - 1) and len(ext) > len(extended):
+                                extended = ext
+                                extended_cnt = ext_cnt
+                        break  # 只用第一个匹配标题来延伸
+                    # 下一个是中文字符：尝试延伸 1-10 个字符
+                    if '\u4e00' <= next_ch <= '\u9fff':
+                        for ext_len in range(1, 11):
+                            if end_pos + ext_len > len(ts):
+                                break
+                            ext = ts[idx:end_pos + ext_len]
+                            ext_cnt = sum(1 for tt in titles_stripped if ext in tt)
+                            # 延伸后覆盖度不能下降太多（允许降 1）
+                            if ext_cnt >= max(2, cand_cnt - 1):
+                                extended = ext
+                                extended_cnt = ext_cnt
+                                # 检查延伸后的末尾是否是边界
+                                if end_pos + ext_len >= len(ts):
+                                    break
+                                next_ch2 = ts[end_pos + ext_len]
+                                if next_ch2.isdigit() or _is_ascii_alpha(next_ch2):
+                                    break
+                                if not ('\u4e00' <= next_ch2 <= '\u9fff'):
+                                    break
+                            else:
+                                break
+                    else:
+                        # 下一个是标点等，自然边界
+                        pass
+    
+                # 用延伸后的结果与当前最优比较
+                if extended_cnt > best_substr_cnt or (
+                    extended_cnt == best_substr_cnt and len(extended) > len(best_substr or '')
+                ):
+                    best_substr = extended
+                    best_substr_cnt = extended_cnt
+
+    # 策略 2 纯中文结果优先：如果公共子串是纯中文且 >= 2 字，直接返回（避免策略 1 产生混合语言标签）
+    if best_substr and len(best_substr) >= 2:
+        cn_chars_in_substr = re.sub(r'[^\u4e00-\u9fff]', '', best_substr)
+        if len(cn_chars_in_substr) == len(best_substr):
+            # 纯中文子串，仅检查数值单位过滤
+            if len(cn_chars_in_substr) <= 2 and _is_numeric_unit_phrase(best_substr):
+                pass  # 纯数值单位（如 '美元'），跳过，进入策略 1
+            else:
+                return best_substr, [best_substr]
+
+    # 策略 1：术语词典精确匹配
+    dict_term_counter = collections.Counter()
+    for title in good_titles:
+        title_lower = title.lower()
+        seen_in_doc = set()
+        for term in _TECH_DICT:
+            tl = term.lower()
+            if tl in title_lower and len(term) >= 2 and tl not in seen_in_doc:
+                dict_term_counter[term] += 1
+                seen_in_doc.add(tl)
+    if dict_term_counter:
+        top_term, top_cnt = dict_term_counter.most_common(1)[0]
+        # 仅当词典术语的标题覆盖度严格优于公共子串，或覆盖度相同但术语更长时才优先返回
+        if top_cnt > best_substr_cnt or (top_cnt == best_substr_cnt and len(top_term) >= len(best_substr or '')):
+            second = None
+            for term, _ in dict_term_counter.most_common(5):
+                if term != top_term:
+                    second = term
+                    break
+            if second and len(second) >= 2:
+                return '%s %s' % (top_term, second), [top_term, second]
+            return top_term, [top_term]
+
+    # 公共子串有效则返回（纯中文已在上方提前返回；此处处理含数字/拉丁的混合子串）
+    if best_substr and len(best_substr) >= 2:
+        cn_chars_in_substr = re.sub(r'[^\u4e00-\u9fff]', '', best_substr)
+        if len(cn_chars_in_substr) <= 2 and _is_numeric_unit_phrase(best_substr):
+            pass  # 纯数值单位，跳过，进入策略 3
+        else:
+            return best_substr, [best_substr]
+
+    # ─ 策略 3：标题内相邻 token 高频组合（边界感知） ──
+    ngram_counter = collections.Counter()
+    for title in good_titles:
+        tokens = _tokenize(title)
+        quality_tokens = [t for t in tokens
+                          if len(t) >= 2 and t not in _LABEL_NOISE_LOCAL and _is_valid_ngram(t)]
+        # 连续 2-gram 和 3-gram
+        for span in (2, 3):
+            for j in range(len(quality_tokens) - span + 1):
+                phrase = ' '.join(quality_tokens[j:j + span])
+                # 至少有一个 token 长度 >= 3（避免两个短 token 拼出碎片）
+                if any(len(quality_tokens[j + k]) >= 3 for k in range(span)):
+                    # 额外检查：拼接后的总中文字符数 >= 4（避免 "多模态 发布" 这种松散组合）
+                    cn_chars = re.sub(r'[^\u4e00-\u9fff]', '', phrase)
+                    if len(cn_chars) >= 4:
+                        # 质量过滤：含空格的短语需要额外验证
+                        if ' ' in phrase:
+                            no_space = phrase.replace(' ', '')
+                            # 如果去空格后的组合在源标题中出现，说明空格是分词错误
+                            if any(no_space in t for t in good_titles):
+                                continue  # 跳过：分词错误，应为一个完整词组
+                            # 所有 token 都是纯中文 → 松散拼接，跳过
+                            parts_check = phrase.split()
+                            if all(all('\u4e00' <= c <= '\u9fff' for c in part) for part in parts_check):
+                                continue  # 跳过：纯中文 token 松散拼接
+                        ngram_counter[phrase] += 1
+    if ngram_counter:
+        best_phrase = ngram_counter.most_common(1)[0][0]
+        # 过滤数值单位短语
+        cn_only = re.sub(r'[^\u4e00-\u9fff]', '', best_phrase)
+        if len(cn_only) <= 4 and _is_numeric_unit_phrase(cn_only):
+            pass  # 跳过，进入策略 4
+        else:
+            parts = best_phrase.split()
+            return best_phrase, parts[:3]
+
+    # ── 策略 4：兜底 — 从代表性标题中智能截取语义完整片段 ──
+    # 选最长的合格标题作为代表性标题（信息量最大）
+    representative = max(good_titles, key=len)
+    phrase = _extract_meaningful_phrase(representative, max_len=14)
+    if phrase and len(phrase) >= 4:
+        return phrase, [phrase]
+
+    # 最终兜底：直接取第一个合格标题的前 12 字
+    for title in good_titles:
+        if len(title) >= 6:
+            truncated = title[:12].rstrip()
+            for sep in ('，', '。', '：', '！', '？', ',', '.', ' ', ' '):
+                idx = truncated.find(sep)
+                if idx > 2:
+                    truncated = truncated[:idx]
+                    break
+            return truncated, [truncated]
+
+    return '', []
+
+
+def _cluster_topics(rss_history, now_bj, max_topics=20, min_cluster=3):
+    """基于标题+摘要关键词 Jaccard 相似度的话题聚类。返回话题列表。"""
+    cutoff_24h = now_bj.replace(tzinfo=None) - datetime.timedelta(hours=24)
+    # 通用单字过滤表（比 _STOP_WORDS 更严格，用于标签过滤）
+    _LABEL_NOISE = set('的了是在我有和就不人都一个上也这到说们为你对被把让给用从向')
+    # 收集近 24h 文章（标题 + 摘要关键词集合）
+    articles = []
+    for link, item in rss_history.items():
+        pd_str = item.get('pub_date', '')
+        if pd_str:
+            try:
+                pd = datetime.datetime.fromisoformat(pd_str)
+                if pd.tzinfo:
+                    pd = pd.astimezone(datetime.timezone(datetime.timedelta(hours=8))).replace(tzinfo=None)
+            except ValueError:
+                pd = now_bj.replace(tzinfo=None)
+        else:
+            pd = now_bj.replace(tzinfo=None)
+        if pd < cutoff_24h:
+            continue
+        title = item.get('title_zh', '') or item.get('title', '')
+        if not title:
+            continue
+        # 标题质量过滤：跳过明显病句（连续重复字 >= 2 处）
+        if _has_repeated_chars(title, min_repeats=2, min_run=2):
+            continue
+        title_tokens = set(_tokenize(title))
+        # 摘要 token 仅保留与标题有交集的（避免过长摘要稀释标题信号）
+        summary = item.get('summary_zh', '') or item.get('summary', '')
+        if summary and len(summary) > 30:
+            summary_tokens = set(_tokenize(summary[:300]))  # 截断避免过长
+            tokens = title_tokens | (summary_tokens & title_tokens)
+        else:
+            tokens = title_tokens
+        if len(tokens) < 2:
+            continue
+        articles.append({
+            'link': link,
+            'title': title,
+            'source': item.get('source', ''),
+            'source_key': item.get('source_key', ''),
+            'cat': item.get('cat', ''),
+            'tokens': tokens,
+            'title_tokens': title_tokens,
+        })
+    if len(articles) < min_cluster:
+        return []
+    # 贪心聚类
+    clusters = []
+    for art in articles:
+        best_idx = -1
+        best_sim = 0
+        for i, cl in enumerate(clusters):
+            # Jaccard 相似度: 文章 tokens 与簇质心（所有 tokens 的并集的高频子集）
+            inter = len(art['tokens'] & cl['centroid'])
+            union = len(art['tokens'] | cl['centroid'])
+            sim = inter / union if union > 0 else 0
+            if sim > best_sim:
+                best_sim = sim
+                best_idx = i
+        if best_sim >= 0.25 and best_idx >= 0:
+            clusters[best_idx]['articles'].append(art)
+            # 更新质心：保留出现最多的 top 15 词
+            all_tokens = collections.Counter()
+            for a in clusters[best_idx]['articles']:
+                all_tokens.update(a['tokens'])
+            clusters[best_idx]['centroid'] = set(w for w, _ in all_tokens.most_common(15))
+        else:
+            clusters.append({
+                'articles': [art],
+                'centroid': set(art['tokens']),
+            })
+    # 过滤小簇，提取标签
+    topics = []
+    for cl in clusters:
+        if len(cl['articles']) < min_cluster:
+            continue
+        # ── 标题召回机制：优先从标题中提取语义通顺的标签 ──
+        label, labels = _extract_topic_label_from_titles(cl['articles'])
+        # 如果标题召回失败，回退到原始 token 频率逻辑
+        if not label:
+            title_counter = collections.Counter()
+            all_counter = collections.Counter()
+            for a in cl['articles']:
+                title_counter.update(a.get('title_tokens', a['tokens']))
+                all_counter.update(a['tokens'])
+            labels = [w for w, _ in title_counter.most_common(10)
+                      if len(w) >= 2 and w not in _LABEL_NOISE and _is_valid_ngram(w)]
+            if len(labels) < 2:
+                labels = [w for w, _ in all_counter.most_common(10)
+                          if len(w) >= 2 and w not in _LABEL_NOISE and _is_valid_ngram(w)]
+            label = ' '.join(labels[:3]) if labels else ''
+        # 去重源
+        sources = list(set(a['source'] for a in cl['articles'] if a['source']))
+        topics.append({
+            'label': label,
+            'labels': labels[:3],
+            'count': len(cl['articles']),
+            'sources': sources[:5],
+            'links': [a['link'] for a in cl['articles'][:10]],
+            'cats': list(set(a['cat'] for a in cl['articles'])),
+        })
+    # 按文章数排序，取前 max_topics 个
+    topics.sort(key=lambda t: -t['count'])
+    return topics[:max_topics]
+
+
+def _generate_daily_summary(keywords, topics, stats, rising=None):
+    """生成每日态势摘要。优先 Agnes AI 结构化 4 板块分析，降级为模板生成。
+    返回 dict（结构化）或 str（降级兼容）。"""
+    top_kw = [w for w, _ in keywords[:15]]
+    top_topics = [t for t in topics[:8] if t.get('labels')]
+    topic_desc = '; '.join(
+        '%s(%d篇/%d源)' % (t['labels'][0], t['count'], len(t.get('sources', [])))
+        for t in top_topics
+    )
+    rising_desc = ''
+    if rising:
+        rising_desc = ', '.join('%s(+%d)' % (r['word'], r['rise']) for r in rising[:8])
+    # ── 降级方案：模板生成（返回 string，前端按旧格式渲染） ──
+    def _template_summary():
+        parts = []
+        if top_kw:
+            parts.append("今日关键词: " + "、".join(top_kw[:8]))
+        if top_topics:
+            parts.append("热点话题: " + "、".join(t['labels'][0] for t in top_topics if t['labels']))
+        total = stats.get('total_articles', 0)
+        recent = stats.get('recent_count', 0)
+        parts.append("共 %d 篇文章，其中近 24 小时新增 %d 篇" % (total, recent))
+        return "。".join(parts)
+    # ── Agnes AI 结构化摘要 ──
+    if not _AGNES_KEY:
+        return _template_summary()
+    system_prompt = (
+        "你是一名高级科技情报分析师。你的核心能力是从海量碎片化信息中提炼核心逻辑，"
+        "识别被大众忽略的弱信号。\n\n"
+        "## 思维模型\n"
+        "1. 见微知著：从散点关键词和话题中寻找底层共性叙事。\n"
+        "2. 交叉验证：RSS 专业视角与大众热榜的差异往往隐藏认知套利机会。\n"
+        "3. 反直觉思考：当全网叫好时寻找风险，当全网恐慌时寻找机会。\n\n"
+        "## 数据字段解读\n"
+        "- 关键词：按 TF-IDF 评分排序，排名越靠前表示该词在近 24h 文章中越突出。\n"
+        "- 升温词：括号内 +N 表示排名上升 N 位，数值越大表示升温越显著。\n"
+        "- 话题簇：格式为 标签(文章数/信源数)，文章数越多表示该话题覆盖越广。\n\n"
+        "## 输出格式（严格遵守 JSON）\n"
+        "以 JSON 格式返回 4 个板块，所有值为纯文本字符串，禁止 Markdown/emoji：\n"
+        '{"core_trends": "核心态势(100字内): 一句话定性 + 宏观主线 + 微观佐证",\n'
+        ' "signals": "异动信号(80字内): 升温话题 + 异常波动",\n'
+        ' "rss_insights": "RSS深度洞察(80字内): 专业视角补充的硬核信息",\n'
+        ' "outlook": "研判建议(50字内): 关注方向或风险提示"}'
+    )
+    user_prompt = (
+        "请分析以下 RSS 聚合数据：\n\n"
+        "## 数据概览\n"
+        "- 文章总数: %d, 近24h新增: %d\n"
+        "- 信源数: %d\n\n"
+        "## Top 关键词\n%s\n\n"
+        "## 升温词\n%s\n\n"
+        "## 热点话题\n%s\n\n"
+        "请撰写分析报告，以 JSON 格式返回 4 个板块。"
+        % (stats.get('total_articles', 0), stats.get('recent_count', 0),
+           stats.get('source_count', 0),
+           "、".join(top_kw[:12]),
+           rising_desc or "暂无升温词数据",
+           topic_desc or "暂无话题数据")
+    )
+    payload = json.dumps({
+        "model": "agnes-2.5-flash",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "max_tokens": 600,
+        "temperature": 0.3,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://apihub.agnes-ai.com/v1/chat/completions",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + _AGNES_KEY,
+            "User-Agent": "starhub-auto-update",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        cand = (data.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
+        if cand and len(cand) > 30:
+            # 尝试提取 JSON（AI 可能在 JSON 前后加文字）
+            parsed = _extract_json_from_text(cand)
+            if parsed and isinstance(parsed, dict):
+                # 验证至少有一个板块非空
+                valid_keys = ['core_trends', 'signals', 'rss_insights', 'outlook']
+                if any(parsed.get(k) for k in valid_keys):
+                    total_chars = sum(len(str(parsed.get(k, ''))) for k in valid_keys)
+                    print("[分析] AI 结构化摘要生成成功 (%d 字, %d 板块)" % (
+                        total_chars, sum(1 for k in valid_keys if parsed.get(k))))
+                    return parsed
+            # JSON 解析失败但文本有效，尝试作为单段摘要（旧格式兼容）
+            print("[分析] AI 返回非 JSON，作为单段摘要 (%d 字)" % len(cand))
+            return cand
+    except Exception as e:
+        print("[分析] AI 摘要失败: %s，降级为模板" % e, file=sys.stderr)
+    return _template_summary()
+
+
+def _extract_json_from_text(text):
+    """从 AI 返回文本中提取 JSON 对象。支持 markdown 代码块包裹和纯 JSON。"""
+    # 尝试直接解析
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # 尝试提取 ```json ... ``` 代码块
+    m = re.search(r'```(?:json)?\s*\n?(\{.*?\})\s*```', text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except (json.JSONDecodeError, ValueError):
+            pass
+    # 尝试提取第一个 { ... } 块
+    m = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return None
+
+
+def _load_prev_analysis():
+    """加载前一天的分析快照（用于趋势对比）。返回完整 analysis dict。"""
+    if not os.path.exists(ANALYSIS_SNAPSHOT_FILE):
+        return None
+    try:
+        with open(ANALYSIS_SNAPSHOT_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _save_analysis_snapshot(analysis_data):
+    """保存分析快照到 analysis_snapshot.json。"""
+    try:
+        with open(ANALYSIS_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
+            json.dump(analysis_data, f, ensure_ascii=False, indent=1)
+        print("[分析] 保存分析快照 → %s" % ANALYSIS_SNAPSHOT_FILE)
+    except Exception as e:
+        print("[分析] 保存失败: %s" % e, file=sys.stderr)
+
+
+def _save_source_quality(quality_data):
+    """保存信源质量评分到 source_quality.json。"""
+    try:
+        with open(SOURCE_QUALITY_FILE, "w", encoding="utf-8") as f:
+            json.dump(quality_data, f, ensure_ascii=False, indent=1)
+        print("[分析] 保存信源评分 → %s (%d 个源)" % (SOURCE_QUALITY_FILE, len(quality_data)))
+    except Exception as e:
+        print("[分析] 信源评分保存失败: %s" % e, file=sys.stderr)
+
+
+# ── 热榜轨迹追踪 ──
+
+def _accumulate_hot_history(hot_snapshot, now_bj):
+    """追加热榜快照到历史轨迹文件。保留 7 天数据，自动清理过期条目。
+    hot_snapshot 格式: [{platform, name, items: [{rank, title, url, hot}]}]"""
+    # 加载已有历史
+    history = {}
+    if os.path.exists(HOT_HISTORY_FILE):
+        try:
+            with open(HOT_HISTORY_FILE, "r", encoding="utf-8") as f:
+                history = json.load(f)
+        except Exception:
+            history = {}
+    ts = now_bj.isoformat()
+    cutoff_7d = (now_bj - datetime.timedelta(days=7)).isoformat()
+    for plat_data in hot_snapshot:
+        plat = plat_data.get("platform", "")
+        if not plat:
+            continue
+        if plat not in history:
+            history[plat] = []
+        # 追加本次快照条目
+        for item in plat_data.get("items", []):
+            title = item.get("title", "")
+            if not title:
+                continue
+            history[plat].append({
+                "title": title,
+                "rank": item.get("rank", 0),
+                "ts": ts,
+            })
+        # 清理超过 7 天的旧数据
+        history[plat] = [e for e in history[plat] if e["ts"] >= cutoff_7d]
+    try:
+        with open(HOT_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, separators=(",", ":"))
+        total = sum(len(v) for v in history.values())
+        print("[热榜] 轨迹累积: %d 平台, %d 条记录" % (len(history), total))
+    except Exception as e:
+        print("[热榜] 轨迹写入失败: %s" % e, file=sys.stderr)
+    return history
+
+
+def _compute_hot_trends(hot_history):
+    """从热榜历史中计算趋势标记。
+    返回 {platform: {title: {trend, prev_rank, curr_rank, rise, duration}}}"""
+    if not hot_history:
+        return {}
+    result = {}
+    for plat, entries in hot_history.items():
+        if not entries:
+            continue
+        # 按时间戳分组（每次快照为一个周期）
+        periods = collections.OrderedDict()
+        for e in entries:
+            ts = e["ts"][:13]  # 截断到小时精度（同一批次的 ts 相同）
+            if ts not in periods:
+                periods[ts] = {}
+            periods[ts][e["title"]] = e["rank"]
+        if len(periods) < 1:
+            continue
+        period_keys = sorted(periods.keys())  # 按时间升序排列
+        latest = period_keys[-1]
+        prev = period_keys[-2] if len(periods) >= 2 else None
+        latest_items = periods[latest]
+        prev_items = periods[prev] if prev else {}
+        plat_trends = {}
+        for title, rank in latest_items.items():
+            prev_rank = prev_items.get(title)
+            if prev_rank is None:
+                trend = "new"
+                rise = 0
+            else:
+                diff = prev_rank - rank  # 正数=上升，负数=下降
+                if diff >= 5:
+                    trend = "rising"
+                elif diff <= -5:
+                    trend = "falling"
+                else:
+                    trend = "stable"
+                rise = diff
+            # 计算在榜持续时长（周期数）
+            duration = 0
+            for pk in reversed(period_keys):
+                if title in periods[pk]:
+                    duration += 1
+                else:
+                    break
+            plat_trends[title] = {
+                "trend": trend,
+                "curr_rank": rank,
+                "prev_rank": prev_rank,
+                "rise": rise,
+                "duration": duration,
+            }
+        # 检测 "gone" 状态：任何非最新周期中存在、但最新周期中不存在、且脱榜超 2 个周期的条目
+        all_prev_titles = {}
+        for pk in period_keys[:-1]:  # 除最新周期外的所有周期
+            for title, rank in periods[pk].items():
+                if title not in latest_items:
+                    all_prev_titles[title] = rank  # 保留最后出现的排名
+        for gone_title, gone_rank in all_prev_titles.items():
+            # 计算脱榜周期数（从最新周期往前数，不在榜的连续周期数）
+            absent_count = 0
+            for pk in reversed(period_keys):
+                if gone_title not in periods[pk]:
+                    absent_count += 1
+                else:
+                    break
+            if absent_count > 2:
+                plat_trends[gone_title] = {
+                    "trend": "gone",
+                    "curr_rank": None,
+                    "prev_rank": gone_rank,
+                    "rise": 0,
+                    "duration": 0,
+                }
+        result[plat] = plat_trends
+    return result
+
+
+def _cross_platform_topics(hot_history, hot_snapshot):
+    """检测跨平台共振话题：同一话题在 2+ 平台同时上榜。
+    返回 [{label, platforms: [{name, rank}]}]"""
+    if not hot_snapshot or len(hot_snapshot) < 2:
+        return []
+    # 收集各平台最新快照的标题集合
+    plat_titles = {}
+    for plat_data in hot_snapshot:
+        plat = plat_data.get("platform", "")
+        titles = []
+        for item in plat_data.get("items", []):
+            t = item.get("title", "")
+            if t:
+                titles.append({"title": t, "rank": item.get("rank", 99)})
+        if titles:
+            plat_titles[plat] = titles
+    if len(plat_titles) < 2:
+        return []
+    # 两两比较平台间的标题相似度
+    plat_names = list(plat_titles.keys())
+    # 为每个标题建立 token 集合
+    title_tokens = {}
+    for plat, titles in plat_titles.items():
+        for td in titles:
+            key = plat + ":" + td["title"]
+            title_tokens[key] = set(_tokenize(td["title"]))
+    # 跨平台匹配
+    matched = []  # [(label, [(plat, rank), ...])]
+    used = set()  # 已匹配的标题 key
+    for i in range(len(plat_names)):
+        for j in range(i + 1, len(plat_names)):
+            p1, p2 = plat_names[i], plat_names[j]
+            for t1 in plat_titles[p1]:
+                k1 = p1 + ":" + t1["title"]
+                if k1 in used:
+                    continue
+                for t2 in plat_titles[p2]:
+                    k2 = p2 + ":" + t2["title"]
+                    if k2 in used:
+                        continue
+                    # Jaccard 相似度
+                    tok1 = title_tokens.get(k1, set())
+                    tok2 = title_tokens.get(k2, set())
+                    if not tok1 or not tok2:
+                        continue
+                    inter = len(tok1 & tok2)
+                    union = len(tok1 | tok2)
+                    sim = inter / union if union > 0 else 0
+                    if sim >= 0.3:
+                        # 匹配成功，检查是否已有该话题
+                        label = t1["title"] if len(t1["title"]) <= len(t2["title"]) else t2["title"]
+                        found = False
+                        for m in matched:
+                            if m["label"] == label:
+                                # 追加平台
+                                existing_plats = {p["name"] for p in m["platforms"]}
+                                if p1 not in existing_plats:
+                                    m["platforms"].append({"name": p1, "rank": t1["rank"]})
+                                if p2 not in existing_plats:
+                                    m["platforms"].append({"name": p2, "rank": t2["rank"]})
+                                found = True
+                                break
+                        if not found:
+                            matched.append({
+                                "label": label,
+                                "platforms": [
+                                    {"name": p1, "rank": t1["rank"]},
+                                    {"name": p2, "rank": t2["rank"]},
+                                ],
+                            })
+                        used.add(k1)
+                        used.add(k2)
+                        break  # t1 已匹配，跳出内层
+    # 按平台数降序，过滤仅 1 个平台的
+    matched = [m for m in matched if len(m["platforms"]) >= 2]
+    matched.sort(key=lambda m: -len(m["platforms"]))
+    # 添加 platform_count 字段
+    for m in matched:
+        m["platform_count"] = len(m["platforms"])
+    return matched[:15]
+
+
+# ── RSS 内容趋势轨迹追踪 ──
+
+def _accumulate_rss_trend_history(analysis_data, now_bj):
+    """追加当前构建的关键词/话题快照到 RSS 趋势历史。保留 14 天。"""
+    history = {"snapshots": []}
+    if os.path.exists(RSS_TREND_HISTORY_FILE):
+        try:
+            with open(RSS_TREND_HISTORY_FILE, "r", encoding="utf-8") as f:
+                history = json.load(f)
+        except Exception:
+            history = {"snapshots": []}
+    # 提取当前快照的关键词排名 dict
+    kw_rank = {}
+    kw_data = analysis_data.get("keywords", {})
+    for i, (w, _) in enumerate(kw_data.get("global", [])):
+        kw_rank[w] = i + 1
+    # 提取分类关键词
+    by_cat = {}
+    for cat, kws in kw_data.get("by_cat", {}).items():
+        by_cat[cat] = [w for w, _ in kws[:20]]
+    # 提取话题摘要
+    topics_summary = []
+    for t in analysis_data.get("topics", []):
+        topics_summary.append({
+            "label": t.get("label", ""),
+            "count": t.get("count", 0),
+            "sources": len(t.get("sources", [])),
+        })
+    # 追加新快照
+    snapshot = {
+        "ts": now_bj.isoformat(),
+        "keywords": kw_rank,
+        "topics": topics_summary,
+        "by_cat": by_cat,
+    }
+    history["snapshots"].append(snapshot)
+    # 清理超过 14 天的旧快照
+    cutoff_14d = (now_bj - datetime.timedelta(days=14)).isoformat()
+    history["snapshots"] = [s for s in history["snapshots"] if s["ts"] >= cutoff_14d]
+    try:
+        with open(RSS_TREND_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, separators=(",", ":"))
+        print("[分析] RSS 趋势历史累积: %d 个快照" % len(history["snapshots"]))
+    except Exception as e:
+        print("[分析] RSS 趋势历史写入失败: %s" % e, file=sys.stderr)
+    return history
+
+
+def _compute_rss_trajectories(trend_history):
+    """从 RSS 趋势历史中计算关键词和话题的跨周期轨迹。
+    返回 {keywords: {word: {lifecycle, first_seen, latest_rank, duration, rank_history}},
+          topics: {label: {lifecycle, count_history, peak_count, duration}}}"""
+    snapshots = trend_history.get("snapshots", [])
+    if len(snapshots) < 2:
+        return {"keywords": {}, "topics": {}}
+    # ── 关键词轨迹 ──
+    kw_trajectories = {}
+    # 收集所有出现过的关键词
+    all_keywords = set()
+    for s in snapshots:
+        all_keywords.update(s.get("keywords", {}).keys())
+    for kw in all_keywords:
+        # 构建排名序列（None = 未出现）
+        rank_seq = []
+        first_seen = None
+        for s in snapshots:
+            rank = s.get("keywords", {}).get(kw)
+            rank_seq.append(rank)
+            if rank is not None and first_seen is None:
+                first_seen = s["ts"]
+        latest_rank = rank_seq[-1]
+        # 计算连续出现周期数
+        duration = 0
+        for r in reversed(rank_seq):
+            if r is not None:
+                duration += 1
+            else:
+                break
+        # 计算消失周期数
+        absent = 0
+        for r in reversed(rank_seq):
+            if r is None:
+                absent += 1
+            else:
+                break
+        # 生命周期标记
+        if latest_rank is None and absent >= 3:
+            lifecycle = "gone"
+        elif duration <= 2 and first_seen == snapshots[-1].get("ts"):
+            lifecycle = "emergent"
+        else:
+            # 检查排名趋势（仅看有值的周期）
+            valid_ranks = [(i, r) for i, r in enumerate(rank_seq) if r is not None]
+            if len(valid_ranks) >= 3:
+                recent = valid_ranks[-3:]
+                rises = sum(1 for j in range(1, len(recent)) if recent[j][1] < recent[j-1][1])
+                falls = sum(1 for j in range(1, len(recent)) if recent[j][1] > recent[j-1][1])
+                if rises >= 2:
+                    lifecycle = "rising"
+                elif falls >= 2:
+                    lifecycle = "declining"
+                elif latest_rank is not None and latest_rank <= 10:
+                    lifecycle = "peaking"
+                else:
+                    lifecycle = "stable"
+            elif len(valid_ranks) == 2:
+                if valid_ranks[-1][1] < valid_ranks[-2][1]:
+                    lifecycle = "rising"
+                elif valid_ranks[-1][1] > valid_ranks[-2][1]:
+                    lifecycle = "declining"
+                else:
+                    lifecycle = "stable"
+            else:
+                lifecycle = "stable"
+        kw_trajectories[kw] = {
+            "lifecycle": lifecycle,
+            "first_seen": first_seen or "",
+            "latest_rank": latest_rank,
+            "duration": duration,
+        }
+    # ── 话题轨迹 ──
+    topic_trajectories = {}
+    # 用 Jaccard 相似度匹配跨快照的同一话题
+    latest_topics = snapshots[-1].get("topics", [])
+    if not latest_topics:
+        return {"keywords": kw_trajectories, "topics": {}}
+    latest_token_sets = {}
+    for t in latest_topics:
+        label = t.get("label", "")
+        latest_token_sets[label] = set(_tokenize(label))
+    for t in latest_topics:
+        label = t.get("label", "")
+        tok_set = latest_token_sets.get(label, set())
+        count_seq = []
+        matched_label = label
+        for s in snapshots:
+            best_count = 0
+            best_match = ""
+            for ht in s.get("topics", []):
+                ht_label = ht.get("label", "")
+                if not ht_label:
+                    continue
+                ht_tokens = set(_tokenize(ht_label))
+                if not tok_set or not ht_tokens:
+                    continue
+                inter = len(tok_set & ht_tokens)
+                union = len(tok_set | ht_tokens)
+                sim = inter / union if union > 0 else 0
+                if sim >= 0.3 and ht.get("count", 0) > best_count:
+                    best_count = ht["count"]
+                    best_match = ht_label
+            count_seq.append(best_count if best_match else 0)
+            if best_match:
+                matched_label = best_match
+        latest_count = count_seq[-1] if count_seq else 0
+        # 话题生命周期
+        valid_counts = [c for c in count_seq if c > 0]
+        if not valid_counts:
+            lifecycle = "cold"
+        elif len(valid_counts) <= 1:
+            lifecycle = "emerging"
+        else:
+            recent_counts = valid_counts[-3:] if len(valid_counts) >= 3 else valid_counts
+            if latest_count > 10 and all(recent_counts[i] <= recent_counts[i+1] for i in range(len(recent_counts)-1)):
+                lifecycle = "hot"
+            elif len(recent_counts) >= 2 and all(recent_counts[i] >= recent_counts[i+1] for i in range(len(recent_counts)-1)):
+                lifecycle = "cooling"
+            elif latest_count < 3:
+                lifecycle = "cold"
+            else:
+                lifecycle = "emerging"
+        topic_trajectories[matched_label] = {
+            "lifecycle": lifecycle,
+            "latest_count": latest_count,
+            "peak_count": max(valid_counts) if valid_counts else 0,
+            "duration": len(valid_counts),
+        }
+    return {"keywords": kw_trajectories, "topics": topic_trajectories}
+
+
+def _compute_cross_category_topics(kw_data):
+    """检测同一关键词在多个 RSS 分类中同时热门。
+    返回 [{keyword, categories: [cat, ...], category_count}]"""
+    by_cat = kw_data.get("by_cat", {})
+    if len(by_cat) < 2:
+        return []
+    # 收集每个分类的 Top 20 关键词
+    cat_kw_sets = {}
+    for cat, kws in by_cat.items():
+        cat_kw_sets[cat] = set(w for w, _ in kws[:20])
+    # 统计每个关键词出现在多少个分类中
+    kw_cats = collections.defaultdict(list)
+    for cat, kw_set in cat_kw_sets.items():
+        for kw in kw_set:
+            kw_cats[kw].append(cat)
+    # 过滤仅出现在 1 个分类的，按分类数降序
+    cross = []
+    for kw, cats in kw_cats.items():
+        if len(cats) >= 2:
+            cross.append({
+                "keyword": kw,
+                "categories": sorted(cats),
+                "category_count": len(cats),
+            })
+    cross.sort(key=lambda x: -x["category_count"])
+    return cross[:20]
+
+
+def _run_analysis(sources_with_items, now_bj, hot_snapshot=None, hot_history=None):
+    """执行智能分析流水线。优先使用 insight_engine (LlamaIndex)，失败回退统计方法。"""
+    # ── 尝试 insight_engine (LlamaIndex) ──
+    try:
+        import insight_engine
+        ie_config = insight_engine.load_config()
+        if ie_config.get("insight_engine_enabled", True):
+            prev_analysis = _load_prev_analysis()
+            prev_keywords = []
+            if prev_analysis and prev_analysis.get("keywords", {}).get("global"):
+                prev_keywords = [w for w, _ in prev_analysis["keywords"]["global"][:50]]
+            ie_result = insight_engine.run_analysis(
+                hot_snapshot=hot_snapshot,
+                rss_history=_rss_history,
+                trending_data=[],
+                config=ie_config,
+                prev_keywords=prev_keywords,
+                hot_history=hot_history,
+            )
+            if ie_result is not None:
+                # 合并原有需要保留的字段（热榜趋势、RSS轨迹等仍由旧方法计算）
+                ie_result["hot_trends"] = _compute_hot_trends(hot_history) if hot_history else {}
+                trend_history = _accumulate_rss_trend_history(ie_result, now_bj)
+                ie_result["rss_trajectories"] = _compute_rss_trajectories(trend_history)
+                if not ie_result.get("cross_category"):
+                    ie_result["cross_category"] = _compute_cross_category_topics(
+                        ie_result.get("keywords", {}))
+                quality = _score_sources(sources_with_items, _rss_history)
+                _save_source_quality(quality)
+                ie_result["quality"] = {sk: v["score"] for sk, v in quality.items()}
+                _save_analysis_snapshot(ie_result)
+                print("[分析] insight_engine (LlamaIndex) 分析完成")
+                return ie_result
+    except ImportError:
+        print("[分析] insight_engine 未安装，回退统计方法")
+    except Exception as e:
+        print("[分析] insight_engine 失败: %s，回退统计方法" % e, file=sys.stderr)
+        import traceback; traceback.print_exc()
+    # ── 回退：原有统计方法 ──
+    t0 = time.time()
+    print("[分析] 开始智能分析...")
+    # 1. 信源质量评分
+    quality = _score_sources(sources_with_items, _rss_history)
+    _save_source_quality(quality)
+    # 2. 关键词提取
+    kw_data = _extract_keywords(_rss_history, now_bj)
+    global_kw = kw_data["global"]
+    # 3. 趋势检测（与上次构建对比）
+    prev_analysis = _load_prev_analysis()
+    prev_kw = prev_analysis.get("keywords", {}).get("global", []) if prev_analysis else []
+    rising = []
+    if prev_kw:
+        prev_freq = {w: i + 1 for i, (w, _) in enumerate(prev_kw[:50])}
+        curr_freq = {w: i + 1 for i, (w, _) in enumerate(global_kw[:50])}
+        for w, rank in curr_freq.items():
+            prev_rank = prev_freq.get(w, 999)
+            if prev_rank > rank + 5:  # 排名上升超过 5 位
+                rising.append({"word": w, "rise": prev_rank - rank, "current_rank": rank})
+        rising.sort(key=lambda x: -x["rise"])
+        rising = rising[:15]
+    # 4. 话题聚类
+    topics = _cluster_topics(_rss_history, now_bj)
+    # 5. 统计摘要
+    total_articles = len(_rss_history)
+    stats = {
+        'total_articles': total_articles,
+        'recent_count': kw_data['recent_count'],
+        'source_count': len(sources_with_items),
+    }
+    # 6. AI 摘要（传入升温词数据以增强分析深度）
+    summary = _generate_daily_summary(global_kw, topics, stats, rising=rising)
+    # 7. 热榜趋势标记
+    hot_trends = _compute_hot_trends(hot_history) if hot_history else {}
+    # 8. 跨平台共振检测
+    cross_platform = _cross_platform_topics(hot_history, hot_snapshot) if hot_snapshot else []
+    # 组装结果
+    analysis = {
+        'generated_at': now_bj.isoformat(),
+        'keywords': {
+            'global': [(w, round(s, 2)) for w, s in global_kw[:50]],
+            'by_cat': {cat: [(w, round(s, 2)) for w, s in kws[:20]] for cat, kws in kw_data['by_cat'].items()},
+        },
+        'rising': rising,
+        'topics': topics,
+        'summary': summary,
+        'stats': stats,
+        'quality': {sk: v['score'] for sk, v in quality.items()},
+        'hot_trends': hot_trends,
+        'cross_platform': cross_platform,
+    }
+    _save_analysis_snapshot(analysis)
+    # 9. RSS 内容趋势历史累积（在 analysis_snapshot 保存后，以便读取当前关键词数据）
+    trend_history = _accumulate_rss_trend_history(analysis, now_bj)
+    # 10. RSS 关键词/话题轨迹计算
+    rss_trajectories = _compute_rss_trajectories(trend_history)
+    analysis['rss_trajectories'] = rss_trajectories
+    # 11. 跨分类话题检测
+    cross_category = _compute_cross_category_topics(kw_data)
+    analysis['cross_category'] = cross_category
+    # 重新保存（含轨迹和跨分类数据）
+    _save_analysis_snapshot(analysis)
+    elapsed = round(time.time() - t0, 1)
+    n_kw_traj = len(rss_trajectories.get('keywords', {}))
+    n_topic_traj = len(rss_trajectories.get('topics', {}))
+    print("[分析] 完成: %d 个关键词, %d 个话题, %d 个升温词, %d 个跨平台话题, "
+          "%d 个关键词轨迹, %d 个话题轨迹, %d 个跨分类话题, 耗时 %.1fs" % (
+        len(global_kw), len(topics), len(rising), len(cross_platform),
+        n_kw_traj, n_topic_traj, len(cross_category), elapsed))
+    return analysis
 
 
 # ──────────────────────────── Main ────────────────────────────
@@ -4443,19 +6214,46 @@ def main(mode="full"):
     sources_with_items, total_items = _accumulate_history(sources_with_items)
     _history_after = len(_rss_history)
 
+    # ── 智能分析流水线（关键词 / 话题 / AI 摘要 / 信源评分 / 热榜轨迹 / 跨平台） ──
+    analysis_data = None
+    hot_snapshot = None
+    hot_history = {}
+    if ANALYSIS_ENABLED:
+        try:
+            now_bj = _now_bj()
+            # 抓取热榜快照（在分析前获取，以便轨迹累积和跨平台关联）
+            try:
+                hot_snapshot = fetch_newsnow_snapshot()
+                try:
+                    with open(HOT_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
+                        json.dump(hot_snapshot, f, ensure_ascii=False, separators=(",", ":"))
+                except Exception as e:
+                    print("[热榜] 快照写入失败: %s" % e, file=sys.stderr)
+            except Exception as e:
+                print("[热榜] 快照抓取失败: %s" % e, file=sys.stderr)
+                hot_snapshot = []
+            # 累积热榜历史轨迹（始终执行，确保 hot_history.json 被创建）
+            hot_history = _accumulate_hot_history(hot_snapshot or [], now_bj)
+            analysis_data = _run_analysis(sources_with_items, now_bj,
+                                          hot_snapshot=hot_snapshot, hot_history=hot_history)
+        except Exception as e:
+            print("[分析] 智能分析失败，跳过: %s" % e, file=sys.stderr)
+            import traceback; traceback.print_exc()
+
     # 生成 API 快照（供 /api/rss 直接返回，避免实时抓取丢失历史累积数据）
     meta = {"last_fetch": last_fetch}
     _save_api_snapshot(sources_with_items, meta=meta)
 
-    # 抓取 newsnow 热榜快照（失败不阻塞）
-    hot_snapshot = fetch_newsnow_snapshot()
-    try:
-        with open(HOT_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
-            json.dump(hot_snapshot, f, ensure_ascii=False, separators=(",", ":"))
-    except Exception as e:
-        print("[热榜] 快照写入失败: %s" % e, file=sys.stderr)
+    # 若分析未启用，仍需抓取热榜快照
+    if not ANALYSIS_ENABLED:
+        hot_snapshot = fetch_newsnow_snapshot()
+        try:
+            with open(HOT_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
+                json.dump(hot_snapshot, f, ensure_ascii=False, separators=(",", ":"))
+        except Exception as e:
+            print("[热榜] 快照写入失败: %s" % e, file=sys.stderr)
 
-    html_doc = build_html(sources_with_items, build_time, total_items, build_ts_ms)
+    html_doc = build_html(sources_with_items, build_time, total_items, build_ts_ms, analysis_data=analysis_data)
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(html_doc)
 

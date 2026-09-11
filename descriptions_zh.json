@@ -408,5 +408,19 @@
  "Nutlope/logocreator": "由Flux on Together AI提供支持的免费+ OSS徽标生成器",
  "openai/skills": "法典技能目录",
  "mksglu/context-mode": "AI 编码代理的上下文窗口优化。沙箱工具输出（减少 98%）、保留会话内存，并通过 MCP + 挂钩强制跨 17 个平台进行路由。",
- "nashsu/llm_wiki": "LLM Wiki 是一个跨平台桌面应用程序，可自动将您的文档转变为有组织的、相互关联的知识库。法学硕士不是传统的 RAG（每次从头开始检索并回答），而是从您的来源逐步构建和维护持久的 wiki。"
+ "nashsu/llm_wiki": "LLM Wiki 是一个跨平台桌面应用程序，可自动将您的文档转变为有组织的、相互关联的知识库。法学硕士不是传统的 RAG（每次从头开始检索并回答），而是从您的来源逐步构建和维护持久的 wiki。",
+ "Tencent/teamai-cli": "让每个团队的 AI 都原生化",
+ "newsnext/newsnow": "优雅阅读实时最热新闻",
+ "paveldevyatov/refund-anything-ai-prompt": "人工智能提示可让您退款——订阅、数字购买、预订。礼貌的信件第一，法律升级第二。 30 多个司法管辖区。",
+ "Colafornia/short-video-generator-AI": "免费开源项目，旨在将 YouTube 视频转变成病毒式短视频。突出显示检测、字幕、翻译、画外音，全部为您的内容提供。",
+ "AlibabaCloudDocs/aliyun_acp_learning": "欢迎来到阿里云大模型ACP高级工程师认证课程，这是阿里云大模型认证的进阶篇。在开始课程之前，先来了解阿里云大模型认证的体系架构，方便你选择适合自己定位的课程。",
+ "deepseek-ai/awesome-deepseek-integration": "将 DeepSeek API 集成到流行软件中",
+ "vastsa/PI-Desktop": "本地优先的 AI 编码代理桌面：Electron + Rust 主机核心 + pi Agent Harness + 用户可安装的插件",
+ "openai/plugins": "OpenAI 插件",
+ "aimeoa/hanshuang-codex": "针对GPT 5.6,V4flash的破甲实验项目",
+ "crwdla/tokentab": "一个 CLI，可以读取 Claude Code、Codex 和 Gemini CLI 会话日志，并按模型、项目和日期计算出它们的成本。",
+ "kunchenguid/firstmate": "与一位代理人交谈。与船员一起航行。",
+ "yudaprasetya007/routeVSCODE": "⚡ 零重载动态 AI 模型切换器和通过 9Router 进行 VSCode Copilot 聊天的本地代理",
+ "alsk1992/CloddsBot": "开源AI交易代理，在1000多个市场（ Polymarket、Kalshi、Binance、Hyperliquid、Solana DEXs、5条EVM链）自主运营。扫描边缘，即时执行，在您睡觉时管理风险。机器对机器支付的代理商务协议。自托管。建立在Claude之上。",
+ "tshemsedinov/reslop": "交互式终端代码审查 git diff 和行内突出显示"
 }

@@ -304,5 +304,10 @@
  "wzhudev/reverse-linear-sync-engine": "agent",
  "sansan0/TrendRadar": "tools",
  "hipcityreg/situation-monitor": "agent",
- "nashsu/llm_wiki": "assistant"
+ "nashsu/llm_wiki": "assistant",
+ "newsnext/newsnow": "agent",
+ "77AutumN/Intel_Briefing": "agent",
+ "AlibabaCloudDocs/aliyun_acp_learning": "learning",
+ "huggingface/transformers": "learning",
+ "deepseek-ai/awesome-deepseek-integration": "agent"
 }

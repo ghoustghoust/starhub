@@ -1,0 +1,768 @@
+name: Update Star Hub
+
+on:
+  schedule:
+    # UTC 21:00 = 北京 05:00 → 凌晨全量构建
+    - cron: "0 21 * * *"
+    # UTC 2/6/10/14 = 北京 10/14/18/22 → 白天增量构建
+    - cron: "0 2,6,10,14 * * *"
+  workflow_dispatch:
+    inputs:
+      force_full:
+        description: 'Force full build (re-fetch all RSS sources)'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write
+  # 缺这一行时 update.yml 的缓存淘汰步会 403，而它是 continue-on-error —— 静默空转
+  actions: write
+  # Pages 改由 workflow 发布（deploy-pages 走 OIDC 短时令牌，缺 id-token 它只会报"source is not Actions"）
+  pages: write
+  id-token: write
+
+concurrency:
+  group: starhub-update
+  cancel-in-progress: true  # 新触发取消旧排队，永远只跑最新一次，从根本上消除并发冲突
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    # env 提升到 job 级：push 冲突重试分支在 "Commit & push" 步骤里重新跑构建，
+    # 步骤级 env 会让重试构建拿不到翻译 key（退化）与 GitHub API 配额（403）
+    env:
+      AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
+      AGNES_API_KEYS: ${{ secrets.AGNES_API_KEYS }}
+      SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
+      ZEN_API_KEY: ${{ secrets.ZEN_API_KEY || secrets.OPENCODE_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      AGIHUNT_API_KEY: ${{ secrets.AGIHUNT_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # 完整历史，确保 reset 能正确追踪 origin/main
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Sync to latest remote
+        run: |
+          # 先同步到最新 remote 状态，再构建，确保基于最新数据
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Determine build mode
+        run: |
+          # workflow_dispatch 可强制 full；UTC 21:00 (北京 05:00) → full，其余 → incremental
+          if [ "${{ github.event.inputs.force_full }}" = "true" ]; then
+            echo "MODE=full" >> $GITHUB_ENV
+            echo "构建模式: 全量 (full) [forced by workflow_dispatch]"
+          else
+            HOUR=$(date -u +%H)
+            if [ "$HOUR" = "21" ]; then
+              echo "MODE=full" >> $GITHUB_ENV
+              echo "构建模式: 全量 (full)"
+            else
+              echo "MODE=incremental" >> $GITHUB_ENV
+              echo "构建模式: 增量 (incremental)"
+            fi
+          fi
+
+      - name: Install insight engine dependencies
+        run: pip install llama-index-core llama-index-embeddings-fastembed fastembed faiss-cpu rank-bm25 pytest
+
+      # ── 质量门禁 A：语法（blocking）──
+      # 起因：4819686 改写 Phase 2 prompt 时丢掉一个闭合 """，每日洞察连续失败数天且无人察觉，
+      # 因为此前没有任何步骤做过编译/解析检查。纯静态检查，无网络无副作用，可安全中断构建。
+      - name: Quality gate A — syntax (blocking)
+        run: |
+          python -m py_compile *.py
+          python -m compileall -q tests
+          for f in api/*.js; do node --check "$f"; done
+          echo "语法门禁通过"
+
+      # ── 质量门禁 A2：72h 历史持久化、抓取策略与源覆盖率健康（blocking）──
+      # 无网络、无凭证、毫秒级；断言含"每场抓全部源"的策略守卫与 update.yml 自身的缓存步骤。
+      # rss_source_coverage 锁住 2026-09-16 起让"有数据源"从 968 掉到 776 的三条路径：
+      # 去重把 datetime 当字符串、域名熔断把"合法空 feed"计为失败、异常被静默吞成 0 条。
+      # site_nav 锁住首页 header 的 div 配平：2026-09-25 删入口时连带删掉一个开标签，
+      # 多出的 </div> 提前闭合了 flex 行容器，页面在次日构建后整条导航纵向堆叠。
+      # rss_translate 是 2026-10-01 才接进来的：这个目录里有运行时翻译守卫与翻译引擎判据，
+      # 但历史上没有任何 workflow 引用过它（grep 全 workflows = 0 命中）⇒ 翻译链的回归可以静默落地。
+      # ⚠ 只接该目录里**能被 pytest 收集的那两个文件**，不接整个目录：同目录的
+      #   test_translate_engines.py 是**脚本风格**（末尾 `if failures: sys.exit(1)` 藏在缩进里，
+      #   扫 ^sys.exit 抓不到），被 pytest 当模块导入就是 INTERNALERROR。09:00 那场（head=bd96d24）
+      #   整场部署被 A2 挡掉就是这么来的；tests/rss_history/test_gate_wiring.py 现在钉住"可收集性"。
+      # 刻意不接 tests/trim_guard/：那条排练判据会在临时仓里真跑 git-filter-repo，
+      # ubuntu 上的行为未验证；拿它挡每场构建 = 我上次"自己把整场冻掉"的形状。改挂 repo-trim.yml。
+      - name: Quality gate A2 — RSS history persistence, site nav & cover domain table (blocking)
+        run: python -m pytest tests/rss_history/ tests/rss_source_coverage/ tests/site_nav/ tests/rss_cover/ tests/rss_translate/test_runtime_translate_guards.py tests/rss_translate/test_wall_queue_window.py tests/rss_translate/test_buildtime_skip_guard.py tests/rss_translate/test_agnes_429_backoff.py -q -s
+
+      # ── 质量门禁 A3：纯产物页面不许回到 git（advisory）──
+      # 原名"artifact drift vs template"已失效：batch① 之后产物不进提交清单，那条恒等式
+      # 只能拿库里那份**冻结快照**去比模板 —— 谁下次改 template.html 的 header 它就红，
+      # 而且没有正当修法（手改产物再入库 = 把 3.8 MB/场 的历史压力请回来）。详见手册 §10.33/§10.34。
+      # 现在它看的是 git 树：根目录那 4 个每场重写、无人跨场读回的页面 HTML 不许被跟踪。
+      # 仍然只观测不拦截：文件回不回 git 只是历史体积问题，不是站点坏掉；
+      # 拿它挡 blocking 闸 = 一场部署为一笔 3 MiB 滞留陪葬（本仓 10-01 实测过冻两小时的代价）。
+      # header 的结构配平另有人在 A2 挡着：tests/site_nav/test_header_structure.py。
+      - name: Quality gate A3 — generated pages out of git & pusher guard layer (advisory)
+        continue-on-error: true
+        # tests/tools/ 是 2026-10-08 才接进来的：这 8 个文件（63 条）此前不在任何一道门禁里，
+        # 于是 `data_api_push.py` 引入 `import prod_verify` 之后整组 ModuleNotFoundError
+        # **空跑了五天没人知道**（HANDOFF §8.34）。入库只治"孤本"，治不了"没人跑"。
+        # 保持 advisory 是刻意的：守卫层是元层，它红不该冻住定时档与一行热修
+        # ——两个方向各由 tests/site_nav_drift/test_guard_layer_execution.py 的一条判据钉住。
+        run: python -m pytest tests/site_nav_drift/ tests/tools/ -q -s
+
+      # ── 质量门禁 B：洞察测试（advisory）──
+      # 本 job 是唯一产出者（stars/RSS/ai-daily/每日洞察 + bot 提交 + Vercel 部署），
+      # 硬失败会冻结每天 5 个定时档并阻断一行热修的上线，故先观察再收紧。
+      # 清空全部上游 key：测试不需要凭证，带着真 key 会打真实 API（run_analysis 每场 18+ 次嵌入）。
+      - name: Quality gate B — insight tests (advisory)
+        continue-on-error: true
+        env:
+          AGNES_API_KEY: ""
+          AGNES_API_KEYS: ""
+          SILICONFLOW_API_KEY: ""
+          ZEN_API_KEY: ""
+          OPENROUTER_API_KEY: ""
+          AGIHUNT_API_KEY: ""
+        run: |
+          python test_insight_engine.py
+          python test_insight_guard_v3.py
+          python test_insight_bad_date.py
+          python test_daily_insight.py
+          python -m pytest tests/daily_insight/ -q
+
+      # 独立 always() 步骤：此前清理与被测命令同块，测试失败时 bash -e 会跳过清理，
+      # 脏工作区（测试写盘的 daily-insight.json / tracking.jsonl 等）会污染第 8 步真实构建与提交
+      - name: Restore worktree after insight tests
+        if: always()
+        run: |
+          git checkout -- .
+          git clean -fdq
+          rm -f emb_cache.json
+          echo "洞察测试执行完毕，工作区已还原"
+
+      - name: Restore embedding cache
+        id: cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            daily_insight_vectors.npy
+            daily_insight_chunks.json
+            daily_insight_faiss.index
+          key: emb-cache-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            emb-cache-${{ runner.os }}-
+
+      - name: Diagnose embedding cache restore
+        run: |
+          echo "=== Cache restore diagnostics ==="
+          echo "  cache-key: emb-cache-${{ runner.os }}-${{ github.run_id }}"
+          echo "  cache-hit: ${{ steps.cache-restore.outputs.cache-hit }}"
+          echo "  matched-key: ${{ steps.cache-restore.outputs.matched-key }}"
+          for f in daily_insight_vectors.npy daily_insight_chunks.json daily_insight_faiss.index; do
+            if [ -f "$f" ]; then
+              echo "  ✓ $f ($(du -h "$f" | cut -f1))"
+            else
+              echo "  ✗ $f MISSING"
+            fi
+          done
+
+      # 72h 文章历史的跨构建持久化：构建写 rss_history_N.json + index，缓存放进来读。
+      # 不提交进 git（单代 64MB，五场/天会把 .git 再撑爆），也不缓存主文件 rss_history.json。
+      - name: Restore RSS history cache
+        id: history-cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            rss_history_*.json
+            rss_history_index.json
+          key: rss-history-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            rss-history-${{ runner.os }}-
+
+      - name: Diagnose RSS history cache restore
+        run: |
+          # cache-hit/matched-key 在 restore-keys 前缀命中时并不可信（实测 emb 那步命中
+          # 下载了 221MB 却报 false/空），唯一可信信号是磁盘上有没有 index。
+          echo "  cache-hit: ${{ steps.history-cache-restore.outputs.cache-hit }}"
+          echo "  matched-key: ${{ steps.history-cache-restore.outputs.matched-key }}"
+          echo "  chunks on disk: $(ls rss_history_*.json 2>/dev/null | wc -l)"
+          if [ -f rss_history_index.json ]; then
+            echo "  ✓ rss_history_index.json ($(python -c "import json;print(json.load(open('rss_history_index.json'))['total'],'篇 /',json.load(open('rss_history_index.json'))['chunks'],'块')"))"
+          else
+            echo "  ✗ 无历史索引：本场按冷启动全量抓取（增量跳过不触发）"
+          fi
+
+      # ── 跨场状态缓存族 starhub-state（批 1：只搭通路，7 个文件仍然入库）──
+      # 动机（实测）：一次 bot 提交新增 14 个 blob / 19.83 MiB、消失 0 个，其中 17.4 MiB 是这 7 个
+      # "只有构建脚本自己读回"的状态文件 + build_logs。git 的模型是"内容变一次就永久多一份副本"，
+      # 所以调保留天数只改斜率；要曲线平就得让这些文件不再每场入库。批 1 先把通路搭起来
+      # （缓存只是第二份 ⇒ 零风险），下一批再从提交清单里摘名字。
+      # 读取端零改动：全部走 build_rss_aggregator.py 的 *_FILE 常量指向的同一路径。
+      - name: Restore cross-build state cache
+        id: state-cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            hot_history.json
+            analysis_snapshot.json
+            translations.json
+            rss_trend_history.json
+            insight_tracking_history.jsonl
+            daily_insight_tracking_history.jsonl
+            daily_insight_history.json
+            descriptions_zh.json
+            trending_snapshot.json
+            hot_snapshot.json
+            build_logs
+          key: starhub-state-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            starhub-state-${{ runner.os }}-
+
+      - name: Diagnose cross-build state cache restore
+        run: |
+          # cache-hit/matched-key 在 restore-keys 前缀命中时不可信（同 RSS history 那步的实测教训），
+          # 唯一可信信号是磁盘上的字节数。冷启动不拦构建，但必须出声：
+          # translations.json 丢了要重译 ~8400 条（真花配额）、analysis_snapshot.json 丢了
+          # 会让 _semantics_missing 恒真 ⇒ 每场重跑 LLM 重分析。
+          echo "=== starhub-state restore diagnostics ==="
+          for f in hot_history.json analysis_snapshot.json translations.json rss_trend_history.json insight_tracking_history.jsonl daily_insight_tracking_history.jsonl daily_insight_history.json descriptions_zh.json trending_snapshot.json hot_snapshot.json; do
+            if [ -f "$f" ]; then
+              echo "  OK $f ($(wc -c < "$f") B)"
+            else
+              echo "  MISSING $f"
+              case "$f" in
+                translations.json|analysis_snapshot.json)
+                  echo "::warning title=跨场状态冷启动::$f 不在盘上，本场按冷启动跑（代价：重译/重跑重分析）"
+                  ;;
+              esac
+            fi
+          done
+          if [ -d build_logs ]; then
+            echo "  OK build_logs/ ($(ls build_logs | wc -l) 个文件, $(du -sb build_logs | cut -f1) B)"
+          else
+            echo "  MISSING build_logs/（当日累积从空开始，摘要计数会偏低）"
+          fi
+
+      - name: Restore star state from its own branch
+        # 2026-10-08 P1 分支解耦的**读端**。star 状态（known_categories/known_notes）的权威副本
+        # 从此住在 orphan 分支 star-state 上，唯一写者是 star-fast.yml；本步把它并集回工作树，
+        # 于是 main 的自动写者只剩这一个 workflow —— 快车道每 15 分钟一次的提交不再把小时场的
+        # push 撞成 non-fast-forward（10-07 04:00 实锤：撞两次就整场红、Pages 整场不发）。
+        # 顺序硬要求（2026-10-08 实测过才写全）：必须在 `Sync to latest remote` 的 reset 之后、
+        # 也在 `Restore worktree after insight tests` 的 `git checkout -- .` + `git clean -fdq` **之后**、
+        # 并在构建之前。放在 reset 之后却放在那次还原之前，并集会被静默回滚——10-08 就是这么让
+        # 分支上的点评到不了页面（读端日志写着"并集 327（新增 1）"，线上首页那条 note 仍是空串）。
+        # 判据 tests/site_nav/test_pages_build_wiring.py 钉住这个先后，防止以后有人把它挪回去。
+        # 三条安全属性由 tests/tools/test_restore_star_state.py 钉住并做过变异自证：
+        # ①并集绝不缩小（分支被清空也只会退化成"没拿到新分类"）；②地板值闸门（防 293 条全量重烧 LLM）；
+        # ③读不到只降级 + warning，绝不挡发布（本仓有"A2 blocking + Deploy 无 if"的连坐教训）。
+        run: |
+          python tools/restore_star_state.py \
+            || echo "::warning::[star-state] 读端异常退出，本场使用 main 上的副本（不阻断发布）"
+
+      - name: Fetch stars & build
+        id: build
+        env:
+          # fetch_and_build.py:1217 消费（fetch_stars/assemble_entries/build_trending）；
+          # 缺失 = 小时场 stars 拉取全程匿名共享 60 req/h 配额，是间歇性拉星失败的隐性来源（T5）
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python fetch_and_build.py $MODE
+
+      - name: Cleanup old build logs
+        run: |
+          python -c "
+          import build_logger
+          # 保留 5 天：实测单日 .jsonl 2.58~2.80 MiB，保 14 天时 build_logs/ 一家
+          # 就占远端跟踪内容的 58%（42.52 MiB）。写方只有本步与 Log deploy result（都在主构建里），
+          # 跨场累积由 starhub-state 缓存承担、git 里每天只留一次快照（见下面的每日闸门）
+          # ⇒ 裁剪不伤功能，历史里旧文件仍可随时回捞。
+          # 上限由 tests/rss_history/test_log_retention_days.py 钉住，别顺手改回 14 或改成 0。
+          removed = build_logger.cleanup(5)
+          print('[日志] 已清理 %d 个过期日志文件: %s' % (len(removed), removed) if removed else '[日志] 无过期日志需要清理')
+          "
+
+      - name: Log trigger event
+        run: |
+          python -c "
+          import json, os
+          from datetime import datetime, timezone, timedelta
+          BJT = timezone(timedelta(hours=8))
+          trigger = 'schedule' if os.environ.get('GITHUB_EVENT_NAME') == 'schedule' else 'workflow_dispatch'
+          entry = {
+              'ts': datetime.now(BJT).isoformat(),
+              'type': 'trigger',
+              'trigger': trigger,
+              'mode': os.environ.get('MODE', 'unknown'),
+              'run_id': os.environ.get('GITHUB_RUN_ID', ''),
+              'sha': os.environ.get('GITHUB_SHA', '')[:12],
+          }
+          os.makedirs('build_logs', exist_ok=True)
+          today = datetime.now(BJT).strftime('%Y-%m-%d')
+          with open(f'build_logs/{today}.jsonl', 'a') as f:
+              f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+          print(f'[日志] trigger 事件已记录: {trigger} / {os.environ.get(\"MODE\", \"?\")}')
+          "
+
+      - name: Generate daily summary
+        run: |
+          python -c "
+          import build_logger
+          from datetime import datetime, timezone, timedelta
+          BJT = timezone(timedelta(hours=8))
+          today = datetime.now(BJT).strftime('%Y-%m-%d')
+          s = build_logger.summary(today)
+          import json
+          with open(f'build_logs/summary_{today}.json', 'w') as f:
+              json.dump(s, f, ensure_ascii=False, indent=2)
+          print(f'[日志] 当日摘要已生成: {s[\"builds\"]} 次构建, {s[\"total_items_latest\"]} 篇')
+          "
+
+      - name: Commit & push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # 竞态守卫：本 run 检出早于并发推送时，直接 add 源码文件会用旧检出
+          # 回滚别人的新提交（09-19 03:37 第8轮洞察代码被 auto-commit 吞掉实证）。
+          git fetch origin main --quiet || true
+          git checkout origin/main -- build_daily_insight.py insight_engine.py test_daily_insight.py 2>/dev/null || true
+          # 4 个 HTML 页面不再进这张清单：纯产物（同场生成、无人跨场读回），合计约 3.8MB/场。
+          # 发布由下面 Stage Pages site 按名字模式从工作目录取，所以"不提交"不会让页面缺文件；
+          # 但谁把它们加回来，膨胀就静默回来（判据：tests/rss_history/test_pages_deploy_wiring.py）。
+          # 批 2：7 个跨场状态文件不再进这张清单（实测每场给 git 历史永久新增 17.4 MiB，
+          # 而 git 的模型是"内容变一次就永久多一份副本" ⇒ 调保留天数只改斜率，不入库才是压平曲线）。
+          # 它们的跨场传递由上面的 starhub-state 缓存承接；读取端全走 *_FILE 常量指向的同一路径，
+          # 冷启动分支已核：build_daily_insight.py:4274 / insight 侧 if not os.path.exists ⇒ 退化成
+          # 一次冷启动而不是断链。build_logs 由下面的每日闸门管（批 4）：每场都写工作树与缓存，
+          # 但每天只有一次把 jsonl/summary 快照提交进 git —— 每小时刷摘要的 build-log-summary.yml
+          # 已同步退役，否则它会从旧 jsonl 生成摘要并覆盖掉主构建生成的正确摘要。
+          # 2026-10-02 树差点名：上面这些都摘完之后，**每场唯一新增的那 1 个 blob 是 daily-insight.json**
+          # （22,518~37,860 B/场，当日 growth 合计 0.627 MiB）。它同场写、无跨场读方，
+          # `.vercelignore:17` 早排除它、线上四个页面对它零引用 ⇒ 退出 git 不必补发布名单。
+          # 判据：tests/rss_history/test_pages_deploy_wiring.py 的 STATE_ONLY_ARTIFACTS（不许回 add、也不许进发布名单）。
+          git add known_categories.json rss_sources.json build_rss_aggregator.py insight_engine.py build_daily_insight.py test_daily_insight.py
+          # 构建日志：每天只提交一次（其余场次靠 starhub-state 缓存累积，实测 1.7-2.1 MiB/场）。
+          # 判据读自己入库的标记文件，不用 `git log` —— 后者依赖 fetch-depth:0 这个偶然条件，
+          # 一旦改成 1 就查不到历史、被读成"到期了"，于是静默退回每场提交。
+          # 判据：tests/rss_history/test_log_daily_commit_gate.py（闸门脚本被真跑，不是 grep 文本）
+          TODAY_BJ=$(TZ=Asia/Shanghai date +%F)
+          if [ "$(bash tools/daily_commit_gate.sh build_logs/.committed_date "$TODAY_BJ")" = open ]; then
+            echo "$TODAY_BJ" > build_logs/.committed_date
+            git add build_logs/
+            # 目录式 add 不 stage 删除：cleanup(5) 删掉的旧 jsonl/summary 要显式从索引摘掉，
+            # 否则它们永远留在树里（每天 +180 KB 的新无界点）
+            git ls-files -d -z build_logs | xargs -0 -r git rm --cached --quiet
+          fi
+          if ! python3 tools/size_tripwire.py; then
+            echo "::error::体积闸判红，本场不提交（宁可少发一场，也别把无上限产物写进不可回收的 git 历史）"
+            exit 1
+          fi
+          if git diff --cached --quiet; then
+            echo "No changes, skip commit."
+          else
+            git commit -m "chore: auto update stars $(TZ=Asia/Shanghai date +%F)"
+            # 普通 push；cancel-in-progress:true 保证无并发
+            git push || {
+              # push 被拒 ⇒ 说明本 run 检出之后有人推过。重试必须在**新 base 上重新生成**内容，
+              # 不能靠 reset --soft：--soft 只挪 HEAD、保留旧 index，随后的 commit 会把 add 清单里
+              # 未被本 run 改写的源码文件（build_rss_aggregator.py / rss_sources.json 都在清单里且无守卫）
+              # 按旧检出回滚掉别人刚推的改动 —— 09-19 03:37 第 8 轮洞察代码就是这样被 auto-commit 吞掉的。
+              # 旧写法在这里还有一层「soft 失败再 hard+重建」的兜底；两层合并成一层，
+              # 因为 soft 那层本身就是要修掉的东西。代价：撞并发时要多跑一次构建（实测约 5 分钟）。
+              echo "Push failed, remote changed. Retrying on a fresh base..."
+          git fetch origin main --quiet || true
+              git reset --hard origin/main
+              python fetch_and_build.py $MODE
+          git checkout origin/main -- build_daily_insight.py insight_engine.py test_daily_insight.py 2>/dev/null || true
+          # 重试分支：清单必须与主路径逐字同一份（批 2 起两处同改，只改一条 = 重试时把状态请回库里）
+          git add known_categories.json rss_sources.json build_rss_aggregator.py insight_engine.py build_daily_insight.py test_daily_insight.py
+          # 构建日志：每天只提交一次（其余场次靠 starhub-state 缓存累积，实测 1.7-2.1 MiB/场）。
+          # 判据读自己入库的标记文件，不用 `git log` —— 后者依赖 fetch-depth:0 这个偶然条件，
+          # 一旦改成 1 就查不到历史、被读成"到期了"，于是静默退回每场提交。
+          # 判据：tests/rss_history/test_log_daily_commit_gate.py（闸门脚本被真跑，不是 grep 文本）
+          TODAY_BJ=$(TZ=Asia/Shanghai date +%F)
+          if [ "$(bash tools/daily_commit_gate.sh build_logs/.committed_date "$TODAY_BJ")" = open ]; then
+            echo "$TODAY_BJ" > build_logs/.committed_date
+            git add build_logs/
+            # 目录式 add 不 stage 删除：cleanup(5) 删掉的旧 jsonl/summary 要显式从索引摘掉，
+            # 否则它们永远留在树里（每天 +180 KB 的新无界点）
+            git ls-files -d -z build_logs | xargs -0 -r git rm --cached --quiet
+          fi
+              # 重试分支同样不带 daily-insight.json：两条路径的清单必须逐字同一份，
+              # 只改一条 = 并发重试时把它请回库里（判据读的是全量 add 行，两处都算）
+              if ! python3 tools/size_tripwire.py; then
+                  echo "::error::体积闸判红，本场不提交（宁可少发一场，也别把无上限产物写进不可回收的 git 历史）"
+                  exit 1
+              fi
+              git commit -m "chore: auto update stars $(TZ=Asia/Shanghai date +%F)" --allow-empty
+              git push
+            }
+          fi
+
+      - name: Monitor per-build git growth (advisory)
+        # 批 6：曲线压平之后真正的风险是"哪天被悄悄改回每场重写"，所以每天自己报一次数并出声。
+        # 口径=相邻两个提交的递归 tree 差里"新 (path,sha)"的字节和；tip 看不出膨胀（被覆盖的
+        # 旧 blob 永久留在历史里）。阈值 6 MiB 的理由：每天那一次日志提交合法带来 ~2.6 MiB，
+        # 阈值低于它天天误报，而天天误报的告警等于没有告警；要抓的回退形态是 17-20 MiB/场。
+        # 必须 continue-on-error：本仓已两次"自己把自己的部署冻掉"。工具只读，绝不改仓库状态。
+        continue-on-error: true
+        run: |
+          python tools/history_growth.py --cur HEAD --prev HEAD^1 --log "build_logs/$(TZ=Asia/Shanghai date +%F).jsonl"
+
+      - name: Trim Actions cache keys (keep newest per family)
+        # 实测 09-20：缓存 9.97 / 10 GB 已用满、79 个键 —— emb-cache 45 键 9.64GB 是元凶，
+        # rss-history 34 键仅 0.33GB。键里带 run_id ⇒ 每场新增一键从不覆盖，而既有测试又要求
+        # 保留 run_attempt（重跑同 run 时"键已存在→静默不保存"），所以只能按族淘汰最旧键。
+        # 配额满时 Save 是 continue-on-error ⇒ 会静默不保存。尚未实际观察到失败（29/29 场都有键），
+        # 但剩余额度只有约 10 MB 而单个 emb 键均 219 MB ⇒ 这是悬崖前的预防性回收，不是在修已发生的退化。
+        # 本场键（含 run_id）永不删除；淘汰失败不得连坐 Vercel 部署。
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python tools/trim_actions_cache.py --repo "$GITHUB_REPOSITORY" \
+            --keep emb-cache=4 --keep rss-history=5 --keep starhub-state=3 --run-id "$GITHUB_RUN_ID"
+
+      - name: Save embedding cache (before prune deletes .npy)
+        # 无 continue-on-error 时这一步会红掉整个作业、连 Commit 与部署一起跳过；
+        # 键不含 run_attempt 时同一个 run 重跑会因"键已存在"直接失败（实测 rss 那步两条都补齐了）。
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            daily_insight_vectors.npy
+            daily_insight_chunks.json
+            daily_insight_faiss.index
+          key: emb-cache-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Save RSS history cache (before prune deletes chunks)
+        # Actions 缓存配额实测已用 7.05/10GB 且每场新增一条 run 键（94% 构建来自页面
+        # 实时刷新的 workflow_dispatch）；保存失败只能降级为下轮全量，不能连坐 Deploy。
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            rss_history_*.json
+            rss_history_index.json
+          key: rss-history-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # 位置刻意在 Cleanup old build logs 之后、Prune 之前：缓存里就是裁剪后的目录，
+      # 否则 build_logs 会在缓存里无界增长（prune 步会 rm -rf build_logs，必须在保存之后）。
+      - name: Stage Pages site for Actions deployment
+        # 这一步必须在 prune 之前（prune 会把大产物从工作目录删掉），因此它天然排在 Vercel 之前。
+        # 但它失败时绝不能连坐 Vercel 部署 —— 本仓已经有"A2 blocking + Deploy 无 if"的连坐教训，
+        # 方向不能再反过来加一条。所以 continue-on-error + 让 upload/deploy 依赖它的 outcome：
+        # 暂存失败 = Pages 这场不发布（站点留在上一次 artifact 上），Vercel 照常走。
+        id: stage
+        continue-on-error: true
+        run: |
+          # 发布取文件走**白名单**（见下方 STAGE 名单与判据），既不是整拷工作目录、也不再是
+          # `git ls-files` − 排除表（2026-10-02 18:12 翻成白名单，理由见 §8.16）。两条老理由都还在：
+          # ① 工作目录里躺着 cache restore-keys 放回、被 .gitignore 排除的原始语料（实测本地合计 398M：
+          #    rss_cache 110M / rss_history 62M / rss_api_snapshot 41M / daily_insight_* 向量 146M），
+          #    白名单让这类文件**默认不可能**进制品；② `.`/`_` 前缀项照 Jekyll 行为不许出现在名单里
+          #    （实测今天 /_bra.py 与 /.gitignore 都是 404；A2 判据直接禁止名单里出现这类名字）。
+          # 分块按名字模式补进来，**不依赖它是否被 git 跟踪**：chunk1+ 已停止提交，main 上那份是
+          # 停在旧流程的过期副本，只取 git 清单就会把过期块发上线；而后面要从历史里剔除这些
+          # 过期副本（存量 45.71GB 的主项），届时它们连"被跟踪"都不是。模式只放行 rss-data-*.js
+          # 一族 —— 被 .gitignore 排除的语料族（rss_cache/rss_history/emb_cache/daily_insight_*）
+          # 都不匹配这个模式，不会因此漏进制品。
+          # 4 个 HTML 页面同样按名字从工作目录取新鲜的那一份，**不信 git 里那份**：
+          # 它们已停止提交，main 上的副本是过期产物；只按 git 清单取文件 = 把旧页面发上线。
+          # 批 5b：首页侧栏 fetch('hot_snapshot.json')（生成于 rss-aggregator.html:3407）的数据源。
+          # 它已退出 git ⇒ 只能按名从工作目录取（白名单里漏一项，首页侧栏就是空数据 —— A2/A3 两条集合判据会红）。
+          # 空制品发布 = 全站清空，这几条把"必须有内容"钉成硬失败而不是 warning
+
+          mkdir -p _pages
+          # 制品只放站点会用到的东西（用户批准 2026-10-02）：跟踪文件里再剔掉非站点目录
+          # （tests/ 144 个、tools/ 26 个、build_logs/ 14.3 MiB、docs/）与源码 .py 与生成端模板。
+          # 收窄前的现取实测：线上 build_logs/2026-10-02.jsonl = 200（237 KB）、fetch_and_build.py = 200。
+          # 换成 cp --parents 而不是继续 rsync：① 过滤之后是按名单拷，rsync 的 --files-from 反而绕；
+          # ② 判据能在没有 rsync 的机器上真跑（tests/site_nav_drift/test_pages_artifact_scope.py）。
+          # `api/` 也关出去（用户点头 2026-10-02 13:16）：页面里的调用全是绝对域名 https://….vercel.app/api/x，
+          # Vercel 从工作目录部署不读 _pages ⇒ 站点与 API 都不受影响，Pages 少公开 8 个函数源码（~114 KB）。
+          # 根级 .md 同批关掉（15:26 现取：批 10 之后线上 HANDOFF.md 仍 200 / 84,323 B —— 它只挡了 docs/）。
+          # 4 个入口的 .md 文本引用核过：只有卡片正文里 `<code>CLAUDE.md` 这种描述性提及，没有任何 fetch。
+          # `lib/` 一并关掉（15:58 用自测过的解析器在旧场清单里抓出来的同类漏项）：rel_time.js 是构建期
+          # 内联进产物的，rss_cover/rss_retention 由 api/rss.js 在 Vercel 侧 require ⇒ 浏览器不请求它。
+          # 白名单式发布（用户裁决 2026-10-02 18:12"翻成白名单"）。
+          # 为什么不再是"git 清单 − 排除表"：18:12 拿远端 250 个跟踪 blob 按当时的排除表真跑一遍，
+          # 公开集仍有 15 项／0.48 MiB —— 里面是 4 张调试截图(128 KB)、两个过期 daily-deep-*.json、
+          # build_config.json、predictions.jsonl、vercel.json/package.json/LICENSE/
+          # known_categories.json/vendor_qrcode.min.js。排除表只能挡"先想到的那一类"；
+          # 白名单把默认方向反过来：**新垃圾默认不公开**，要公开必须改这张表 —— 判据
+          # tests/site_nav_drift/test_pages_artifact_scope.py::test_published_set_is_exactly_the_allowlist
+          # 断言集合相等 ⇒ 加错东西与漏发站点件都会当场红，不再可能"我漏写一行而静默公开"。
+          # 表内容是现取不是猜的：4 个入口的同源请求只有 4 个 HTML + rss-data-*.js +
+          # hot_snapshot.json + rss_sources.json；qrcode 走 jsDelivr/unpkg 的绝对 URL，
+          # `starhub-share.png` 是 a.download 的文件名而不是请求；构建期读的 build_config.json /
+          # known_categories.json / vendor_qrcode.min.js 由 python 直接从仓库根取，不经 _pages。
+          # 同类缺陷的证据链（历史读数，别删）：批 10 前线上 build_logs/*.jsonl 200／2.8 MB、
+          # fetch_and_build.py 200；批 10 之后 HANDOFF.md 仍 200／84,323 B；api/ 8 个函数 200／~114 KB；
+          # lib/ 那 4 项是用自测过的解析器在旧场清单里抓出来的。Vercel 从仓库根部署、不读 _pages，
+          # 所以关这些不影响 API 主机（18:13 现取：api/rss 200、api/news 200、api/translate 405）。
+          MISS=""
+          for f in index.html ai-daily.html rss-aggregator.html daily-insight-history.html                    hot_snapshot.json rss_sources.json trending_board.json; do
+            if [ -e "$f" ]; then cp -f "$f" _pages/; else MISS="$MISS $f"; fi
+          done
+          # 分块按名字模式补进来（rss-data-1+ 已停止提交，git 里那份是停在旧流程的过期副本
+          # ⇒ 只能取工作树里新鲜的那一份）。shopt -s nullglob 让"这块还没生成"退化成零次循环，
+          # 而不是把字面模式 rss-data-*.js 当成一个缺件名字塞进 MISS（那样会每场误判缺件）。
+          shopt -s nullglob
+          for f in rss-data-*.js; do
+            cp -f "$f" _pages/
+          done
+          shopt -u nullglob
+          for must in rss-data-0.js hot_snapshot.json rss-data-1.js rss-aggregator.html index.html \
+          ai-daily.html daily-insight-history.html rss_sources.json; do
+          if [ ! -s "_pages/$must" ]; then
+          echo "::error::Pages 缺件：$must（这场不发，站点停在上一份制品）"
+          case " $MISS " in *" $must "*) ;; *) MISS="$MISS $must";; esac
+          fi
+          done
+          if [ -n "$MISS" ]; then
+          mkdir -p build_logs
+          printf '{"ts":"%s","type":"pages_missing","files":"%s"}\n' "$(date -Iseconds)" "$MISS" \
+          >> "build_logs/$(TZ=Asia/Shanghai date +%F).jsonl" || true
+          echo "缺件清单：$MISS"
+          exit 1
+          fi
+          echo "Staged site size:"
+          du -sh _pages
+      - name: Save cross-build state cache (before prune deletes build_logs)
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            hot_history.json
+            analysis_snapshot.json
+            translations.json
+            rss_trend_history.json
+            insight_tracking_history.jsonl
+            daily_insight_tracking_history.jsonl
+            daily_insight_history.json
+            descriptions_zh.json
+            trending_snapshot.json
+            hot_snapshot.json
+            build_logs
+          key: starhub-state-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Prune large build artifacts before Vercel deploy
+        run: |
+          # 构建产物只供 GitHub Pages 加载，Vercel 只需要 api/ + HTML 入口 + vercel.json
+          # 直接删除避免 .vercelignore glob 不可靠导致 367MB 上传超限
+          rm -f rss-data-*.js rss_api_snapshot*.json
+          rm -f rss_cache.json rss_history*.json hot_history.json hot_snapshot.json
+          rm -f analysis_snapshot.json translations.json trending_snapshot.json
+          rm -f source_quality.json rss_trend_history.json known_categories.json descriptions_zh.json
+          rm -f daily-insight.json daily_insight_history.json daily_insight_snapshot.json
+          rm -f daily_insight_tracking_history.jsonl daily_insight_faiss.index daily_insight_chunks.json daily_insight_vectors.npy
+          rm -f emb_cache.json
+          rm -rf .deploy-tmp .workbuddy .zcode __pycache__ .pytest_cache build_logs docs
+          echo "Pruned. Remaining size:"
+          du -sh .
+
+      # 「同一份 API 代码每小时重复部署」是 1593 那五次 `Please retry later` 的直接来源；
+      # 用内容哈希当键：命中 = 这些输入与上次**已尝试**部署的完全一致 ⇒ 跳过部署。
+      # 不给 restore-keys —— 近似命中就跳过部署会静默把 API 停在旧版，必须精确相等才省这一次。
+      # 必须是 restore@v4 而不是 cache@v4：一体版的 post-save 在 job 变红的那场被跳过（实测 run 1595–1600
+      # 连续 6 场 `Post Detect API-relevant deploy state` = skipped ⇒ 一个键都没落），于是门每场都 miss、
+      # 每场重撞 5 次。留痕改由下面那个显式 `if: always()` 的 cache/save 步负责。
+      # 判据：tests/site_nav_drift/test_pages_vercel_ordering.py::test_deploy_gate_survives_a_failed_deploy
+      - name: Detect API-relevant deploy state
+        id: vercel_state
+        uses: actions/cache/restore@v4
+        with:
+          path: .vercel-deployed/
+          # 这四类就是"函数运行需要什么"的全部：api/**（9 个函数）、lib/**（被 require 的共享码）、
+          # vercel.json（functions/maxDuration）、rss_sources.json（loadSources() 直接 readFileSync，无兜底）。
+          # 清单漏项的危险方向比"多部署一次"大得多：改了它也不部署 ⇒ API 静默停在旧版。
+          # 判据：tests/site_nav_drift/test_pages_vercel_ordering.py::test_vercel_deploy_is_gated_on_api_relevant_changes
+          # 注意 key 表达式在 restore 与下面的 save 两处**必须逐字相同**（同一条判据守着）；
+          # prune 步不删这四类文件，所以 Vercel 之后重算哈希仍与这里一致。
+          key: vercel-deployed-${{ hashFiles('api/**', 'lib/**', 'vercel.json', 'rss_sources.json') }}
+
+      # Vercel CLI 把「部署时工作树 HEAD 的 commit 作者」当成部署发起者。guiyingyi2021 那个 Vercel
+      # 团队只认 bot（GitHub 集成）身份：HEAD 停在我推的 commit 上时，面板直接判
+      #   "Kwei168@users.noreply.github.com attempted to deploy … but they're not a member of the team"
+      # ⇒ Blocked（run 1602/1607 实测；对照 run 1592 有 bot 提交 ⇒ success。见手册 §8.21）。
+      # 以前每场都有 bot 的 `chore: auto update stars` 顶着这个前提；压平 git 膨胀把状态文件与站点
+      # 产物退出 add 清单后，多数场次是 "No changes, skip commit." ⇒ 前提消失 ⇒ 部署连片被拒。
+      # 这里把前提补回来，且**只在真要部署时**（缓存未命中 ⇒ 下一步会执行）检查并按需补一个空提交：
+      # 空提交不含任何 blob（约 200 字节），一年也就几次，不会把刚压平的曲线弄回去。
+      # continue-on-error：这一步失败绝不许终止 job —— Pages 排在 Vercel 之后，本仓已为
+      # "A2 blocking + Deploy 无 if" 这类连坐付过两次代价。失败用 ::warning:: 出声，
+      # 真正的可见性仍由 Deploy to Vercel 那一步与末步负责（它们会红）。
+      # 判据：tests/site_nav_drift/test_pages_vercel_ordering.py
+      #       ::test_a_bot_authored_commit_precedes_the_vercel_deploy
+      #       ::test_the_bot_commit_step_cannot_block_pages
+      - name: Ensure Vercel sees a bot-authored commit
+        id: vercel_head_guard
+        if: steps.vercel_state.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          head_email=$(git log -1 --pretty=%ae)
+          if [ "$head_email" = "41898282+github-actions[bot]@users.noreply.github.com" ]; then
+            echo "HEAD 已是 bot 提交 ⇒ 不补（Vercel 认这个身份）"
+            exit 0
+          fi
+          echo "::warning::HEAD 作者是 $head_email，Vercel 会按「非团队成员」拒绝这次部署 ⇒ 补一个 bot 空提交"
+          git commit --allow-empty -q -m "chore: vercel deploy head marker $(TZ=Asia/Shanghai date '+%F %T')"
+          git push || echo "::warning::补提交推送失败 ⇒ 本场 Vercel 大概率仍被 Blocked（Pages 不受影响）"
+
+      - name: Deploy to Vercel
+        id: vercel
+        # 只在 API 相关输入变化时部署；跳过时 outcome 是 skipped，末步刻意不因其 skipped 而红
+        # （见 test_vercel_step_is_not_silenced 与"正常发布不许误红"那条反向判据）。
+        if: steps.vercel_state.outputs.cache-hit != 'true'
+        # 封顶 12 分钟：现取正常场只用 0.5–0.7 分钟，而 1578/1585/1586 三次分别挂到 38.8 分钟与 42 分钟，
+        # 最后是被下一场的并发取消 —— 整场撑爆的代价由 Pages 上线时间与 Vercel 部署一起付。
+        # 12 分钟 ≈ 正常用时的 20 倍，够 5 次退避重试（sleep 15+30+45+60=150s 加四次上传）。
+        # 刻意**不**加 continue-on-error：那会把失败遮成 success（见 A3 的 test_vercel_step_is_not_silenced），
+        # 未成功的可见性由本步之后那一步负责。
+        timeout-minutes: 12
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          # 项目链接通过环境变量生效（Vercel CLI 不支持 --project-id 命令行参数）
+          VERCEL_PROJECT_ID: prj_7gK5d3EOJYTC8AmUxR2cNuHi7arB
+          VERCEL_ORG_ID: team_iovvEy0us9KkCNkuMRLQrIeA
+        run: |
+          # Vercel CLI 上传后偶发网络瞬时故障（fetch failed），退避重试 5 次
+          #
+          # `--no-wait` 是这一串里唯一真正治"部署连场不落地"的开关（官方口径：does not wait for a
+          # deployment to finish before exiting）。原来的形状是：CLI 站在原地等 Vercel 服务端构建完成
+          # （实测 40+ 分钟），而本 workflow 每小时一次且 cancel-in-progress ⇒ 每一场都在等待途中被
+          # 下一场掐掉，**永远等不到终点**。现取读数：1584 之后 1585–1591 连续 7 场 Vercel 未落地，
+          # Vercel 域首页指纹停在 1584 那版 6 小时以上；1591 靠封顶才把这段等待压到 12 分 12 秒，
+          # 但封顶只是"早停 + 出声"，部署仍然没成。
+          # 代价与补偿（必须一起读）：--no-wait 之后 CI **当场看不出成没成**，落地与否改由
+          # `tools/prod_verify.py` 在生产侧判（取 Vercel 域每场必变的首页指纹 + 步级结论），
+          # 且它是推送闸：没落地就是 warn/blocking，写在每次推送的日志里。判据
+          # tests/site_nav_drift/test_pages_vercel_ordering.py::test_vercel_step_does_not_wait_for_the_server_build
+          # 钉住这个开关不许被"顺手清理"掉。
+          # 重试 5 次的语义随之变化：现在重试的是**上传**（1.5 秒那一段），不是构建。
+          ok=0
+          for i in 1 2 3 4 5; do
+            echo "Vercel deploy attempt $i/5..."
+            if npx --yes vercel --prod --yes --no-wait --token "$VERCEL_TOKEN"; then ok=1; break; fi
+            if [ "$i" != "5" ]; then sleep $((i*15)); fi
+          done
+          # 先留痕、再判红：这两行排在 exit 1 之前，就是"门在失败场也生效"的全部保证（判据 ③）。
+          # 语义是「这批 API 内容已经试过部署」，不是「已被接受」——成败一起写进 marker 供日志读。
+          # 为什么失败也要留痕：Vercel 的秒拒是持续性外部故障，不留痕就变成每小时撞 5 次 + 每小时一红
+          # （实测 run 1595–1600 连红 6 场、30 次失败尝试，而这期间 api/ lib/ vercel.json 一个字节没变）；
+          # 留痕后同一内容只撞一场。要强制重试就改这四类文件之一 ⇒ 哈希变 ⇒ 门自动放行。
+          mkdir -p .vercel-deployed
+          printf '%s %s attempt=%s\n' "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "$([ "$ok" = "1" ] && echo accepted || echo rejected)" > .vercel-deployed/marker
+          if [ "$ok" != "1" ]; then
+            echo "::error::Vercel deploy failed after 5 attempts（同内容下一场不再重撞；API 有变更时改这四类文件即重新部署）"
+            exit 1
+          fi
+          echo "已记录部署状态标记：$GITHUB_SHA"
+
+      - name: Save API-relevant deploy state
+        # 显式保存，不依赖 actions/cache 的 post 阶段——post-save 在 job 变红的那场会被跳过（实测 skipped），
+        # 那正是唯一需要留痕的场景。`if: always()` 保证失败场也把这个键落进缓存。
+        # `continue-on-error`：留痕失败最坏是下一场多重撞一次，绝不许连坐 Pages 发布
+        # （本仓两次"自己把自己的部署冻掉"的教训都在 prune/Stage 那一段）。
+        # key 必须与上面 restore 逐字相同，否则存的键和读的键不是一个 ⇒ 门永不命中；由判据钉住。
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .vercel-deployed/
+          key: vercel-deployed-${{ hashFiles('api/**', 'lib/**', 'vercel.json', 'rss_sources.json') }}
+
+      - name: Log deploy result
+        if: always()
+        run: |
+          python -c "
+          import json, os
+          from datetime import datetime, timezone, timedelta
+          BJT = timezone(timedelta(hours=8))
+          entry = {
+              'ts': datetime.now(BJT).isoformat(),
+              'type': 'deploy',
+              'status': 'success' if '${{ job.status }}' == 'success' else 'failed',
+              'run_id': os.environ.get('GITHUB_RUN_ID', ''),
+          }
+          os.makedirs('build_logs', exist_ok=True)
+          today = datetime.now(BJT).strftime('%Y-%m-%d')
+          with open(f'build_logs/{today}.jsonl', 'a') as f:
+              f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+          print(f'[日志] deploy 事件已记录: {entry[\"status\"]}')
+          "
+
+
+      # ── GitHub Pages 发布：从「分支源」改为「本 workflow 部署 artifact」────────────────
+      # 动机只有一条：每场 55MB 的 rss-data-1.js 提交进 git，历史就永久攒一份，这是仓库无限
+      # 膨胀的唯一主因（实测远端全量历史 5.23 GiB 里 data-* 解包占 45.71 GB）。artifact 不进 git。
+      # 位置刻意在 Deploy to Vercel **之后**：Pages 失败不得连坐 Vercel 部署（本仓已有
+      # "A2 blocking + Deploy 无 if" 的连坐教训，方向不能反过来再加一条）。
+      # always() 是为了保住今天"Pages 靠 commit 更新、与 Vercel 成败无关"的解耦；
+      # 但构建本身失败时不能发布，所以再与 steps.build.outcome 求交。
+      # 前置条件（顺序错了就全站红）：Settings → Pages → Source 必须先切成 "GitHub Actions"，
+      # 在 legacy 分支源下 deploy-pages 会直接失败。
+      - name: Upload Pages artifact
+        id: pages_upload
+        # 必须同时要求 stage 成功：staging 是 continue-on-error 的，它失败时 _pages 可能是残缺的，
+        # 残缺制品照样发布 = 站点半坏（feedback-recurrence-metric-must-be-unsuppressible）。
+        if: always() && steps.build.outcome == 'success' && steps.stage.outcome == 'success'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _pages
+          # 默认是 warn：空制品会照样发布出去，站点直接被抹平
+          if-no-files-found: error
+
+      - name: Deploy to GitHub Pages
+        if: always() && steps.build.outcome == 'success' && steps.pages_upload.outcome == 'success'
+        uses: actions/deploy-pages@v5
+
+      - name: Mark the run red when Pages was not published or Vercel did not deploy
+        # 排在 Upload/Deploy 之后 ⇒ 只改"结论颜色"，不碰任何部署动作，也不会连坐 Vercel。
+        # 缺件那场以前只留一条 ::error:: 标注而整场仍标 success（Stage 带 continue-on-error，
+        # 这是刻意不连坐的代价）；这一步把"本场没发布"升级成 run 级失败 —— 不用翻日志也看得见。
+        # 2026-10-02 补上 Vercel 那一半：封顶之后被掐会以 outcome=cancelled/failure 结束，
+        # 而不引用它的话，"Vercel 连续几场没部署成功"在门禁上仍然是一片绿。
+        # 不用 `!= 'success'`：Vercel 步被上游判跳过时 outcome 是 skipped，那是另一回事，不该在这里红。
+        # 但 stage 的 skipped **必须**算未发布（2026-10-03 现取 run 1590）：GitHub 把一个迟到的
+        # `schedule` 事件补发，撞上正在跑的 dispatch 场，cancel-in-progress 掐掉它 ⇒
+        # Commit/Stage/Upload/Deploy 全 skipped ⇒ 站点这一小时没更新，而旧条件只认 stage 的 failure，
+        # 于是末步自己也是 skipped：一行 ::error:: 都没有，"没发"只剩没人看的 run 颜色。
+        # 两条分开写而不是合成 `!= 'success'`：缺件与"没走到发布步骤"的读者动作不同，话要说准。
+        if: always() && (steps.stage.outcome == 'failure' || steps.stage.outcome == 'skipped' || steps.pages_upload.outcome == 'skipped' || steps.vercel.outcome == 'failure' || steps.vercel.outcome == 'cancelled')
+        run: |
+          if [ "${{ steps.stage.outcome }}" = "failure" ]; then
+            echo "::error::本场未发布 Pages（Stage 缺件，上方已逐个点名，站点停在上一份制品）"
+            exit 1
+          fi
+          if [ "${{ steps.stage.outcome }}" = "skipped" ]; then
+            echo "::error::本场未发布 Pages（没走到 Stage/Upload/Deploy —— 前置 blocking 判红或整场被并发取消；站点停在上一份制品）"
+            exit 1
+          fi
+          if [ "${{ steps.pages_upload.outcome }}" = "skipped" ]; then
+            # 17:00 那场静默失败就是靠这一步的 skipped 揪出来的：Stage 成了不等于制品上了线。
+            echo "::error::本场未发布 Pages（Stage 已完成但 Upload Pages artifact 没执行，制品没进部署；站点停在上一份）"
+            exit 1
+          fi
+          if [ "${{ steps.vercel.outcome }}" = "failure" ]; then
+            echo "::error::本场 Vercel 未部署成功（failure）；Pages 不受影响。API 主机停在上一版——只有 api/ lib/ vercel.json rss_sources.json 真的变了时这才要人管，同内容已在上一场试过并留痕"
+            exit 1
+          fi
+          if [ "${{ steps.vercel.outcome }}" = "cancelled" ]; then
+            echo "::error::本场 Vercel 部署被掐（cancelled）；Pages 不受影响，但 API 主机停在上一版"
+            exit 1
+          fi

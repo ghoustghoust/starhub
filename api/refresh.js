@@ -1,5 +1,6 @@
 // Vercel Serverless Function：中转触发 GitHub Actions workflow_dispatch
-// 用法：POST /api/refresh → 触发 starhub 仓库 update.yml（ref=main）
+// 用法：POST /api/refresh          → 触发 starhub 仓库 update.yml（ref=main）
+//       POST /api/refresh?mode=star → 触发 star-fast.yml（15 分钟新星快车道，T5）
 // 认证令牌通过 Vercel 环境变量 GH_TOKEN 注入（fine-grained PAT，仅 starhub 仓库 + Actions:write）
 // 防护：① CORS 仅允许白名单 Origin（页面所在域名，比较时统一小写，兼容 GitHub Pages 域名大小写）；
 //       ② 请求须携带 X-Refresh-Key 头，
@@ -8,6 +9,12 @@ const ALLOWED_ORIGINS = new Set([
   'https://starhub-refresh.vercel.app',
   'https://kwei168.github.io',
 ]);
+
+// mode → workflow 文件名（白名单式分流，防止任意 workflow 名注入）
+const WORKFLOW_BY_MODE = {
+  '': 'update.yml',
+  star: 'star-fast.yml',
+};
 
 export default async function handler(req, res) {
   const origin = (req.headers['origin'] || '').toLowerCase();
@@ -38,8 +45,14 @@ export default async function handler(req, res) {
   }
 
   try {
+    const mode = (req.url.match(/[?&]mode=([a-z]+)/i) || [])[1] || '';
+    const workflow = WORKFLOW_BY_MODE[mode];
+    if (!workflow) {
+      res.status(400).json({ error: '未知 mode（支持：默认=update / star=star-fast）' });
+      return;
+    }
     const r = await fetch(
-      'https://api.github.com/repos/ghoustghoust/starhub/actions/workflows/update.yml/dispatches',
+      'https://api.github.com/repos/Kwei168/starhub/actions/workflows/' + workflow + '/dispatches',
       {
         method: 'POST',
         headers: {
@@ -53,10 +66,10 @@ export default async function handler(req, res) {
       }
     );
     if (r.status === 204) {
-      console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'refresh', origin, key_valid: keyValid, status: 204, ok: true }));
-      res.status(200).json({ ok: true });
+      console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'refresh', mode: mode || 'default', workflow, origin, key_valid: keyValid, status: 204, ok: true }));
+      res.status(200).json({ ok: true, workflow });
     } else {
-      console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'refresh', origin, key_valid: keyValid, status: r.status, ok: false, error: 'GitHub API 调用失败' }));
+      console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'refresh', mode: mode || 'default', workflow, origin, key_valid: keyValid, status: r.status, ok: false, error: 'GitHub API 调用失败' }));
       res.status(r.status).json({ error: 'GitHub API 调用失败' });
     }
   } catch (e) {

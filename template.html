@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>GitHub Star 收藏台 · ghoustghoust</title>
+<title>GitHub Star 收藏台 · Kwei168</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700;900&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -101,7 +101,7 @@ header{
 .hd .logo .t span{color:var(--logo-sub);font-size:11px;letter-spacing:.14em}
 .hd .acts .btn{background:transparent;border-color:var(--border);color:var(--text)}
 .hd .acts .btn:hover{background:var(--hover);border-color:var(--hover-line)}
-.hd{max-width:1440px;margin:0 auto;padding:12px 20px;display:flex;align-items:center;gap:12px}
+.hd{max-width:1440px;margin:0 auto;padding:12px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;row-gap:8px}
 .logo{display:flex;align-items:center;gap:10px;min-width:0}
 .logo svg{width:28px;height:28px;fill:var(--logo);flex:none}
 .logo .t{display:flex;flex-direction:column;line-height:1.25}
@@ -351,6 +351,20 @@ header{
   font-size:11px;font-weight:500;white-space:nowrap;
 }
 .cat-tag .dot{width:5px;height:5px;border-radius:0;background:currentColor;transform:rotate(45deg)}
+/* ── T7 卡片增强：健康徽章 / 久未维护置灰 / AI 点评 / 可点 topic·org 标签 / 语义角标 ── */
+.hb{display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:2px;font-size:10.5px;font-weight:600;letter-spacing:.02em}
+.hb-green{color:#1a7f37;background:#1a7f371c}
+.hb-yellow{color:#9a6700;background:#9a67001c}
+.hb-red{color:#cf222e;background:#cf222e1c}
+.card.stale .body,.card.stale .foot{opacity:.55}
+.card.stale .cover-img{filter:grayscale(.7);opacity:.75}
+.note-line{margin-top:5px;font-size:12px;color:var(--muted);line-height:1.5}
+.topics{margin-top:6px;display:flex;flex-wrap:wrap;gap:5px}
+.tp{font-size:10.5px;font-family:var(--font-mono);color:var(--faint);border:1px solid var(--border);padding:1px 6px;border-radius:2px;cursor:pointer;transition:all .12s}
+.tp:hover{color:var(--brand);border-color:var(--brand)}
+.owner[data-act="orgtag"]{cursor:pointer}
+.owner[data-act="orgtag"]:hover{color:var(--brand);text-decoration:underline}
+.sem-badge{display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:2px;font-size:10.5px;font-weight:600;color:#8250df;background:#8250df1c}
 .fav{
   position:absolute;top:10px;right:10px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;
   border:0;background:transparent;border-radius:var(--radius);color:var(--faint);transition:all .15s;
@@ -723,7 +737,10 @@ mark{background:var(--mark);color:inherit;border-radius:1px;padding:0 1px}
 @media (max-width:640px){
   .hd{padding:10px 14px;flex-wrap:wrap;row-gap:8px}
   .nav-links{order:3;flex:1 1 100%;justify-content:flex-start;overflow-x:auto;padding:2px 0}
-  .nav-drop-panel{left:0;transform:none;min-width:260px}
+  /* 手机端必须用 fixed：.nav-links 的 overflow-x:auto 会让 overflow-y 的使用值也变成 auto
+     （规范强制），绝对定位的面板虽然 opacity:1 却被裁剪到点不到。top:auto 取静态位置，
+     天然贴在自己那个按钮下方，不用 JS 写 inline top。 */
+  .nav-drop-panel{position:fixed;top:auto;margin-top:6px;left:12px;right:12px;transform:none;min-width:0;max-width:none}
   .hd .acts{gap:6px}
   .hd .acts .btn span{display:none}
   .hd .acts .btn{padding:0 9px}
@@ -751,6 +768,21 @@ mark{background:var(--mark);color:inherit;border-radius:1px;padding:0 1px}
   *,*::before,*::after{transition:none !important;animation-duration:.01ms !important;animation-iteration-count:1 !important}
   .back-top{transition:none}
 }
+/* 「待人工判定」提醒条：由 fetch_and_build.render_star_attention 生成，无待办时整块不输出
+   （页面里没有 .attn 才是正常态）。折叠用原生 <details>，零新增 JS。 */
+.attn{margin:0 0 14px;padding:10px 13px;border:1px solid var(--border);border-radius:12px;
+      background:var(--star-bg);color:var(--text);font-size:13px;line-height:1.65}
+.attn-sum{cursor:pointer;font-weight:600;list-style:none}
+.attn-sum::-webkit-details-marker{display:none}
+.attn-sum::before{content:"▸ ";color:var(--faint)}
+.attn[open] .attn-sum::before{content:"▾ "}
+.attn-list{margin:8px 0 0;padding-left:16px}
+.attn-row{margin:3px 0}
+.attn-name{text-decoration:none;font-weight:600;color:var(--brand)}
+.attn-name:hover{text-decoration:underline}
+.attn-meta{color:var(--muted);margin-left:8px;font-size:12px}
+.attn-same{display:block;color:var(--faint);font-size:12px}
+.attn-note{margin:9px 0 0;color:var(--faint);font-size:12px}
 </style>
 <script>try{var _t=localStorage.getItem('wb_starhub_theme_v1')||(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.dataset.theme=_t;}catch(e){}</script>
 </head>
@@ -772,6 +804,10 @@ mark{background:var(--mark);color:inherit;border-radius:1px;padding:0 1px}
           <a href="https://huggingface.co/learn/agents-course/unit0/introduction" target="_blank" rel="noopener">Agents Course<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
           <a href="https://www.runoob.com/vibe-coding/skills-agent.html" target="_blank" rel="noopener">Vibe Coding<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
           <a href="https://agihunt.info/" target="_blank" rel="noopener">AGI Hunt<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+          <a href="https://luoboask.github.io/fde-learning/01-basics/" target="_blank" rel="noopener">FDE Learning<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+          <a href="https://github.com/datawhalechina" target="_blank" rel="noopener">Datawhale<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+          <a href="https://datawhalechina.github.io/easy-vibe/zh-cn/" target="_blank" rel="noopener">Easy Vibe<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+          <a href="https://datawhalechina.github.io/all-in-rag/" target="_blank" rel="noopener">All-in-RAG<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
         </div>
       </div>
       <div class="nav-drop">
@@ -779,6 +815,7 @@ mark{background:var(--mark);color:inherit;border-radius:1px;padding:0 1px}
         <div class="nav-drop-panel">
           <a href="https://newsnow.busiyi.world/" target="_blank" rel="noopener">NewsNow<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
           <a href="https://tophub.today/" target="_blank" rel="noopener">今日热榜<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+          <a href="https://xbangdan.com/articles/" target="_blank" rel="noopener">X榜单<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
           <a href="https://www.beyondata.com/community#community-learn" target="_blank" rel="noopener">赋范空间<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
           <a href="https://www.v2ex.com/" target="_blank" rel="noopener">V2EX<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
           <a href="https://linux.do/" target="_blank" rel="noopener">Linux Do<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
@@ -827,8 +864,9 @@ mark{background:var(--mark);color:inherit;border-radius:1px;padding:0 1px}
       <div class="sh-row">
         <div class="search">
           <svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input id="q" type="search" placeholder="输入关键词实时过滤收藏池，2 个字符以上可搜全网…" autocomplete="off">
+          <input id="q" type="search" list="qHistory" placeholder="关键词 / 语法：stars:>1k · topic:rag · org:acme · license:mit…" autocomplete="off">
           <button class="clear" id="btnClear" aria-label="清空">×</button>
+          <datalist id="qHistory"></datalist>
         </div>
         <button class="btn primary hidden" id="btnSearchAll" title="在整个 GitHub 中搜索（跨语言）">搜全网</button>
         <div id="searchHint"></div>
@@ -836,6 +874,7 @@ mark{background:var(--mark);color:inherit;border-radius:1px;padding:0 1px}
     </div>
   </section>
   <div class="main">
+  __ATTENTION__
   <h2 class="main-title">我的收藏</h2>
   <div class="stats">
     <div class="stat"><span class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span><div><div class="v" id="stTotal">0</div><div class="l">收藏项目总数</div></div></div>
@@ -860,8 +899,17 @@ mark{background:var(--mark);color:inherit;border-radius:1px;padding:0 1px}
       <select id="sortSel">
         <option value="stars-desc"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> 星标从高到低</option>
         <option value="stars-asc"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> 星标从低到高</option>
+        <option value="relevant">相关度（搜索时）</option>
+        <option value="starred">最近收藏</option>
         <option value="recent">最近更新</option>
         <option value="name">名称 A-Z</option>
+      </select>
+    </div>
+    <div class="sel">
+      <select id="updatedSel">
+        <option value="">任意时间更新</option>
+        <option value="week">本周有更新</option>
+        <option value="month">本月有更新</option>
       </select>
     </div>
     <div class="starsel" id="starSel">
@@ -903,7 +951,7 @@ mark{background:var(--mark);color:inherit;border-radius:1px;padding:0 1px}
     <div class="trending on">
       <h2>每日 AI 排行榜</h2>
       <div class="trend-sub" id="trendUpdated"></div>
-      __AI_SUMMARY__
+      <div id="aiSummarySlot">__AI_SUMMARY__</div>
       <div class="trend-tabs" id="trendTabs">
         <button class="trend-tab on" data-tab="rising">涨星榜</button>
         <button class="trend-tab" data-tab="total">总星标榜</button>
@@ -988,7 +1036,7 @@ const SEARCH_API = 'https://starhub-refresh.vercel.app/api/search';
 // 全网搜索复用同一弱防护密钥（静态公开，隔离无意义）
 const SEARCH_KEY = REFRESH_KEY;
 const UPDATED = '__UPDATED__';
-const TRENDING = __TRENDING__;
+let TRENDING = __TRENDING__;
 let FEED = __FEED__;
 // 实时关注动态：Vercel 代理聚合 GitHub Events API（近 24 小时），打开页面即拉取 + 每 30 分钟轮询
 const EVENTS_API = 'https://starhub-refresh.vercel.app/api/events';
@@ -1043,7 +1091,12 @@ try {
 }
 catch(e){ favs = new Set(DEFAULT_FAVS); }
 
-const state = { q:'', cat:'', lang:'', star:'all', sort:'stars-desc', trendTab:'rising', sideTab:'trend', searchSort:'best-match', searchLang:'', searchQuery:'' };
+// 搜索结果里的「✓ 已收藏」不能只认 favs：那份存在 localStorage，换浏览器、清缓存、
+// 换域（站点产物 10-04 从 Vercel 域收口到 Pages 域，而 localStorage 按域隔离）之后标记整片消失，
+// 且用户没法恢复。"这个仓库我已经 star 过"这件事本来就在构建期数据里 ⇒ 用它兜住。
+const POOL_NAMES = new Set(DATA.map(d => d.full_name));
+
+const state = { q:'', cat:'', lang:'', star:'all', sort:'stars-desc', trendTab:'rising', sideTab:'trend', searchSort:'best-match', searchLang:'', searchQuery:'', updated:'', topic:'', sortTouched:false };
 
 // ---- 语言统计 ----
 const langCount = {};
@@ -1083,6 +1136,8 @@ function renderCats(){
     if(!n) return;
     const b = document.createElement('button');
     b.className = 'cat' + (state.cat===c.key?' on':'');
+    // 类目 AI 导览（构建时生成）：悬停即读，无需点进任何详情页
+    if(c.guide) b.title = c.guide;
     b.innerHTML = '<span class="dot" style="background:'+catColor(c.key)+'"></span>'+c.label+' <span class="n">'+n+'</span>';
     b.onclick = () => { state.cat = state.cat===c.key?'':c.key; renderCats(); renderList(); };
     cats.appendChild(b);
@@ -1103,6 +1158,48 @@ function renderLangSel(){
     langSorted.map(([l,n])=>'<option value="'+l.replace(/"/g,'&quot;')+'"'+(l===cur?' selected':'')+'>'+l+' ('+n+')</option>').join('');
 }
 
+// ---- 搜索语法（限定符 + 普通词）与相关性打分 ----
+// 设计：所有筛选语法化（stars:>1k / language:python / license:mit / pushed:>30d /
+// forks:>100 / org:acme / topic:rag / in:name / in:desc），卡片上的 owner/topic
+// 标签点击即写入对应限定符 —— 一个搜索框承载全部筛选，功能之间零耦合。
+function _unitNum(s){
+  const m = String(s).toLowerCase().match(/^(\d+(?:\.\d+)?)([km]?)$/);
+  if(!m) return NaN;
+  return Math.round(parseFloat(m[1]) * (m[2]==='k'?1e3:m[2]==='m'?1e6:1));
+}
+function parseQueryTokens(q){
+  const filters = {starsMin:null, starsMax:null, forksMin:null, lang:'', license:'', pushedDays:null, org:'', topic:'', inName:false, inDesc:false};
+  const words = [];
+  String(q||'').trim().split(/\s+/).filter(Boolean).forEach(t=>{
+    let m;
+    if((m=t.match(/^stars?:(>=?)(\d+(?:\.\d+)?[km]?)$/i))) filters.starsMin=_unitNum(m[2]);
+    else if((m=t.match(/^stars?:<(\d+(?:\.\d+)?[km]?)$/i))) filters.starsMax=_unitNum(m[1]);
+    else if((m=t.match(/^forks?:(>=?)(\d+(?:\.\d+)?[km]?)$/i))) filters.forksMin=_unitNum(m[2]);
+    else if((m=t.match(/^language:(\S+)$/i))) filters.lang=m[1];
+    else if((m=t.match(/^license:(\S+)$/i))) filters.license=m[1];
+    else if((m=t.match(/^pushed:>(\d+)d?$/i))) filters.pushedDays=parseInt(m[1],10);
+    else if((m=t.match(/^org:(\S+)$/i))) filters.org=m[1];
+    else if((m=t.match(/^topic:(\S+)$/i))) filters.topic=m[1];
+    else if(/^in:name$/i.test(t)) filters.inName=true;
+    else if(/^in:desc$/i.test(t)) filters.inDesc=true;
+    else words.push(t.toLowerCase());
+  });
+  return {filters, words};
+}
+function relevanceScore(d, words){
+  if(!words.length) return 0;
+  const name=(d.name||'').toLowerCase(), full=(d.full_name||'').toLowerCase();
+  const topics=(d.topics||[]).join(' ').toLowerCase(), desc=(d.desc||'').toLowerCase();
+  let s=0;
+  words.forEach(w=>{
+    if(name.includes(w)||full.includes(w)) s+=10;
+    else if(topics.includes(w)) s+=4;
+    else if(desc.includes(w)) s+=2;
+  });
+  if(words.length>1 && words.every(w=>name.includes(w)||full.includes(w))) s+=5;
+  return s;
+}
+
 // ---- 模糊搜索 ----
 function escHtml(s){
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -1110,7 +1207,8 @@ function escHtml(s){
 function hl(s){
   const t = escHtml(s);
   if(!state.q) return t;
-  const tokens = state.q.split(/\s+/).filter(Boolean)
+  // 限定符（stars:>1k 等）不进高亮词表，只高亮普通关键词
+  const tokens = parseQueryTokens(state.q).words
     .map(x => escHtml(x).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
   if(!tokens.length) return t;
   tokens.sort((a,b)=>b.length-a.length);
@@ -1125,27 +1223,85 @@ function fuzzyMatch(d, q){
   return tokens.every(t => hay.includes(t));
 }
 
+function _withinDays(pushed, days){
+  if(!pushed) return false;
+  const t = new Date(pushed).getTime();
+  if(isNaN(t)) return false;
+  return (Date.now()-t) <= days*864e5;
+}
 function filterData(){
+  const {filters, words} = parseQueryTokens(state.q);
   let list = DATA.filter(d => {
-    if(state.q && !fuzzyMatch(d, state.q)) return false;
+    // 限定符过滤（stars:/forks:/language:/license:/pushed:/org:/topic:/in:）
+    if(filters.starsMin!=null && !(d.stars>=filters.starsMin)) return false;
+    if(filters.starsMax!=null && !(d.stars<filters.starsMax)) return false;
+    if(filters.forksMin!=null && !((d.forks||0)>=filters.forksMin)) return false;
+    if(filters.lang && (d.language||'').toLowerCase()!==filters.lang.toLowerCase()) return false;
+    if(filters.license && (d.license||'').toLowerCase()!==filters.license.toLowerCase()) return false;
+    if(filters.pushedDays!=null && !_withinDays(d.pushed_at, filters.pushedDays)) return false;
+    if(filters.org && (d.owner||'').toLowerCase()!==filters.org.toLowerCase()) return false;
+    if(filters.topic && !(d.topics||[]).some(t=>t.toLowerCase()===filters.topic.toLowerCase())) return false;
+    if(filters.inName && !words.every(w=>(d.name||'').toLowerCase().includes(w))) return false;
+    // topic 横切（点卡片 topic 标签设置）：跨类目过滤
+    if(state.topic && !(d.topics||[]).some(t=>t.toLowerCase()===state.topic.toLowerCase())) return false;
+    // 更新时间档
+    if(state.updated==='week' && !_withinDays(d.pushed_at,7)) return false;
+    if(state.updated==='month' && !_withinDays(d.pushed_at,30)) return false;
     if(state.cat && d.category !== state.cat) return false;
     if(state.lang && d.language !== state.lang) return false;
     if(state.star === 'lt1k' && d.stars >= 1000) return false;
     if(state.star === '1k10k' && (d.stars < 1000 || d.stars >= 10000)) return false;
     if(state.star === '10k100k' && (d.stars < 10000 || d.stars >= 100000)) return false;
     if(state.star === 'gt100k' && d.stars < 100000) return false;
+    if(words.length){
+      if(filters.inDesc){
+        // in:desc 已在上面钉了 name 词；这里要求描述也全含
+        if(!words.every(w=>(d.desc||'').toLowerCase().includes(w))) return false;
+      }
+      const hay = (d.name+' '+d.owner+' '+d.full_name+' '+(d.desc||'')+' '+(d.language||'')+' '+(d.categoryLabel||'')+' '+(d.topics||[]).join(' ')).toLowerCase();
+      if(!words.every(t => hay.includes(t))) return false;
+    }
     return true;
   });
+  // 相关性打分（q 非空时），供 relevant 排序档与语义扩展使用
+  if(words.length) list.forEach(d => { d._score = relevanceScore(d, words); });
+  // q 非空且用户未手动选过排序档 → 自动按相关度（显式选择过的用户不被打扰）
+  const effSort = (words.length && !state.sortTouched) ? 'relevant' : state.sort;
   const cmp = {
+    'relevant': (a,b)=>(b._score||0)-(a._score||0) || b.stars-a.stars,
+    'starred': (a,b)=>(b.starred_at||'').localeCompare(a.starred_at||''),
     'stars-desc': (a,b)=>b.stars-a.stars,
     'stars-asc': (a,b)=>a.stars-b.stars,
     'recent': (a,b)=>(b.pushed_at||'').localeCompare(a.pushed_at||''),
     'name': (a,b)=>a.name.localeCompare(b.name),
-  }[state.sort];
+  }[effSort] || ((a,b)=>b.stars-a.stars);
   list.sort(cmp);
+  // 语义扩展（T7c）：关键词命中太少且向量可用时，用命中集质心从未命中里召回语义近邻。
+  // 无 query 向量依赖（不需要给查询词做 embedding），零后端。
+  let semantic = [];
+  if(words.length && list.length>0 && list.length<6 && DATA.some(d=>d.emb)){
+    const emb0 = list.find(d=>Array.isArray(d.emb)&&d.emb.length);
+    if(emb0){
+      const dim = emb0.emb.length;
+      // 维度守卫必须是 ===dim：一条长度不符的向量会把质心越界项累成 NaN，
+      // 所有 sim 静默归零（整段语义扩展消失）——两处过滤都按精确维度收
+      const withEmb = list.filter(d=>Array.isArray(d.emb)&&d.emb.length===dim);
+      if(withEmb.length){
+        const centroid = new Array(dim).fill(0);
+        withEmb.forEach(d=>d.emb.forEach((v,i)=>centroid[i]+=v/withEmb.length));
+        const seen = new Set(list.map(d=>d.full_name));
+        semantic = DATA.filter(d=>Array.isArray(d.emb)&&d.emb.length===dim&&!seen.has(d.full_name))
+        .map(d=>({d, sim:d.emb.reduce((acc,v,i)=>acc+v*centroid[i],0)}))
+        .filter(x=>x.sim>0.3)
+        .sort((a,b)=>b.sim-a.sim)
+        .slice(0,5)
+        .map(x=>Object.assign({}, x.d, {_sem:true, _score:undefined}));
+      }
+    }
+  }
   const faved = list.filter(d=>favs.has(d.full_name));
   const rest = list.filter(d=>!favs.has(d.full_name));
-  return { faved, rest };
+  return { faved, rest, semantic };
 }
 
 function catColor(key){
@@ -1173,7 +1329,7 @@ function clampChroma(hex, lo, hi){
 
 function buildCard(d, isFav){
   const div = document.createElement('article');
-  div.className = 'card cover-card' + (isFav?' faved':'');
+  div.className = 'card cover-card' + (isFav?' faved':'') + (d.stale?' stale':'');
   const catColorVal = catColor(d.category);
   const coverSrc = d.cover_image || ('https://opengraph.githubassets.com/1/' + d.full_name);
   const relUpd = fmtRelTime(d.pushed_at);
@@ -1181,6 +1337,13 @@ function buildCard(d, isFav){
   const descHtml = desc.length > 60
     ? '<span class="desc-text">'+hl(desc)+'</span><button class="more" data-act="expand">展开</button>'
     : '<span class="desc-text">'+hl(desc)+'</span>';
+  const HB_LABEL = {green:'健康', yellow:'一般', red:'停滞'};
+  const healthBadge = (d.health && HB_LABEL[d.health])
+    ? '<span class="hb hb-'+d.health+'" title="仓库健康度（构建时按更新/社区/文档/归档状态计算）">'+HB_LABEL[d.health]+'</span>' : '';
+  const noteLine = d.note ? '<div class="note-line" title="AI 一句话点评">✦ '+hl(d.note)+'</div>' : '';
+  const semBadge = d._sem ? '<span class="sem-badge" title="按向量相似度扩展召回">语义相关</span>' : '';
+  const topicTags = (d.topics||[]).slice(0,3).map(t =>
+    '<span class="tp" data-act="topictag" data-topic="'+escHtml(t)+'" title="筛选该 topic">'+escHtml(t)+'</span>').join('');
   div.innerHTML =
     '<a class="cover" href="'+d.html_url+'" target="_blank" rel="noopener" tabindex="-1" aria-hidden="true">' +
       '<img class="cover-img" src="'+coverSrc+'" alt="" loading="lazy" decoding="async">' +
@@ -1190,18 +1353,21 @@ function buildCard(d, isFav){
     '<button class="fav'+(isFav?' on':'')+'" data-act="fav" title="收藏/取消收藏">'+(isFav?icon.starFilled:icon.star)+'</button>' +
     '<div class="body">' +
       '<div class="top"><div class="id">' +
-        '<div class="owner-line"><span class="owner">'+escHtml(d.owner)+'</span>' +
+        '<div class="owner-line"><span class="owner" data-act="orgtag" data-org="'+escHtml(d.owner)+'" title="筛选该作者">'+escHtml(d.owner)+'</span>' +
           (isFav ? '<span class="pin-chip">置顶</span>' : '') +
         '</div>' +
         '<a class="name" href="'+d.html_url+'" target="_blank" rel="noopener">'+hl(d.name)+'</a>' +
       '</div></div>' +
       '<div class="desc" data-act="desc">'+descHtml+'</div>' +
+      noteLine +
+      (topicTags ? '<div class="topics">'+topicTags+'</div>' : '') +
     '</div>' +
     '<div class="foot">' +
       '<div class="meta">' +
         (d.language ? '<span class="lg"><span class="c" style="background:'+(LANG_COLORS[d.language]||'#8b949e')+'"></span>'+d.language+'</span>' : '') +
         '<span class="st">'+icon.starFilled+fmtStars(d.stars)+'</span>' +
         '<span class="tm">'+(relUpd ? relUpd+' 更新' : '—')+'</span>' +
+        healthBadge + semBadge +
       '</div>' +
       '<div class="foot-row">' +
         '<a class="cat-tag" style="color:'+catColorVal+';background:'+catColorVal+'1f" href="javascript:void 0" data-act="cattag" data-cat="'+d.category+'">' +
@@ -1241,7 +1407,10 @@ function fmtStars(n){
 }
 
 function renderList(){
-  const { faved, rest } = filterData();
+  const { faved, rest, semantic } = filterData();
+  // 语义扩展条目追加在结果尾部（带"语义相关"角标，_sem 由 buildCard 渲染）
+  const semBadged = (semantic||[]).map(d=>{ const c=Object.assign({},d); c._sem=true; return c; });
+  const restAll = rest.concat(semBadged);
   const pinnedWrap = $('#pinnedWrap'), pinned = $('#pinned'), grid = $('#grid'), empty = $('#empty');
   const isList = getView() === 'list';
   const build = isList ? buildRow : buildCard;
@@ -1258,19 +1427,19 @@ function renderList(){
 
   // 主列表
   grid.innerHTML='';
-  rest.forEach(d => grid.appendChild(build(d, false)));
+  restAll.forEach(d => grid.appendChild(build(d, false)));
   // 只改标题文本节点（firstChild），保留 span#listCount 子节点：
   // textContent 整体赋值会销毁子节点，使 #listCount 从 DOM 消失、下次查询为 null
   const titleEl = $('#listTitle'), countEl = $('#listCount');
   if(titleEl.firstChild) titleEl.firstChild.textContent = state.cat
     ? (CATS.find(c=>c.key===state.cat)||{}).label || '全部项目'
     : '全部项目';
-  if(countEl) countEl.textContent = '('+rest.length+')';
+  if(countEl) countEl.textContent = '('+restAll.length+')';
 
-  const hasFilter = state.cat || state.lang || state.star !== 'all';
-  empty.style.display = (faved.length + rest.length === 0) ? 'block' : 'none';
-  if(faved.length + rest.length === 0){
-    $('#emptyHint').textContent = hasFilter ? '当前有分类 / 语言 / 星标筛选在生效，可能挡住了结果' : '试试换一个关键词';
+  const hasFilter = state.cat || state.lang || state.star !== 'all' || state.updated || state.topic || state.q;
+  empty.style.display = (faved.length + restAll.length === 0) ? 'block' : 'none';
+  if(faved.length + restAll.length === 0){
+    $('#emptyHint').textContent = hasFilter ? '当前有筛选在生效，可能挡住了结果（试试限定符 topic:xxx 或换关键词）' : '试试换一个关键词';
     $('#btnResetAll').style.display = hasFilter ? 'inline-flex' : 'none';
   }
 
@@ -1401,13 +1570,19 @@ function renderSearchResults(j, append){
   const list = $('#sList');
   if(!append) list.innerHTML = '';
   if(!j.items || !j.items.length){
-    if(!append) renderSearchState('empty');
+    if(!append){
+      renderSearchState('empty');
+      // total>0 却一条没剩下时，只报「未找到相关仓库」会把人支去换词——得说明是被屏蔽了
+      const fo = j.filtered_out || 0;
+      if(fo) $('#sFoot').textContent = '本页 ' + fo + ' 条结果已屏蔽（低质或不相关），试试换更具体的关键词';
+    }
     return;
   }
   j.items.forEach(x => {
     const row = document.createElement('div');
     row.className = 's-item';
-    const faved = favs.has(x.full_name);
+    // 「或」而不是替换：池内 = 已 star 过（换浏览器也不丢）；favs = 在本页点过心（置顶语义，保留）。
+    const faved = favs.has(x.full_name) || POOL_NAMES.has(x.full_name);
     const topics = (x.topics || []).map(t => '<span class="s-tag">' + escHtml(t) + '</span>').join('');
     row.innerHTML =
       '<div class="s-top">' +
@@ -1427,10 +1602,14 @@ function renderSearchResults(j, append){
   // 分页状态：已加载条数 + 是否还有下一页（滚动触发加载更多）
   searchLoaded += (j.items || []).length;
   const total = j.total || 0;
-  searchHasMore = (j.items || []).length === SEARCH_PER_PAGE && searchLoaded < Math.min(total, 1000);
-  $('#sFoot').textContent = searchHasMore
+  // 「还有下一页」看服务端原始条数，不能看过滤后的 items.length —— 后者一屏蔽就误判到底。
+  // 旧部署/旧缓存没这个字段时回退成 items.length，保持与改动前同形。
+  const rawCount = (typeof j.raw_count === 'number') ? j.raw_count : (j.items || []).length;
+  searchHasMore = rawCount === SEARCH_PER_PAGE && searchLoaded < Math.min(total, 1000);
+  const spamNote = j.filtered_out ? ' · 已屏蔽 ' + j.filtered_out + ' 条低质或不相关结果' : '';
+  $('#sFoot').textContent = (searchHasMore
     ? '已显示 ' + searchLoaded + ' / 共 ' + Math.min(total, 1000) + ' 条 · 滚动加载更多'
-    : (total > 1000 ? '已显示前 ' + searchLoaded + ' 条（共 ' + total + ' 个结果，GitHub 最多返回前 1000 条）' : '已显示全部 ' + searchLoaded + ' 条');
+    : (total > 1000 ? '已显示前 ' + searchLoaded + ' 条（共 ' + total + ' 个结果，GitHub 最多返回前 1000 条）' : '已显示全部 ' + searchLoaded + ' 条')) + spamNote;
 }
 
 function editSearchQuery(){
@@ -1601,6 +1780,23 @@ async function refreshFeed(){
     feedLive = true;
     renderFeed();
   }catch(e){ /* 静默降级：网络异常时保持静态数据 */ }
+}
+
+// 排行榜数据出口（同源站点件，由小时场写）：成功替换 TRENDING 重渲染，失败静默保留内联兜底。
+// 为什么必须有它：index.html 是单体文件，快车道每 15 分钟重建整页时并不拥有排行榜
+// （它只算 star 列表），拿不到就把内联值写成 {} ⇒ 2026-10-04 18:01 线上空榜的根因。
+// 有了这条注入路径，页面里那份内联就只是首屏兜底，覆盖不再伤人。
+async function refreshTrendingBoard(){
+  try{
+    const r = await fetch('trending_board.json', {cache:'no-store'});
+    if(!r.ok) return;
+    const j = await r.json();
+    if(!j || !j.trending) return;
+    TRENDING = j.trending;
+    const slot = document.getElementById('aiSummarySlot');
+    if(slot && j.ai_summary_html) slot.innerHTML = j.ai_summary_html;
+    renderTrending();
+  }catch(e){ /* 静默降级：取不到就继续用内联那份，不许把榜单清空 */ }
 }
 
 // ---- AI 动态流（AIHOT 公开 API + /api/news 多源代理，浏览器直连，无需 Key） ----
@@ -1823,6 +2019,22 @@ function bindEvents(){
       }
     });
   });
+  // 搜索历史（localStorage 最近 8 条，datalist 原生下拉）
+  const HIST_KEY = 'starhub_search_history';
+  function loadHistory(){ try{ return JSON.parse(localStorage.getItem(HIST_KEY)||'[]'); }catch(e){ return []; } }
+  function renderHistoryDatalist(){
+    $('#qHistory').innerHTML = loadHistory().map(x=>'<option value="'+escHtml(x)+'">').join('');
+  }
+  function saveHistory(q){
+    q = (q||'').trim();
+    if(q.length < 2) return;
+    const h = [q].concat(loadHistory().filter(x=>x!==q)).slice(0,8);
+    try{ localStorage.setItem(HIST_KEY, JSON.stringify(h)); }catch(e){}
+    renderHistoryDatalist();
+  }
+  renderHistoryDatalist();
+
+  let _qTimer = null;
   $('#q').addEventListener('input', e => {
     state.q = e.target.value;
     $('#btnClear').style.display = state.q ? 'block':'none';
@@ -1832,8 +2044,11 @@ function bindEvents(){
       renderCats(); renderLangSel();
       document.querySelectorAll('#starSel button').forEach(x=>x.classList.toggle('on', x.dataset.v==='all'));
     }
-    renderSearchHint();
-    renderList();
+    clearTimeout(_qTimer);
+    _qTimer = setTimeout(() => {   // 120ms 防抖：条目增长后输入不至于每键全量重渲染
+      renderSearchHint(); renderList();
+      if(state.q.trim()) saveHistory(state.q);
+    }, 120);
   });
   $('#q').addEventListener('keydown', e => {
     if(e.key === 'Enter' && state.q.trim().length >= 2){ e.preventDefault(); openSearchModal(); }
@@ -1841,15 +2056,18 @@ function bindEvents(){
   $('#btnClear').onclick = () => { $('#q').value=''; state.q=''; $('#btnClear').style.display='none'; renderSearchHint(); renderList(); $('#q').focus(); };
   $('#btnSearchAll').onclick = openSearchModal;
   $('#btnResetAll').onclick = () => {
-    state.q=''; state.cat=''; state.lang=''; state.star='all';
+    state.q=''; state.cat=''; state.lang=''; state.star='all'; state.updated=''; state.topic='';
     $('#q').value=''; $('#btnClear').style.display='none';
+    const us = $('#updatedSel'); if(us) us.value='';
     renderSearchHint();
     renderCats(); renderLangSel();
     document.querySelectorAll('#starSel button').forEach(x=>x.classList.toggle('on', x.dataset.v==='all'));
     renderList();
   };
   $('#langSel').addEventListener('change', e => { state.lang = e.target.value; renderList(); });
-  $('#sortSel').addEventListener('change', e => { state.sort = e.target.value; renderList(); });
+  $('#sortSel').addEventListener('change', e => { state.sort = e.target.value; state.sortTouched = true; renderList(); });
+  const updatedSel = $('#updatedSel');
+  if(updatedSel) updatedSel.addEventListener('change', e => { state.updated = e.target.value; renderList(); });
   $('#starSel').addEventListener('click', e => {
     const b = e.target.closest('button'); if(!b) return;
     state.star = b.dataset.v;
@@ -1865,6 +2083,17 @@ function bindEvents(){
     const fn = (nameEl && ownerEl) ? (ownerEl.textContent + '/' + nameEl.textContent) : '';
     if(act === 'fav') toggleFav(fn);
     if(act === 'cattag'){ state.cat = el.dataset.cat; renderCats(); renderList(); }
+    // topic/org 标签点击 = 写入限定符（所有筛选语法化进搜索框，功能零耦合）
+    if(act === 'topictag'){
+      const t = 'topic:'+el.dataset.topic;
+      $('#q').value = ($('#q').value.trim()+' '+t).trim(); state.q = $('#q').value;
+      $('#btnClear').style.display='block'; renderSearchHint(); renderList();
+    }
+    if(act === 'orgtag'){
+      const o = 'org:'+el.dataset.org;
+      $('#q').value = ($('#q').value.trim()+' '+o).trim(); state.q = $('#q').value;
+      $('#btnClear').style.display='block'; renderSearchHint(); renderList();
+    }
     if(act === 'expand'){ const d = card ? card.querySelector('.desc') : null; if(!d) return; const expanded = d.classList.toggle('expand'); el.textContent = expanded ? '收起' : '展开'; }
     if(act === 'copy'){
       const nameA = card ? card.querySelector('a.name') : null;
@@ -1875,15 +2104,24 @@ function bindEvents(){
   window.addEventListener('resize', updateCatsMask);
   $('#btnExport').onclick = exportJson;
   $('#btnImport').onclick = () => $('#fileInput').click();
-  // GitHub Pages 部署：无 Vercel 中转，改为打开 Actions 页手动触发刷新
-  const REFRESH_URL = 'https://github.com/ghoustghoust/starhub/actions/workflows/update.yml';
+  // Vercel Function 中转触发 GitHub Actions（GH_TOKEN 存于 Vercel 环境变量）
+  const REFRESH_API = 'https://starhub-refresh.vercel.app/api/refresh';
   let refreshCooldown = 0;
-  $('#btnRefresh').onclick = () => {
+  $('#btnRefresh').onclick = async () => {
+    const b = $('#btnRefresh');
     const now = Date.now();
-    if (now - refreshCooldown < 60000) { toast('刷新页已打开，请稍候再试'); return; }
-    refreshCooldown = now;
-    window.open(REFRESH_URL, '_blank', 'noopener');
-    toast('已打开 GitHub Actions，点击 “Run workflow” 立即刷新');
+    if (b.disabled) return;
+    if (now - refreshCooldown < 60000) { toast('刷新请求已提交，请稍候再试'); return; }
+    b.disabled = true;
+    b.classList.add('loading');
+    try {
+      const r = await fetch(REFRESH_API, { method: 'POST', headers: { 'X-Refresh-Key': REFRESH_KEY } });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) { toast('已提交刷新请求，约 1-2 分钟后上线'); refreshCooldown = now; }
+      else toast('刷新失败：' + (j.error || ('HTTP ' + r.status)));
+    } catch(e) { toast('网络错误，请稍后重试'); }
+    b.disabled = false;
+    b.classList.remove('loading');
   };
   $('#fileInput').addEventListener('change', importJson);
 
@@ -1980,7 +2218,7 @@ function saveFavs(){
 function exportJson(){
   const payload = {
     type: 'github-starhub-backup',
-    user: 'ghoustghoust',
+    user: 'Kwei168',
     exportedAt: new Date().toISOString(),
     favorites: [...favs],
   };
@@ -2082,6 +2320,7 @@ renderList();
 renderTrending();
 renderFeed();
 refreshFeed(); // 打开页面即拉取实时关注动态（静默失败，静态数据兜底）
+refreshTrendingBoard(); // 排行榜走同源数据出口（内联那份只是首屏兜底）
 startFeedPolling(); // 每 30 分钟轮询（页面不可见时暂停）
 switchSideTab(state.sideTab);
 bindEvents();

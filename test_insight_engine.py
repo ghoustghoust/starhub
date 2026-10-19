@@ -28,10 +28,28 @@ from insight_engine import (
     _cosine_similarity,
     _average_vector,
     _fallback_cluster,
+    _is_entry_recent,
     _is_recent,
     _DEFAULTS,
     _SimpleDoc,
+    _group_sentences,
+    _build_hierarchical_index,
+    _retrieve_with_context,
+    _evaluate_insight_quality,
+    _self_correct_insights,
+    _evaluate_and_correct,
+    _refine_labels_with_index,
+    _extract_cluster_label,
 )
+
+from datetime import datetime, timedelta, timezone
+
+_BJT = timezone(timedelta(hours=8))
+
+
+def _recent_bjt_iso(hours_ago=10):
+    """Timestamp inside the 72h recency window, relative to now (hardcoded dates rot)."""
+    return (datetime.now(_BJT) - timedelta(hours=hours_ago)).isoformat()
 
 
 # ═══════════════════ Task 1 Tests ════════════════════════════
@@ -49,15 +67,28 @@ class TestAgnesLLM(unittest.TestCase):
     def test_init_with_api_key(self):
         """Success with valid api_key."""
         llm = AgnesLLM(api_key="test-key-123")
-        self.assertEqual(llm.api_key, "test-key-123")
+        self.assertEqual(llm.api_keys[0], "test-key-123")
         self.assertEqual(llm.model, "agnes-2.5-flash")
-        self.assertEqual(llm.timeout, 30)
+        self.assertEqual(llm.timeout, 60)
 
     def test_init_custom_params(self):
         """Custom model and timeout."""
         llm = AgnesLLM(api_key="key", model="agnes-pro", timeout=60)
         self.assertEqual(llm.model, "agnes-pro")
         self.assertEqual(llm.timeout, 60)
+
+    def test_init_multi_keys(self):
+        """Multiple API keys for rotation."""
+        llm = AgnesLLM(api_key="key1", extra_keys=["key2", "key3"])
+        self.assertEqual(len(llm.api_keys), 3)
+        self.assertEqual(llm.api_keys, ["key1", "key2", "key3"])
+        self.assertEqual(llm._key_idx, 0)
+
+    def test_init_extra_keys_filter_empty(self):
+        """Empty extra keys are filtered out."""
+        llm = AgnesLLM(api_key="key1", extra_keys=["key2", "", None])
+        self.assertEqual(len(llm.api_keys), 2)
+        self.assertEqual(llm.api_keys, ["key1", "key2"])
 
     def test_metadata(self):
         """Metadata property returns correct dict."""
@@ -96,7 +127,7 @@ class TestAgnesLLM(unittest.TestCase):
     def test_stream_complete_yields_result(self):
         """stream_complete yields the complete result."""
         llm = AgnesLLM.__new__(AgnesLLM)
-        llm.api_key = "key"
+        llm.api_keys = ["key"]
         llm.model = "test"
         llm.timeout = 30
         # Patch complete on the instance
@@ -154,7 +185,7 @@ class TestConfigAndFactory(unittest.TestCase):
         """_DEFAULTS has all required keys."""
         self.assertTrue(_DEFAULTS["insight_engine_enabled"])
         self.assertEqual(_DEFAULTS["insight_llm_provider"], "agnes")
-        self.assertEqual(_DEFAULTS["insight_max_documents"], 200)
+        self.assertEqual(_DEFAULTS["insight_max_documents"], 500)
         self.assertEqual(_DEFAULTS["insight_top_keywords"], 30)
         self.assertEqual(_DEFAULTS["insight_top_topics"], 15)
 
@@ -173,9 +204,10 @@ class TestConfigAndFactory(unittest.TestCase):
 
     @patch.dict(os.environ, {}, clear=False)
     def test_default_config_returns_mock_when_no_key(self):
-        """No AGNES_API_KEY → MockLLM."""
-        # Ensure key is not set
+        """No AGNES_API_KEY / AGNES_API_KEYS → MockLLM."""
+        # Ensure keys are not set
         os.environ.pop("AGNES_API_KEY", None)
+        os.environ.pop("AGNES_API_KEYS", None)
         cfg = {"insight_llm_provider": "agnes"}
         llm = configure_llm(cfg)
         self.assertIsInstance(llm, MockLLM)
@@ -186,7 +218,34 @@ class TestConfigAndFactory(unittest.TestCase):
         cfg = {"insight_llm_provider": "agnes"}
         llm = configure_llm(cfg)
         self.assertIsInstance(llm, AgnesLLM)
-        self.assertEqual(llm.api_key, "test-key-xyz")
+        self.assertEqual(llm.api_keys[0], "test-key-xyz")
+
+    @patch.dict(os.environ, {"AGNES_API_KEY": "k1", "AGNES_API_KEYS": ""}, clear=False)
+    def test_agnes_single_key_pool_has_no_extras(self):
+        """Only a primary key → pool of 1, extra_keys must stay None (rotation depends on it)."""
+        llm = configure_llm({"insight_llm_provider": "agnes"})
+        self.assertIsInstance(llm, AgnesLLM)
+        self.assertEqual(llm.api_keys, ["k1"])
+
+    @patch.dict(os.environ, {"AGNES_API_KEY": "k1,k2,k3", "AGNES_API_KEYS": ""}, clear=False)
+    def test_agnes_comma_separated_primary(self):
+        """Comma-separated AGNES_API_KEY expands into the pool."""
+        llm = configure_llm({"insight_llm_provider": "agnes"})
+        self.assertEqual(llm.api_keys, ["k1", "k2", "k3"])
+
+    @patch.dict(os.environ, {"AGNES_API_KEY": " k1 ", "AGNES_API_KEYS": " , k2 ,,k3, k4 "},
+                clear=False)
+    def test_agnes_pool_merges_primary_and_extras(self):
+        """Primary + AGNES_API_KEYS merge into one pool, whitespace/empty segments dropped."""
+        llm = configure_llm({"insight_llm_provider": "agnes"})
+        self.assertEqual(llm.api_keys, ["k1", "k2", "k3", "k4"])
+
+    @patch.dict(os.environ, {"AGNES_API_KEY": "", "AGNES_API_KEYS": "k2,k3"}, clear=False)
+    def test_agnes_extras_used_when_primary_unset(self):
+        """No primary but extras present → still AgnesLLM, no key silently unused."""
+        llm = configure_llm({"insight_llm_provider": "agnes"})
+        self.assertIsInstance(llm, AgnesLLM)
+        self.assertEqual(llm.api_keys, ["k2", "k3"])
 
     def test_unknown_provider_returns_mock(self):
         """Unknown provider → MockLLM."""
@@ -212,9 +271,10 @@ class TestDataLoading(unittest.TestCase):
         ]
 
     def _make_rss_history(self):
+        recent = _recent_bjt_iso()
         return {
-            "item1": {"title": "AI News", "summary": "Latest AI developments", "cat": "ai"},
-            "item2": {"title": "Tech Update", "summary": "New tech releases", "cat": "tech"},
+            "item1": {"title": "AI News", "summary": "Latest AI developments", "cat": "ai", "pub_date": recent},
+            "item2": {"title": "Tech Update", "summary": "New tech releases", "cat": "tech", "pub_date": recent},
         }
 
     def _make_trending_data(self):
@@ -261,6 +321,41 @@ class TestDataLoading(unittest.TestCase):
         """Empty data returns empty list."""
         docs = load_documents(None, None, None)
         self.assertEqual(len(docs), 0)
+
+    def test_is_entry_recent_pub_date(self):
+        """Entry with recent pub_date is recent."""
+        from datetime import datetime, timezone, timedelta
+        recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        self.assertTrue(_is_entry_recent({"pub_date": recent}))
+
+    def test_is_entry_recent_first_seen_fallback(self):
+        """Entry without pub_date but with recent first_seen is recent."""
+        from datetime import datetime, timezone, timedelta
+        recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        self.assertTrue(_is_entry_recent({"first_seen": recent}))
+
+    def test_is_entry_recent_expired(self):
+        """Entry with old pub_date and old first_seen is not recent."""
+        from datetime import datetime, timezone, timedelta
+        old = (datetime.now(timezone.utc) - timedelta(hours=100)).isoformat()
+        self.assertFalse(_is_entry_recent({"pub_date": old, "first_seen": old}))
+
+    def test_is_entry_recent_no_dates(self):
+        """Entry without any date fields is not recent."""
+        self.assertFalse(_is_entry_recent({}))
+
+    def test_load_documents_filters_old_rss(self):
+        """load_documents filters out RSS entries older than 72h."""
+        old = "2026-01-01T00:00:00+08:00"
+        recent = _recent_bjt_iso()
+        rss = {
+            "a": {"title": "old article", "pub_date": old, "cat": "tech"},
+            "b": {"title": "new article", "pub_date": recent, "cat": "tech"},
+        }
+        docs = load_documents([], rss, [], max_documents=100)
+        texts = [d.text for d in docs]
+        self.assertTrue(any("new article" in t for t in texts))
+        self.assertFalse(any("old article" in t for t in texts))
 
     def test_build_index_returns_none_without_deps(self):
         """build_index returns None when deps are unavailable (test env)."""
@@ -334,8 +429,8 @@ class TestHelpers(unittest.TestCase):
         ]
         clusters = _fallback_cluster(texts, max_topics=5, threshold=0.3)
         self.assertTrue(len(clusters) >= 1)
-        # AI texts should cluster together
-        ai_cluster = [c for c in clusters if "AI" in c["label"] or "machine" in c["label"]]
+        # AI texts should cluster together (label contains topic-related words)
+        ai_cluster = [c for c in clusters if any(kw in c["label"].lower() for kw in ["ai", "machine", "learning"])]
         self.assertTrue(len(ai_cluster) >= 1)
 
 
@@ -400,8 +495,8 @@ class TestDeepInsights(unittest.TestCase):
     def test_generate_deep_insights_with_mock(self):
         """MockLLM generates structured insights."""
         llm = MockLLM()
-        context = {"keywords": ["ai", "llm", "agent"], "topic_count": 5}
-        result = generate_deep_insights(llm, context)
+        topic_clusters = [{"label": "AI", "count": 3, "items": ["AI news 1", "AI news 2"]}]
+        result = generate_deep_insights(llm, topic_clusters, keywords=["ai", "llm", "agent"])
         self.assertIsInstance(result, dict)
         self.assertIn("narrative", result)
         self.assertIn("causal_chains", result)
@@ -413,8 +508,8 @@ class TestDeepInsights(unittest.TestCase):
         llm = MockLLM()
         # Override complete to return non-JSON
         llm.complete = MagicMock(return_value="not json")
-        context = {"keywords": ["ai", "llm"]}
-        result = generate_deep_insights(llm, context)
+        topic_clusters = [{"label": "AI", "count": 2, "items": ["AI news"]}]
+        result = generate_deep_insights(llm, topic_clusters, keywords=["ai", "llm"])
         self.assertIsInstance(result, dict)
         self.assertIn("narrative", result)
         self.assertIn("ai", result["narrative"])
@@ -496,13 +591,36 @@ class TestRunAnalysis(unittest.TestCase):
             self.assertIn(key, summary)
 
     def test_run_analysis_keywords_format(self):
-        """Keywords are in [word, score] format."""
+        """Keywords are in [word, score] format, with rss and hot pools."""
         hot, rss, trending, config = self._make_data()
         result = run_analysis(hot, rss, trending, config)
+        # global keywords
         global_kw = result["keywords"]["global"]
         self.assertIsInstance(global_kw, list)
         if global_kw:
             self.assertEqual(len(global_kw[0]), 2)  # [word, score]
+        # source-specific keywords
+        self.assertIn("rss", result["keywords"])
+        self.assertIn("hot", result["keywords"])
+        self.assertIsInstance(result["keywords"]["rss"], list)
+        self.assertIsInstance(result["keywords"]["hot"], list)
+
+    def test_run_analysis_source_keywords_separate(self):
+        """RSS and hot keywords are extracted separately."""
+        hot = [
+            {"platform": "weibo", "items": [{"title": "微博热搜话题"}]},
+        ]
+        rss = {
+            "item1": {"title": "OpenAI GPT-5", "summary": "new model release", "cat": "ai"},
+        }
+        config = dict(_DEFAULTS)
+        config["insight_llm_provider"] = "mock"
+        result = run_analysis(hot, rss, {}, config)
+        # Both pools should exist (MockLLM returns mock keywords)
+        self.assertIsInstance(result["keywords"]["rss"], list)
+        self.assertIsInstance(result["keywords"]["hot"], list)
+        # Global should be merge of both
+        self.assertIsInstance(result["keywords"]["global"], list)
 
     def test_run_analysis_meta_fields(self):
         """Meta contains engine info."""
@@ -527,6 +645,189 @@ class TestRunAnalysis(unittest.TestCase):
         result = run_analysis(hot, rss, trending, config)
         self.assertIn("cross_category", result)
         self.assertIsInstance(result["cross_category"], list)
+
+
+# ═══════════════════ Hierarchical Index Tests ═════════════════
+
+class TestHierarchicalIndex(unittest.TestCase):
+    """小索引大窗口：层级索引与检索测试。"""
+
+    def test_group_sentences_basic(self):
+        """Sentence grouping splits text into chunks."""
+        text = "这是第一句话。这是第二句话。这是第三句话。这是第四句话。"
+        groups = _group_sentences(text, token_target=10)
+        self.assertIsInstance(groups, list)
+        self.assertGreater(len(groups), 0)
+        # 所有句子都被包含
+        combined = " ".join(groups)
+        self.assertIn("第一句", combined)
+        self.assertIn("第四句", combined)
+
+    def test_group_sentences_empty(self):
+        """Empty text returns empty list."""
+        groups = _group_sentences("", token_target=100)
+        self.assertEqual(groups, [])
+
+    def test_group_sentences_single(self):
+        """Single sentence returns one group."""
+        groups = _group_sentences("只有一句话。", token_target=100)
+        self.assertEqual(len(groups), 1)
+        self.assertIn("一句话", groups[0])
+
+    def test_group_sentences_respects_target(self):
+        """Groups respect token target approximately."""
+        # 长文本应被分成多个组
+        text = "。".join([f"这是第{i}个句子的内容" for i in range(20)]) + "。"
+        groups = _group_sentences(text, token_target=30)
+        self.assertGreater(len(groups), 1)
+
+    def test_build_hierarchical_index_no_docs(self):
+        """Empty documents returns None."""
+        index, parent_docs, child_vecs = _build_hierarchical_index([])
+        self.assertIsNone(index)
+        self.assertEqual(parent_docs, {})
+        self.assertIsNone(child_vecs)
+
+    def test_build_hierarchical_index_with_docs(self):
+        """Build index from documents (may skip if llama-index unavailable)."""
+        docs = [_SimpleDoc("这是测试文档一。包含多个句子。用于验证层级索引。"),
+                _SimpleDoc("这是测试文档二。另一个主题的内容。测试检索功能。")]
+        index, parent_docs, child_vecs = _build_hierarchical_index(docs)
+        # 在无 llama-index 环境中应返回 None
+        if not __import__('insight_engine').LLAMA_INDEX_AVAILABLE:
+            self.assertIsNone(index)
+            self.assertEqual(parent_docs, {})
+        else:
+            self.assertIsNotNone(index)
+            self.assertEqual(len(parent_docs), 2)
+
+    def test_retrieve_with_context_no_index(self):
+        """Retrieve returns None when parent_docs is empty."""
+        result = _retrieve_with_context({}, None, None, None)
+        self.assertIsNone(result)
+
+    def test_retrieve_with_context_empty_map(self):
+        """Retrieve returns None when parent_docs is empty."""
+        result = _retrieve_with_context({}, [0.1, 0.2], ["a", "b"], [0.3, 0.4])
+        self.assertIsNone(result)
+
+
+class TestRAGASEvaluation(unittest.TestCase):
+    """RAGAS-inspired 评估与自我修正测试。"""
+
+    def test_evaluate_returns_all_dimensions(self):
+        """Evaluation returns context_coverage, faithfulness, relevance, overall, feedback."""
+        llm = MockLLM()
+        insights = {"narrative": "AI技术发展迅速", "causal_chains": ["A→B"],
+                    "signals": [], "outlook": "继续看好"}
+        result = _evaluate_insight_quality(llm, insights, "some context", keywords=["ai"])
+        self.assertIn("context_coverage", result)
+        self.assertIn("faithfulness", result)
+        self.assertIn("relevance", result)
+        self.assertIn("overall", result)
+        self.assertIn("feedback", result)
+        # Scores should be floats in [0, 1]
+        for key in ("context_coverage", "faithfulness", "relevance"):
+            self.assertIsInstance(result[key], float)
+            self.assertGreaterEqual(result[key], 0.0)
+            self.assertLessEqual(result[key], 1.0)
+
+    def test_evaluate_empty_context(self):
+        """Evaluation with empty context returns defaults."""
+        llm = MockLLM()
+        result = _evaluate_insight_quality(llm, {"narrative": "test"}, "", keywords=[])
+        self.assertEqual(result["overall"], 0.5)
+
+    def test_evaluate_empty_insights(self):
+        """Evaluation with empty insights returns defaults."""
+        llm = MockLLM()
+        result = _evaluate_insight_quality(llm, {}, "context", keywords=[])
+        self.assertEqual(result["overall"], 0.5)
+
+    def test_self_correct_no_low_dims(self):
+        """Self-correction returns original when all dims are high."""
+        llm = MockLLM()
+        insights = {"narrative": "original", "causal_chains": [], "signals": [], "outlook": ""}
+        evaluation = {"context_coverage": 0.9, "faithfulness": 0.9,
+                      "relevance": 0.9, "overall": 0.9, "feedback": "good"}
+        result = _self_correct_insights(llm, insights, "context", evaluation, keywords=[])
+        # Should return original (no correction needed)
+        self.assertEqual(result["narrative"], "original")
+
+    def test_evaluate_and_correct_disabled(self):
+        """When insight_self_correct=False, returns original insights."""
+        llm = MockLLM()
+        insights = {"narrative": "test", "causal_chains": [], "signals": [], "outlook": ""}
+        config = {"insight_self_correct": False}
+        result, eval_result = _evaluate_and_correct(
+            llm, insights, [], None, None, {}, [], config)
+        self.assertEqual(result["narrative"], "test")
+        self.assertEqual(eval_result, {})
+
+    def test_evaluate_and_correct_enabled(self):
+        """When enabled, evaluation runs and returns scores."""
+        llm = MockLLM()
+        insights = {"narrative": "AI技术发展", "causal_chains": ["A→B"],
+                    "signals": [], "outlook": "继续"}
+        clusters = [{"label": "AI", "count": 3, "items": ["AI news 1", "AI news 2"]}]
+        config = {"insight_self_correct": True, "insight_quality_threshold": 0.3,
+                  "insight_max_corrections": 0}
+        result, eval_result = _evaluate_and_correct(
+            llm, insights, clusters, None, None, {}, ["ai"], config)
+        self.assertIsInstance(result, dict)
+        self.assertIn("narrative", result)
+        # eval_result should have scores (even if no index)
+        self.assertIsInstance(eval_result, dict)
+
+
+class TestLabelRefinement(unittest.TestCase):
+    """Task 4.5: LLM label refinement via index + large window."""
+
+    def test_mock_llm_returns_unchanged(self):
+        """MockLLM should skip refinement, labels unchanged."""
+        llm = MockLLM()
+        clusters = [{"label": "built", "count": 3, "items": ["item1", "item2"]}]
+        result = _refine_labels_with_index(clusters, llm,
+                                           child_vecs=[[0.1]*5],
+                                           child_nodes=[MagicMock()],
+                                           parent_docs={"p1": "doc"})
+        self.assertEqual(result[0]["label"], "built")
+
+    def test_no_index_returns_unchanged(self):
+        """Without index components, labels should remain unchanged."""
+        llm = MagicMock()
+        clusters = [{"label": "google", "count": 2, "items": ["item1"]}]
+        result = _refine_labels_with_index(clusters, llm)
+        self.assertEqual(result[0]["label"], "google")
+        llm.complete.assert_not_called()
+
+    def test_good_chinese_label_skipped(self):
+        """Labels with Chinese chars and len > 6 should not be refined."""
+        llm = MagicMock()
+        clusters = [{"label": "人工智能发展趋势", "count": 3, "items": ["i1"]}]
+        result = _refine_labels_with_index(clusters, llm,
+                                           child_vecs=[[0.1]*5],
+                                           child_nodes=[MagicMock()],
+                                           parent_docs={"p1": "doc"})
+        self.assertEqual(result[0]["label"], "人工智能发展趋势")
+        llm.complete.assert_not_called()
+
+    def test_empty_clusters(self):
+        """Empty cluster list should return empty."""
+        result = _refine_labels_with_index([], MagicMock(),
+                                           child_vecs=[[0.1]],
+                                           child_nodes=[MagicMock()],
+                                           parent_docs={"p1": "d"})
+        self.assertEqual(result, [])
+
+    def test_tier4_truncation_20_chars(self):
+        """Tier 4 fallback should truncate at 20 chars, not 10."""
+        # All English text → Tier 1/2 skip (no Chinese), Tier 3 needs frequency
+        # With single item, Tier 3 won't fire (needs >=2 frequency)
+        texts = ["This is a very long english title about artificial intelligence"]
+        label = _extract_cluster_label(texts)
+        self.assertLessEqual(len(label), 20)
+        self.assertGreater(len(label), 10)  # Would have been 10 before
 
 
 if __name__ == "__main__":

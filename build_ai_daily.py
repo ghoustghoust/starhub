@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Generate ai-daily.html from AIHOT 公开 API v1（https://aihot.virxact.com/api/v1/items，
 匿名只读、无需 Key）+ 多渠道快讯（Hacker News / The Verge / TechCrunch / arXiv /
-36氪 / Redis / AtlasNote）。
+36氪 / AtlasNote）。
 API 失败时依次回退 RSS（feed.xml）与本地 ai_daily.json。
 仅依赖 Python 标准库。由 fetch_and_build.py 调用或独立运行。
 每次构建自动拉取最新数据，筛选近 36 小时条目生成晨报。
@@ -25,12 +25,11 @@ API_URL = "https://aihot.virxact.com/api/v1/items"  # 公开 API v1，匿名只�
 OUT = "ai-daily.html"
 FALLBACK_SRC = "ai_daily.json"  # RSS 失败时回退到本地 JSON
 
-# 多渠道快讯配置（HN / Verge / TechCrunch / arXiv / 36氪 / Redis / AtlasNote）
+# 多渠道快讯配置（HN / Verge / TechCrunch / arXiv / 36氪 / AtlasNote）
 HN_QUERIES = ["AI", "LLM", "OpenAI", "GPT", "Claude", "machine learning", "Anthropic"]
 VERGE_RSS = "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"
 TECHCRUNCH_RSS = "https://techcrunch.com/category/artificial-intelligence/feed/"
 ARXIV_CATS = ["cs.AI", "cs.CL", "cs.CV", "cs.LG", "cs.NE"]
-# Redis 官方博客：内容以向量检索/LLM/Agent 为主，周更 2-3 篇，标准 RSS 可直连，无 36h 窗口命中属正常
 # 36氪 AI 资讯流：官方 RSS 有人机验证反爬墙，经 RSSHub 公共镜像中转。
 # 部分镜像封数据中心 IP（GitHub Actions / Vercel 出口），镜像链按可用性排序，依次尝试。
 KR36_FEEDS = [
@@ -39,22 +38,12 @@ KR36_FEEDS = [
     "https://rsshub.rssforever.com/36kr/information/AI",
     "https://hub.slarker.me/36kr/information/AI",
 ]
-REDIS_RSS = "https://redis.io/feed/"
 # AtlasNote（atlasnote.ai）深度文章：AI 架构/创业/研究方法论的长文分析，周更 2-4 篇。
 # 中英双语发布同一文章（/en/ 与 /zh-CN/ 两条），按 slug 归并偏好中文版（_atlasnote_items）。
 ATLASNOTE_RSS = "https://atlasnote.ai/rss.xml"
 UA = {"User-Agent": "Mozilla/5.0 (starhub-auto-update)"}
 
-# RSS 分类 → 配色
-CAT_COLOR = {
-    "AI 模型": "#2563eb",
-    "AI 产品": "#7c3aed",
-    "行业动态": "#0891b2",
-    "海外热点": "#0d9488",
-    "论文": "#d97706",
-    "技巧观点": "#dc2626",
-}
-# 分类排序权重（按此顺序展示）
+# 分类排序权重（按此顺序展示）。编号配色收敛：绿色只用于编号/kicker/引用/评分（spec B-4）
 CAT_ORDER = ["AI 模型", "AI 产品", "行业动态", "海外热点", "论文", "技巧观点"]
 
 # API v1 分类 key → 晨报表演分类（与 RSS <category> 文本对齐）
@@ -115,23 +104,54 @@ def _extract_source(author_text):
     return m.group(1) if m else ""
 
 
+_SENT_END = "。！？；…!?;"
+_SOFT_END = "，、：:,"
+
+
 def _truncate(s, maxlen=120):
+    """摘要截断：优先句末标点收口（句子完整，不加省略号）；其次软标点；最后硬切。
+    入口顺带清掉源文本自带的机翻残尾省略号（Verge/TechCrunch 描述以"……"结尾的病灶）。"""
     if not s:
         return ""
-    s = s.strip()
+    s = re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r"(?:[…⋯]+|\.{2,}|。{2,})$", "", s).strip()
+    if not s:
+        return ""
     if len(s) <= maxlen:
         return s
-    cut = -1
-    for i, ch in enumerate(s[:maxlen]):
-        if ch in "。！？；":
-            cut = i
+    # 窗口收到 maxlen：防止"标点恰在 maxlen"时软标点路径输出比原文更长（R1 审查 P0）
+    window = s[:maxlen]
+    cut = max((i for i, ch in enumerate(window) if ch in _SENT_END), default=-1)
     if cut >= 30:
-        return s[:cut + 1]
-    return s[:maxlen] + "…"
+        return s[: cut + 1]
+    soft = max((i for i, ch in enumerate(window) if ch in _SOFT_END), default=-1)
+    if soft >= 30:
+        return s[: soft + 1] + "…"
+    return s[:maxlen].rstrip() + "…"
 
 
 def _esc(s):
     return html_mod.escape(str(s), quote=True)
+
+
+def _zh_typo(s):
+    """中文排版归一：CJK 与拉丁/数字边界补空格；成对直引号转中文引号。
+    只处理纯文本（标题/摘要渲染出口），不用于 URL。"""
+    if not s:
+        return s
+    out = re.sub(r"([\u4e00-\u9fff])([A-Za-z0-9])", r"\1 \2", s)
+    out = re.sub(r"([A-Za-z0-9%\)\]])([\u4e00-\u9fff])", r"\1 \2", out)
+    out = re.sub(r" {2,}", " ", out).strip()
+    if out.count('"') >= 2 and out.count('"') % 2 == 0:
+        res, opening = [], True
+        for ch in out:
+            if ch == '"':
+                res.append("\u201c" if opening else "\u201d")
+                opening = not opening
+            else:
+                res.append(ch)
+        out = "".join(res)
+    return out
 
 
 def fetch_api():
@@ -290,6 +310,14 @@ def _parse_iso(s):
             return None
 
 
+def _hn_summary(points, author):
+    """HN 条目元信息中文渲染：≤3 分不显分（对读者无信息量）。
+    "用户 xxx"孤立无上下文，改为"xxx 发起的讨论"（用户裁决 2026-10-01）。"""
+    pts = int(points or 0)
+    who = ("%s 发起的讨论" % author) if author else "匿名发起的讨论"
+    return "%d 分 · %s" % (pts, who) if pts > 3 else who
+
+
 def _hn_items():
     """Hacker News：Algolia API 按关键词检索近 48h 故事，按热度取前 10。"""
     since = int((datetime.datetime.now(datetime.timezone.utc)
@@ -315,12 +343,13 @@ def _hn_items():
                     "link": link,
                     "category": "海外热点",
                     "source": "Hacker News",
-                    "summary": "▲ %s points · by %s" % (h.get("points", 0), h.get("author", "?")),
+                    "summary": _hn_summary(h.get("points"), h.get("author")),
+                    "points": int(h.get("points") or 0),
                     "pub_date": _parse_iso(h.get("created_at") or ""),
                 })
         except Exception as ex:
             print("[AI晨报] HN 拉取失败 (%s): %s" % (q, ex), file=sys.stderr)
-    out.sort(key=lambda x: int(re.sub(r"\D", "", x["summary"]) or 0), reverse=True)
+    out.sort(key=lambda x: x.get("points", 0), reverse=True)
     return out[:10]
 
 
@@ -470,10 +499,11 @@ def _arxiv_items():
         cat_el = e.find(ns + "category")
         cat = cat_el.get("term", "cs.AI") if cat_el is not None else "cs.AI"
         items.append({
-            "title": "[%s] %s" % (cat, title),
+            "title": title,
             "link": link,
             "category": "论文",
             "source": "arXiv",
+            "tag": cat,
             "summary": _truncate(_strip_html(e.findtext(ns + "summary") or "")),
             "pub_date": _parse_iso(e.findtext(ns + "published") or ""),
         })
@@ -491,7 +521,6 @@ def fetch_multi_channel():
         ("TechCrunch", lambda: _feed_items(TECHCRUNCH_RSS, "TechCrunch", 6)),
         ("arXiv", _arxiv_items),
         ("36氪", _36kr_items),
-        ("Redis", lambda: _rss_channel_items(REDIS_RSS, "Redis", "行业动态", 3)),
         ("AtlasNote", _atlasnote_items),
     ]
     for name, fn in channels:
@@ -526,9 +555,13 @@ def _has_cn(s):
 _TRANS_CACHE = {}
 _TRANS_STATS = {"agnes": 0, "google": 0, "bing": 0, "mymemory": 0, "google_alt": 0, "fail": 0, "skip": 0}
 _BING_TOKENS = None  # 构建内缓存，token 有效期 1 小时
-# GA 免费翻译端点（Google/Bing/MyMemory）已被数据中心 IP 封锁（429/401/timeout），
-# AGNES_API_KEY 存在时优先走 Agnes AI 付费接口（无 IP 封锁、稳定 ~1s/条），免费链降级为本地回退。
-_AGNES_KEY = os.environ.get("AGNES_API_KEY", "")
+# GA 免费翻译端点已被数据中心 IP 封锁（429/timeout），AGNES_API_KEY 存在时首选 Agnes AI。
+# 多 key 轮询：AGNES_API_KEY（主）+ AGNES_API_KEYS（逗号分隔附加），429 自动切换
+_AGNES_KEYS = [k.strip() for k in os.environ.get("AGNES_API_KEY", "").split(",") if k.strip()]
+_extra_agnes = os.environ.get("AGNES_API_KEYS", "")
+if _extra_agnes:
+    _AGNES_KEYS.extend(k.strip() for k in _extra_agnes.split(",") if k.strip())
+_AGNES_KEY_IDX = 0
 
 
 def _fetch_bing_tokens():
@@ -587,6 +620,7 @@ def _bing_translate(text):
 
 def _agnes_translate(text):
     """Agnes AI 翻译（OpenAI 兼容接口，agnes-2.5-flash）。失败返回 None。"""
+    global _AGNES_KEY_IDX
     payload = json.dumps({
         "model": "agnes-2.5-flash",
         "messages": [
@@ -603,7 +637,7 @@ def _agnes_translate(text):
         data=payload,
         headers={
             "Content-Type": "application/json",
-            "Authorization": "Bearer " + _AGNES_KEY,
+            "Authorization": "Bearer " + (_AGNES_KEYS[_AGNES_KEY_IDX] if _AGNES_KEYS else ""),
             "User-Agent": "starhub-auto-update",
         },
     )
@@ -612,6 +646,14 @@ def _agnes_translate(text):
             data = json.loads(r.read().decode("utf-8"))
         cand = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
         return cand or None
+    except urllib.error.HTTPError as ex:
+        # 429 限流：轮转到下一个 key
+        if ex.code == 429 and len(_AGNES_KEYS) > 1:
+            _AGNES_KEY_IDX = (_AGNES_KEY_IDX + 1) % len(_AGNES_KEYS)
+            print("[AI晨报] Agnes 429，轮转到 key[%d]" % _AGNES_KEY_IDX, file=sys.stderr)
+            return None
+        print("[AI晨报] Agnes 翻译失败: %s: %s" % (type(ex).__name__, ex), file=sys.stderr)
+        return None
     except Exception as ex:
         print("[AI晨报] Agnes 翻译失败: %s: %s" % (type(ex).__name__, ex), file=sys.stderr)
         return None
@@ -633,7 +675,7 @@ def _translate_to_zh(text):
     result = None
 
     # ── 端点 0：Agnes AI（首选，无 IP 封锁）──
-    if not result and _AGNES_KEY:
+    if not result and _AGNES_KEYS:
         cand = _agnes_translate(text)
         if cand and _has_cn(cand):
             result = cand
@@ -736,23 +778,16 @@ def _tr(text):
 
 def translate_extra_items(items):
     """多渠道快讯英文条目标题与简介翻译成中文（含 arXiv 摘要）。
-    arXiv 标题的 [分类] 前缀保留；HN 的点数摘要为元信息不翻译。"""
+    arXiv 标题不带分类前缀（前缀由 _arxiv_items 存 tag、_item_html 渲染到信源行）；
+    HN 的点数摘要是元信息，不翻译。"""
     n = 0
     for it in items:
-        if it["source"] == "arXiv":
-            m = re.match(r"^(\[[^\]]+\]\s*)(.*)$", it["title"])
-            prefix, body = (m.group(1), m.group(2)) if m else ("", it["title"])
-            if not _has_cn(body):
-                t = _tr(body)
-                if t != body:
-                    it["title"] = prefix + t
-                    n += 1
-        elif not _has_cn(it["title"]):
+        if not _has_cn(it["title"]):
             t = _tr(it["title"])
             if t != it["title"]:
                 it["title"] = t
                 n += 1
-        if it.get("summary") and not it["summary"].startswith("▲"):
+        if it.get("summary") and it["source"] != "Hacker News":
             s = _tr(it["summary"])
             if s != it["summary"]:
                 it["summary"] = s
@@ -879,11 +914,11 @@ def _group_by_cat(items):
 
 
 def _item_html(it, top=False):
-    """单条报道 HTML（晨报编辑部样式）。"""
-    src = _esc(it["source"])
-    title = _esc(it["title"])
+    """单条报道 HTML（晨报编辑部样式）。arXiv 的分类标签渲染进信源行。"""
+    src = _esc(it["source"] + (" · " + it["tag"] if it.get("tag") else ""))
+    title = _esc(_zh_typo(it["title"]))
     link = _esc(it["link"])
-    summary = _esc(it["summary"])
+    summary = _esc(_zh_typo(it["summary"]))
     cls = ' class="item top"' if top else ' class="item"'
     return (
         f'<article{cls}>'
@@ -894,18 +929,17 @@ def _item_html(it, top=False):
     )
 
 
-def build_html(grouped, date_human, window_human, sources_note="", status_line=""):
+def build_html(grouped, date_human, window_human, sources_note=""):
     """生成晨报编辑部风格 HTML 页面。
-    sources_note：附加数据源标注（如多渠道快讯）；status_line：页脚信源成败状态栏。"""
+    sources_note：附加数据源标注（如多渠道快讯）。信源成败只进构建日志，不进页面（spec B-9）。"""
     total = sum(len(its) for _, its in grouped)
 
     # ---- 今日索引（报纸式编号导航条）----
     idx_items = ""
     for i, (cat, its) in enumerate(grouped, 1):
-        color = CAT_COLOR.get(cat, "#57606a")
         idx_items += (
             f'<a href="#sec-{i}">'
-            f'<span class="idx-n" style="color:{color}">{_roman(i)}</span>'
+            f'<span class="idx-n" style="color:var(--accent)">{_roman(i)}</span>'
             f'{_esc(cat)}<span class="idx-cnt">{len(its)}</span>'
             f'</a>'
         )
@@ -913,7 +947,6 @@ def build_html(grouped, date_human, window_human, sources_note="", status_line="
     # ---- 分栏内容 ----
     sections_html = ""
     for i, (cat, its) in enumerate(grouped, 1):
-        color = CAT_COLOR.get(cat, "#57606a")
         anchor = f"sec-{i}"
         # 列表项：每类第一条为"类内头条"（top 样式）
         items_html = ""
@@ -923,7 +956,7 @@ def build_html(grouped, date_human, window_human, sources_note="", status_line="
         sections_html += (
             f'<section id="{anchor}" class="sec">'
             f'<div class="sec-head">'
-            f'<span class="sec-num" style="color:{color}">{i:02d}</span>'
+            f'<span class="sec-num" style="color:var(--accent)">{i:02d}</span>'
             f'<h2 class="sec-name">{_esc(cat)}</h2>'
             f'<span class="sec-cnt">{len(its)} 篇</span>'
             f'</div>'
@@ -953,15 +986,15 @@ def build_html(grouped, date_human, window_human, sources_note="", status_line="
     front_html = ""
     if lead_main:
         src = _esc(lead_main["source"])
-        title = _esc(lead_main["title"])
+        title = _esc(_zh_typo(lead_main["title"]))
         link = _esc(lead_main["link"])
-        summary = _esc(lead_main["summary"])
+        summary = _esc(_zh_typo(lead_main["summary"]))
         side_html = ""
         for it in lead_sides:
             side_html += (
                 f'<article class="side-item">'
                 f'<span class="side-src">{_esc(it["source"])}</span>'
-                f'<h3><a href="{_esc(it["link"])}" target="_blank" rel="noopener">{_esc(it["title"])}</a></h3>'
+                f'<h3><a href="{_esc(it["link"])}" target="_blank" rel="noopener">{_esc(_zh_typo(it["title"]))}</a></h3>'
                 f'</article>'
             )
         front_html = (
@@ -1052,7 +1085,7 @@ a{{color:inherit;text-decoration:none;}}
 .index a{{color:var(--muted);transition:color .15s;display:inline-flex;gap:6px;align-items:baseline;}}
 .index a:hover{{color:var(--accent-ink);}}
 .index .idx-n{{font-family:var(--display);font-style:italic;font-size:12px;}}
-.index .idx-cnt{{font-size:11px;color:var(--faint);}}
+.index .idx-cnt{{font-size:11px;color:var(--muted);}}
 
 /* front page lead */
 .front{{margin:22px 0 8px;border-top:4px solid var(--ink);border-bottom:1px solid var(--line-strong);padding:18px 0 20px;}}
@@ -1071,7 +1104,7 @@ a{{color:inherit;text-decoration:none;}}
 .lead-side{{display:flex;flex-direction:column;gap:14px;border-left:1px solid var(--line);padding-left:22px;}}
 .lead-side .side-item{{padding-bottom:12px;border-bottom:1px solid var(--line);}}
 .lead-side .side-item:last-child{{border-bottom:none;padding-bottom:0;}}
-.side-item .side-src{{font-size:10.5px;color:var(--faint);display:block;margin-bottom:5px;letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}}
+.side-item .side-src{{font-size:11px;color:var(--muted);display:block;margin-bottom:5px;letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}}
 .side-item h3{{font-family:var(--display);font-size:17px;font-weight:700;line-height:1.4;}}
 .side-item h3 a:hover{{color:var(--accent-ink);}}
 
@@ -1090,12 +1123,15 @@ a{{color:inherit;text-decoration:none;}}
   break-inside:avoid;
 }}
 .item-src{{
-  font-size:10.5px;color:var(--faint);letter-spacing:.05em;display:block;margin-bottom:5px;
+  font-size:11px;color:var(--muted);letter-spacing:.05em;display:block;margin-bottom:5px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }}
 .item-title{{font-size:15px;font-weight:700;line-height:1.5;margin:0 0 4px;}}
 .item-title a:hover{{color:var(--accent-ink);}}
-.item-desc{{font-size:12.5px;color:var(--muted);line-height:1.6;}}
+.item-desc{{
+  font-size:12.5px;color:var(--muted);line-height:1.6;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;
+}}
 .item.top{{background:var(--card-2);border:1px solid var(--line);padding:12px 14px;}}
 .item.top .item-title{{font-size:16px;}}
 
@@ -1114,6 +1150,7 @@ a{{color:inherit;text-decoration:none;}}
   .cols{{grid-template-columns:1fr;}}
   .mast-title{{letter-spacing:.03em;}}
   .index{{gap:6px 14px;}}
+  .item-desc{{-webkit-line-clamp:4;}}
 }}
 @media (prefers-reduced-motion:reduce){{
   html{{scroll-behavior:auto;}}
@@ -1138,7 +1175,7 @@ a{{color:inherit;text-decoration:none;}}
   </div>
 
   <header class="masthead">
-    <div class="mast-rule"><span class="mast-meta">{date_human}</span><span class="mast-meta">每早八时 · DAILY</span></div>
+    <div class="mast-rule"><span class="mast-meta">{date_human}</span><span class="mast-meta">AI 资讯 · DAILY</span></div>
     <h1 class="mast-title">AIHOT<span class="tick"> · </span>日报</h1>
     <div class="mast-sub">VOL.{date_vol} &nbsp;·&nbsp; 今日 {total} 篇报道</div>
     <div class="mast-strip">
@@ -1158,9 +1195,8 @@ a{{color:inherit;text-decoration:none;}}
   </main>
 
   <footer class="foot">
-    <span>共 <strong>{total}</strong> 条 · 数据源：<a href="https://aihot.virxact.com" target="_blank" rel="noopener">AIHOT</a>{sources_note}</span>
-    <span>{status_line}</span>
-    <span>{date_human} · 内容版权归原作者</span>
+    <span>共 <strong>{total}</strong> 条</span>
+    <span>{date_human}</span>
   </footer>
 </div>
 
@@ -1207,7 +1243,7 @@ def main():
         if items:
             print("[AI晨报] JSON 回退成功，共 %d 条" % len(items))
 
-    # 多渠道快讯（HN / Verge / TechCrunch / arXiv / 36氪 / Redis / AtlasNote），云端直接抓取，脱离 WorkBuddy
+    # 多渠道快讯（HN / Verge / TechCrunch / arXiv / 36氪 / AtlasNote），云端直接抓取，脱离 WorkBuddy
     extra, extra_names, chan_statuses = fetch_multi_channel()
     extra_today = _filter_today(extra)
     # 跨源报道数：在去重前统计规范化标题频次，供头条评分使用（被多源报道 = 更重大）
@@ -1229,14 +1265,15 @@ def main():
 
     grouped = _group_by_cat(items)
     sources_note = (" · " + " / ".join(extra_names)) if extra_names else ""
-    # 页脚信源状态栏：主源（API/RSS/JSON 回退）+ 各快讯渠道成败，一眼看出哪个源哑了
+    # 信源成败只进构建日志（诊断用），不再渲染进页面页脚（spec B-9）
     statuses = [("AIHOT·主源", bool(items))] + chan_statuses
     status_line = "今日信源：" + " · ".join(
         "%s %s" % (n, "✓" if ok else "✗") for n, ok in statuses
     )
-    window_human = f"自动生成于 {now.strftime('%Y-%m-%d %H:%M')}（北京时间）"
+    print("[AI晨报] %s" % status_line)
+    window_human = f"数据截至 {now.strftime('%Y-%m-%d %H:%M')}（北京时间）"
 
-    html_doc = build_html(grouped, date_human, window_human, sources_note, status_line)
+    html_doc = build_html(grouped, date_human, window_human, sources_note)
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(html_doc)
 

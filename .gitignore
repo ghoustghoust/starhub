@@ -10,3 +10,32 @@ __pycache__/
 *.png
 # 构建期缓存（TTL 30 分钟，跨 run 基本全过期；仅本地构建加速用，不进 git/Vercel）
 rss_cache.json
+
+# ---- 以下忽略规则同步自上游 b1f630b（2026-10-19）----
+# 只收录「CI 中间产物 / 本地工具残留」；上游把个性化状态文件（trending_snapshot、
+# hot_*、descriptions_zh、translations、rss_history、analysis_snapshot、rss-data-*.js 等）
+# 一并摘出 git 改走 actions/cache，本 fork 仍把这些数据提交进仓库，故那些规则不予采纳。
+*.tmp
+_rev*
+_adv*
+_agnes_batch_test.py
+_check_js_temp.js
+_fix_quotes.py
+_gh_*
+_check_*
+_compare_*
+_batch_*
+_verify_*
+daily_insight_snapshot.json
+source_quality.json
+trending_board.json
+insight_tracking_history.jsonl
+daily_insight_tracking_history.jsonl
+daily_insight_history.json
+daily-insight.json
+daily_insight_faiss.index
+daily_insight_chunks.json
+daily_insight_vectors.npy
+emb_cache.json
+.zcode/
+nul

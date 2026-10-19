@@ -1,0 +1,85 @@
+# ── 构建产物（GitHub Actions 生成，不进 Vercel）──
+rss_history.json
+rss_cache.json
+# fork 差异：本仓库当前提交的 rss-aggregator.html 仍用 <script src="rss-data-*.js"> 加载首屏数据，
+# 排除会让线上 RSS 页 404。等 update.yml 用新 template 重新生成页面（改走 /api/rss）后可恢复这一行。
+# rss-data-*.js
+rss_api_snapshot*.json
+hot_history.json
+hot_snapshot.json
+analysis_snapshot.json
+translations.json
+trending_snapshot.json
+trending_board.json
+source_quality.json
+rss_trend_history.json
+known_categories.json
+descriptions_zh.json
+known_notes.json
+
+# ── 每日深度洞察构建产物 ──
+daily-insight.json
+daily_insight_history.json
+daily_insight_snapshot.json
+daily_insight_tracking_history.jsonl
+daily_insight_faiss.index
+daily_insight_chunks.json
+emb_cache.json
+
+# ── 本地/CI 临时目录 ──
+.deploy-tmp/
+.workbuddy/
+.zcode/
+__pycache__/
+.pytest_cache/
+build_logs/
+tests/
+docs/
+# Pages 发布用的暂存目录（update.yml 的 Stage Pages site 生成，内含全量产物副本）。
+# 漏了这一行，Vercel 会把 _pages 整个打进部署包 —— prune 步骤删的那些大文件它在 prune 之前
+# 就已经被复制进来，等于把 prune 存在的意义抵消掉。
+_pages/
+
+# ── 构建期脚本（CI 运行，Vercel 不需要）──
+*.py
+# 只挡 *.py 会漏掉同目录里的 shell 脚本：远端 `tools/daily_commit_gate.sh` 实测在
+# starhub-refresh.vercel.app 上可取（本地浅副本没有它 ⇒ 判据本地绿、CI 红）。
+# `tools/` 整个目录对 Vercel 运行时是零依赖（函数只 require api/ 与 lib/），按目录挡才是收口。
+tools/
+
+# ── 其他 ──
+*.lock
+nul
+package.json
+node_modules/
+
+# ── 文档 / 模板源码 / 调试残留（2026-10-02 现取枚举）──
+# Pages 那边 Stage 已翻成白名单（cee84b1666），但 Vercel 是 `npx vercel --prod` 直接从工作目录打包，
+# 只吃这份排除式清单 ⇒ 同一批文件在 starhub-refresh.vercel.app 上实测仍 200：
+# HANDOFF.md 84,323 B、CLAUDE.md 4,895 B、REFRESH_VERIFICATION_REPORT.md、template.html 116,509 B、
+# LICENSE、vendor_qrcode.min.js、ai_daily.json、build_config.json、predictions.jsonl、
+# 三张 failed-run-364-*.png、actions-step5-expanded.png、两个 daily-deep-*.json。
+# 判据 = tests/site_nav_drift/test_vercel_ignore_scope.py（运行所需的名字从 api/*.js 源码推，不另抄名单）。
+# 刻意**不**在这里排除：`vercel.json`（Vercel 自己的部署配置）、四个站点页面（用户定案"Vercel 那份空壳保持不动"）、
+# `api/` 与 `lib/`（api/rss.js 运行时 require('../lib/…')）、`rss_sources.json` 与 `rss_api_snapshot*.json`
+# （api/rss.js 的 loadSources() 直接 readFileSync 且没有 try/catch ⇒ 排除它就等于把 /api/rss 打成 500）。
+*.md
+LICENSE
+template.html
+vendor_qrcode.min.js
+ai_daily.json
+build_config.json
+predictions.jsonl
+daily-deep-*.json
+failed-run-*.png
+actions-step5-*.png
+.gitignore
+.vercelignore
+# CI 管线本身。实测 `starhub-refresh.vercel.app/.github/workflows/update.yml` **200 / 36,632 B**、
+# `repo-trim.yml` 200 / 8,021 B ⇒ 根级点文件不上传（`.gitignore`/`.vercelignore` 实测 404）
+# **不等于**点目录不上传，别按"隐藏文件反正不发"的直觉省略这一行。
+# Vercel 运行不需要 workflow（那是 GitHub Actions 的），排除它不伤部署。
+.github/
+
+# 部署状态标记（哪个 commit 的 API 内容已被 Vercel 接受）：CI 内部状态，不该进部署包
+.vercel-deployed/

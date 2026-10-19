@@ -1,0 +1,49 @@
+name: Zen translate check
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Zen rotation live check
+        env:
+          ZEN_API_KEY: ${{ secrets.ZEN_API_KEY || secrets.OPENCODE_KEY }}
+        run: |
+          python - <<'EOF'
+          import time
+          import build_rss_aggregator as m
+
+          texts = [
+              "Scaling laws are not the whole story. Data quality curves bend in ways the charts hide.",
+              "We just shipped a major update to our reasoning model. It is now significantly better at math.",
+              "The gap between demo and product is where most AI startups die. Ship small, ship often.",
+              "Observability for agents is the next big thing. You cannot improve what you cannot trace.",
+              "Latency numbers from our new region: p50 180ms, p99 400ms.",
+              "Local models on laptops are good enough for most tasks now. The cloud does the rest.",
+          ]
+          ok = 0
+          for i, t in enumerate(texts, 1):
+              t0 = time.time()
+              out = m._zen_translate(t)
+              dt = time.time() - t0
+              status = "OK" if out else "FAIL"
+              ok += 1 if out else 0
+              print("ZEN[%d] %s %.1fs -> %s" % (i, status, dt, (out or "")[:60]))
+              print("      原文: %s" % t[:60])
+          print("ZEN_SUMMARY: %d/%d 成功" % (ok, len(texts)))
+          print("ZEN_MODEL_BLOCK:", m._ZEN_MODEL_BLOCK)
+          print("ZEN_MODELS:", m._ZEN_MODELS)
+          EOF

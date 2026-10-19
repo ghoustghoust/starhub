@@ -6,6 +6,8 @@
 功能：信源分类筛选、全局搜索、标题/摘要翻译、响应式三端适配、主题切换。
 """
 import collections
+import functools
+import concurrent.futures
 import html as html_mod
 import datetime
 import hashlib
@@ -14,24 +16,82 @@ import math
 import os
 import re
 import sys
+import threading
 import time
+import uuid
 import build_logger
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
 if sys.stdout and hasattr(sys.stdout, 'buffer'):
-    sys.stdout = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
+    # 仅为 Windows 控制台 GBK 问题重挂 UTF-8 流。closefd=False 是必须的：直接
+    # open(fileno) 得到的对象被回收时会关掉共用 fd，pytest 恢复自己的捕获流后
+    # 再读就报 Bad file descriptor，整场 CI 在收尾处崩掉。
+    try:
+        sys.stdout = open(sys.stdout.fileno(), mode='w', encoding='utf-8',
+                          buffering=1, closefd=False)
+    except (OSError, ValueError):
+        pass
 if sys.stderr and hasattr(sys.stderr, 'buffer'):
-    sys.stderr = open(sys.stderr.fileno(), mode='w', encoding='utf-8', buffering=1)
+    try:
+        sys.stderr = open(sys.stderr.fileno(), mode='w', encoding='utf-8',
+                          buffering=1, closefd=False)
+    except (OSError, ValueError):
+        pass
 
 OUT = "rss-aggregator.html"
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36", "Accept": "application/rss+xml, application/xml, text/xml, */*"}
 
 # ── 缓存配置 ──
 TRANS_CACHE_FILE = "translations.json"
+# 翻译缓存条数上限。它是**已入库文件**（update.yml 的 add 清单里有 translations.json），
+# 生产实测 101,643 条 / 20,731,886 字节且从不裁剪；同函数里的 RSS 缓存早就按 TTL 裁剪了，
+# 两边机制必须一致，否则"防止文件无限膨胀"只对一半。
+# 取 30,000 的依据：单场命中约 8,400 条不同文本，30k ≈ 3.5 倍单场工作集；
+# 被逐出的都是"72h 窗口里再也不会遇到"的历史标题，代价是个别重遇时重译一次（1 次 API 调用）。
+TRANS_CACHE_MAX = 30000
 RSS_CACHE_FILE = "rss_cache.json"
 RSS_CACHE_TTL = 1800  # RSS 缓存有效期：30 分钟
+
+# 派生显示字段：值能由 pub_date 现算，烘进产物就等于"每场全量重写"。
+# 实测（远端相邻两场 8b45cc9d/7966a25d）：9,115 条共同条目里 51% 只因 time_str
+# 不同而对不上，把它移出条目后相同率 44.5% -> 89.9%。
+# 它是唯一事实源：装配处不再写，出厂处按它剥离 —— 两处必须同时改，只改一处等于没挡。
+ITEM_DERIVED_FIELDS = frozenset({"time_str"})
+
+
+def _read_rel_time_js():
+    """读取页面唯一的时间口径实现（lib/rel_time.js），构建期原样内联进产物。
+
+    为什么读文件而不是写在模板里：这条口径过去有两个执行点（构建期 Python 与页面显示），
+    历史上"两边各写一遍"已经栽过（留存规则、抽屉日期）。写成一处文件 + 一条对等测试，
+    改的人就不需要"记得同步"。判据：tests/rss_history/test_time_label_parity.py
+    """
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib", "rel_time.js")
+    try:
+        with open(p, encoding="utf-8") as f:
+            return f.read()
+    except OSError as e:
+        # 不咽：缺这个文件页面时间位会整片空，宁可在构建期当场炸
+        raise RuntimeError("缺少 lib/rel_time.js，页面相对时间无处可算: %s" % e)
+
+
+def _strip_derived_items(items):
+    """出厂条目的派生字段剥离。返回副本列表，历史里那份对象不被改动。"""
+    out = []
+    for it in items:
+        if isinstance(it, dict) and (set(it) & ITEM_DERIVED_FIELDS):
+            out.append({k: v for k, v in it.items() if k not in ITEM_DERIVED_FIELDS})
+        else:
+            out.append(it)
+    return out
+
+
+# 翻译缓存的账本：与历史侧 `_LAST_HISTORY_ACCOUNT` 同一形态。
+# 约定也一致：字段为 None 表示"这一步没跑到"，不许用 0 冒充"跑到了但没丢"。
+_LAST_TRANS_ACCOUNT = {}
 
 # ── newsnow 热榜快照 ──
 # API 格式: /api/s?id={platform}，每平台单独请求
@@ -39,8 +99,24 @@ NEWSNOW_API_TMPL = "https://newsnow.busiyi.world/api/s?id=%s"
 NEWSNOW_TIMEOUT = 10
 HOT_SNAPSHOT_FILE = "hot_snapshot.json"
 HOT_HISTORY_FILE = "hot_history.json"  # 热榜轨迹历史（保留 7 天）
-# 期望的热榜源（按优先级排序，构建时按此顺序提取）
-NEWSNOW_PLATFORMS = ["weibo", "zhihu", "zhihu-daily", "baidu", "bilibili", "douyin"]
+# 期望的热榜源（全量接入 newsnow 可用源，故障源 zhihu-daily/36kr/linuxdo/ghxi/kuaishou/smzdm/freebuf 不纳入）
+NEWSNOW_PLATFORMS = [
+    # ── 综合热搜 ──
+    "weibo", "zhihu", "baidu", "bilibili", "douyin",
+    # ── 科技/开发者/AI ──
+    "ithome", "hackernews", "github", "solidot", "sspai",
+    "juejin", "v2ex", "producthunt", "aihot",
+    "chongbuluo", "pcbeta", "nowcoder", "coolapk",
+    # ── 商业/财经 ──
+    "xueqiu", "zaobao", "wallstreetcn", "cls", "jin10",
+    "gelonghui", "fastbull",
+    # ── 综合资讯 ──
+    "toutiao", "tencent", "thepaper", "ifeng",
+    "cankaoxiaoxi", "sputniknewscn", "kaopu", "mktnews",
+    # ── 生活/娱乐/体育 ──
+    "douban", "tieba", "hupu", "steam",
+    "iqiyi", "qqvideo", "dongqiudi",
+]
 
 # ── 缓存数据 ──
 _trans_cache = {}  # {text_hash: translated_text}
@@ -50,6 +126,8 @@ _rss_cache = {}    # {source_key: {"items": [...], "fetched_at": timestamp}}
 ANALYSIS_SNAPSHOT_FILE = "analysis_snapshot.json"
 SOURCE_QUALITY_FILE = "source_quality.json"
 RSS_TREND_HISTORY_FILE = "rss_trend_history.json"  # RSS 内容趋势历史（保留 14 天）
+TRENDING_SNAPSHOT_FILE = "trending_snapshot.json"  # GitHub Trending 数据
+INSIGHT_TRACKING_FILE = "insight_tracking_history.jsonl"  # 洞察板块全量追踪日志
 # 中英文停用词表（关键词提取时过滤）
 _STOP_WORDS_ZH = set("的了是在我有和就不人都一个上也这到说们为你会对" +
     "他就是那要被她它自己什么没有可以已经还是或者虽然但是因此如果" +
@@ -75,10 +153,16 @@ _STOP_WORDS_EN = set(("the a an is are was were be been being have has had do do
 _STOP_WORDS = _STOP_WORDS_ZH | _STOP_WORDS_EN
 
 # ── 分析功能开关（从 build_config.json 读取） ──
+# 配置路径按本文件位置解析，不用相对路径：相对路径依赖进程 CWD，
+# 从别的目录导入本模块时会静默读到另一个同名 build_config.json
+# （实测在诱饵 CWD 下读到 {enabled: False, window_minutes: 45}，而非回落默认值）。
+_BUILD_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "build_config.json")
+
+
 def _load_analysis_enabled():
     """从 build_config.json 读取 analysis_enabled 开关，文件缺失或损坏时默认开启。"""
     try:
-        with open("build_config.json", "r", encoding="utf-8") as f:
+        with open(_BUILD_CONFIG_PATH, "r", encoding="utf-8") as f:
             cfg = json.load(f)
         return bool(cfg.get("analysis_enabled", True))
     except Exception:
@@ -86,18 +170,71 @@ def _load_analysis_enabled():
 
 ANALYSIS_ENABLED = _load_analysis_enabled()
 
+
+def _load_diverse_config():
+    """从 build_config.json 读取 diverse 排序配置，文件缺失或损坏时返回默认值。"""
+    try:
+        with open(_BUILD_CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        return {
+            "enabled": bool(cfg.get("diverse_enabled", True)),
+            "window_minutes": int(cfg.get("diverse_window_minutes", 120)),
+        }
+    except Exception:
+        return {"enabled": True, "window_minutes": 120}
+
+
+DIVERSE_CFG = _load_diverse_config()
+
 # ── 72 小时内容累积 ──
 RSS_HISTORY_FILE = "rss_history.json"
 RSS_HISTORY_HOURS = 72
 _rss_history = {}  # {link: {source, source_key, cat, color, title, title_zh, summary, summary_zh, pub_date, time_str}}
+_LAST_UNRELIABLE_SRCS = set()  # D4：最近一场 bad_date 审计判定的不可信日期源（关键词降权消费）
+_LAST_RETENTION_STATS = {}     # 最近一场留存闸门的统计（构建日志消费：闸后口径唯一可见面）
+
+# ── Fix 4: T4 长尾层常量 ──
+# T4 源：低优先级/长尾源，使用更宽松的跳过阈值和更短的历史保留窗口
+# 目的：给频繁失败的低优先级源更多恢复机会，同时避免它们占用过多历史空间
+_TIER4_HISTORY_HOURS = 48              # T4 源历史保留窗口：48h（默认 72h）
+_TIER_PROMOTION_THRESHOLD = 3          # 连续 3 次成功抓取后自动升级到 T3
+_tier4_success_streak = {}             # {source_key: 连续成功次数}
 
 # ── 翻译统计 
-_TRANS_STATS = {"agnes": 0, "google": 0, "bing": 0, "mymemory": 0, "dict": 0, "skip": 0, "fail": 0, "cache_hit": 0}
+_TRANS_STATS = {"agnes": 0, "zen": 0, "google": 0, "bing": 0, "mymemory": 0, "dict": 0, "skip": 0, "fail": 0, "cache_hit": 0}
 # GA 免费翻译端点已被数据中心 IP 封锁（429/timeout），AGNES_API_KEY 存在时首选 Agnes AI。
-_AGNES_KEY = os.environ.get("AGNES_API_KEY", "")
+# 多 key 轮询：AGNES_API_KEY（主）+ AGNES_API_KEYS（逗号分隔附加），429 自动切换
+_AGNES_KEYS = [k.strip() for k in os.environ.get("AGNES_API_KEY", "").split(",") if k.strip()]
+_extra_agnes = os.environ.get("AGNES_API_KEYS", "")
+if _extra_agnes:
+    _AGNES_KEYS.extend(k.strip() for k in _extra_agnes.split(",") if k.strip())
+_AGNES_KEY_IDX = 0
+# Agnes 免费但限流：HTTP 错误与连续空响应都按连续违规指数退避（5→10→20→40 分钟，封顶 1h），
+# 期间直接走后续端点，不浪费每次 0.4s 的撞墙（对齐 Zen Z1 账本语义）
+_AGNES_BLOCK_UNTIL = 0.0
+_AGNES_OFFENSES = 0
+_AGNES_EMPTY_STREAK = 0
+# 多 key 轮转时的"这一圈是不是全吃了 429"连击计数：轮完一整圈仍全 429 才记罚期。
+# 实现方式是"之后不再发请求"（调用方与本函数入口都查 BLOCK_UNTIL），**不是 sleep** ——
+# 构建期等待会拉长整场构建，而少打几次网关只会让构建变快。
+_AGNES_429_STREAK = 0
+_AGNES_EMPTY_LIMIT = 3  # 连续空响应阈值（模型偶发拒绝 vs 端点异常的分界）
+# OpenCode Zen 免费模型（https://opencode.ai/docs/zen/）：OpenAI 兼容端点，免费档需 OpenCode 客户端会话头。
+# 实测（2026-09-13）：ling 2.4s / big-pickle 5.6s / mimo 13.1s 可用；muse-spark 稳定 500、nemotron 两款 88s+，不入轮询。
+_ZEN_KEY = os.environ.get("ZEN_API_KEY", "") or os.environ.get("OPENCODE_KEY", "")
+_ZEN_MODELS = ([m.strip() for m in os.environ["ZEN_TRANSLATE_MODEL"].split(",") if m.strip()]
+               if os.environ.get("ZEN_TRANSLATE_MODEL")
+               else ["ling-3.0-flash-fin-free", "big-pickle", "mimo-v2.5-free"])
+_ZEN_URL = "https://opencode.ai/zen/v1/chat/completions"
+_ZEN_MODEL_BLOCK = {}   # model → 自封截止时间戳
+_ZEN_MODEL_OFFENSES = {}  # model → 连续自封次数（自封期翻倍：5→10→20→40 分钟，封顶 1h；成功清零）
+_ZEN_MODEL_IDX = 0     # 轮询游标（翻译线程池共享，_TRANS_LOCK 保护）
+_ZEN_AUTH_STICKY = None  # 本场构建实测可用的鉴权 token；key 撞 401/403 后粘性回退 "public"
+_ZEN_TIMEOUT_STREAK = {}  # model → 连续超时/网络失败计数（≥2 自封；成功重置）
 # 翻译熔断：连续 5 次全端点失败后暂停翻译请求 5 分钟（避免上游故障时的请求风暴与构建拖长）
 _TRANS_FAIL_STREAK = 0
 _TRANS_BLOCK_UNTIL = 0.0
+_TRANS_LOCK = threading.Lock()  # 并行翻译线程池下的熔断状态保护
 
 
 def _load_caches():
@@ -121,22 +258,94 @@ def _load_caches():
             print("[缓存] 加载 RSS 缓存失败: %s" % e, file=sys.stderr)
 
 
-def _save_caches():
-    """保存翻译和 RSS 缓存（RSS 缓存写盘前裁剪过期条目，防止文件无限膨胀）"""
+def _atomic_write_json(path, obj, **dump_kw):
+    """原子写 JSON：先写 .tmp 再 os.replace，进程中断不会留下半截文件"""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, **dump_kw)
+    os.replace(tmp, path)
+
+
+def _atomic_write_text(path, text):
+    """原子写文本文件：先写 .tmp 再 os.replace"""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def _strip_oss_signature(text):
+    """剥离 URL 中的 OSS/云存储签名参数，防止 GitHub Push Protection 误报密钥泄露。
+    移除 OSSAccessKeyId、Signature、Expires、X-Amz-* 等查询参数。
+    同时处理 HTML 编码（&amp; / &#38;）的查询参数分隔符。"""
+    if not text or not isinstance(text, str):
+        return text
+    # 匹配 ? 或 & 或 &amp; 或 &#38; 后面的签名参数
+    _sep = r'(?:[?&]|&amp;|&#38;)'
+    _params = r'(?:OSSAccessKeyId|Signature|Expires|X-Amz-[A-Za-z0-9-]+)=[^&\s"\'<>;]*'
+    text = re.sub(_sep + _params, '', text)
+    # 清理残留
+    text = re.sub(r'\?&amp;', '?', text)
+    text = re.sub(r'\?&#38;', '?', text)
+    text = re.sub(r'\?&', '?', text)
+    text = re.sub(r'&&', '&', text)
+    text = re.sub(r'\?[\"\'>\s]', '', text)
+    return text
+
+
+def _trans_touch(text_hash):
+    """命中即移到 dict 末尾：Python 保序，末尾=最近使用，头部=最久未用。
+
+    不 touch 的话 LRU 会退化成"插入序"，一条被高频命中的老译文反而最先被裁掉。
+    """
+    if text_hash in _trans_cache:
+        _trans_cache[text_hash] = _trans_cache.pop(text_hash)
+
+
+def _trim_trans_cache():
+    """把翻译缓存裁到 TRANS_CACHE_MAX，返回丢弃条数（并记账）。"""
+    before = len(_trans_cache)
+    if before > TRANS_CACHE_MAX:
+        # 整体重建而不是逐 key pop：pop 版要在循环里反复构造 set，
+        # 3 万条规模下是 O(n·cap) 的自杀式写法。clear+update 保序且线性。
+        tail = list(_trans_cache.items())[-TRANS_CACHE_MAX:]
+        _trans_cache.clear()
+        _trans_cache.update(tail)
+    dropped = before - len(_trans_cache)
+    _LAST_TRANS_ACCOUNT["size"] = len(_trans_cache)
+    _LAST_TRANS_ACCOUNT["trimmed"] = dropped
+    return dropped
+
+
+def _save_trans_cache():
+    """翻译缓存：先按 LRU 裁剪再紧凑落盘。
+
+    indent=2 去掉 —— 这个文件只有本脚本自己读（全仓核过：前端与 api/ 都不消费），
+    20.7MB 里约三成是缩进空白，每场整文件重新入库，直接喂给已经 6.8GB 的 .git。
+    """
     try:
-        with open(TRANS_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(_trans_cache, f, ensure_ascii=False, indent=2)
-        print("[缓存] 保存翻译缓存: %d 条" % len(_trans_cache))
+        trimmed = _trim_trans_cache()
+        _atomic_write_json(TRANS_CACHE_FILE, _trans_cache, ensure_ascii=False,
+                           separators=(",", ":"))
+        print("[缓存] 保存翻译缓存: %d 条%s" % (
+            len(_trans_cache),
+            "（LRU 裁剪 %d 条，上限 %d）" % (trimmed, TRANS_CACHE_MAX) if trimmed else ""))
     except Exception as e:
+        _LAST_TRANS_ACCOUNT["size"] = None
+        _LAST_TRANS_ACCOUNT["trimmed"] = None
         print("[缓存] 保存翻译缓存失败: %s" % e, file=sys.stderr)
+
+
+def _save_caches():
+    """保存翻译和 RSS 缓存（两者写盘前都裁剪，防止文件无限膨胀）。"""
+    _save_trans_cache()
     # RSS 缓存仅保留 TTL 内条目（跨 run 基本全过期，裁剪+紧凑序列化使文件从几十 MB 降至 MB 级）；
     # 该文件已移出 git 跟踪（见 .gitignore），仅服务单次运行内的抓取加速
     pruned = {k: v for k, v in _rss_cache.items()
               if time.time() - v.get("fetched_at", 0) < RSS_CACHE_TTL}
     dropped = len(_rss_cache) - len(pruned)
     try:
-        with open(RSS_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(pruned, f, ensure_ascii=False, separators=(",", ":"))
+        _atomic_write_json(RSS_CACHE_FILE, pruned, ensure_ascii=False, separators=(",", ":"))
         print("[缓存] 保存 RSS 缓存: %d 个源%s" % (len(pruned), "（裁剪过期 %d 个）" % dropped if dropped else ""))
     except Exception as e:
         print("[缓存] 保存 RSS 缓存失败: %s" % e, file=sys.stderr)
@@ -167,9 +376,12 @@ def fetch_newsnow_snapshot():
             continue
         entries = []
         for idx, it in enumerate(items[:10]):
+            _t = it.get("title", "")
+            # 上游把纯数字标题写成 JSON number（10-14 pcbeta "26300.9711" 连红三场），
+            # 热榜又不过 _filter_noise ⇒ 只收"真值且非 str"；None/0/"" 原样留着，别改条目取舍。
             entries.append({
                 "rank": idx + 1,
-                "title": it.get("title", ""),
+                "title": _t if (not _t or isinstance(_t, str)) else str(_t),
                 "url": it.get("url", ""),
                 "hot": "",
             })
@@ -179,32 +391,355 @@ def fetch_newsnow_snapshot():
     return result
 
 def _load_history():
-    """加载 72 小时文章历史"""
+    """加载 72 小时文章历史（支持分块格式）"""
     global _rss_history
-    if os.path.exists(RSS_HISTORY_FILE):
-        try:
-            with open(RSS_HISTORY_FILE, "r", encoding="utf-8") as f:
-                _rss_history = json.load(f)
+    try:
+        _rss_history = _load_history_chunked()
+        if _rss_history:
             print("[历史] 加载文章历史: %d 篇" % len(_rss_history))
-        except Exception as e:
-            print("[历史] 加载失败: %s" % e, file=sys.stderr)
-            _rss_history = {}
+    except Exception as e:
+        print("[历史] 加载失败: %s" % e, file=sys.stderr)
+        _rss_history = {}
+
+
+def _save_history_chunked(max_size=40 * 1024 * 1024):
+    """分块保存文章历史。
+
+    始终走分块格式（含小历史）：跨构建持久化由 CI 的 actions/cache 承载 chunk+index，
+    若小历史改写主文件而留下上一代 index，_load_history_chunked 会优先信 index 而忽略
+    刚写好的主文件。
+    """
+    data = json.dumps(_rss_history, ensure_ascii=False, separators=(",", ":"))
+    total_bytes = len(data.encode("utf-8"))
+    n_chunks = max(1, (total_bytes + max_size - 1) // max_size)
+
+    buckets = [{} for _ in range(n_chunks)]
+    for link, record in _rss_history.items():
+        bucket_idx = int(hashlib.md5(link.encode()).hexdigest()[:8], 16) % n_chunks
+        buckets[bucket_idx][link] = record
+
+    base_dir = os.path.dirname(RSS_HISTORY_FILE) or "."
+    for i, bucket in enumerate(buckets):
+        _atomic_write_json(os.path.join(base_dir, "rss_history_%d.json" % i),
+                           bucket, ensure_ascii=False)
+
+    _atomic_write_json(os.path.join(base_dir, "rss_history_index.json"),
+                       {"chunks": n_chunks, "total": len(_rss_history)},
+                       ensure_ascii=False)
+
+    import glob
+    for old_file in glob.glob(os.path.join(base_dir, "rss_history_*.json")):
+        try:
+            num = int(os.path.basename(old_file).replace("rss_history_", "").replace(".json", ""))
+            if num >= n_chunks:
+                os.remove(old_file)
+                print("[历史] 清理旧分块: %s" % old_file)
+        except ValueError:
+            pass
+
+    print("[历史] 分块保存: %d 篇 → %d 个文件" % (len(_rss_history), n_chunks))
+
+
+def _load_history_chunked(hist_file=None, index_file=None):
+    """加载分块的文章历史，向后兼容旧格式。"""
+    hist_file = hist_file or RSS_HISTORY_FILE
+    base_dir = os.path.dirname(hist_file) or "."
+    index_file = index_file or os.path.join(base_dir, "rss_history_index.json")
+
+    if os.path.exists(index_file):
+        try:
+            with open(index_file, "r", encoding="utf-8") as f:
+                index = json.load(f)
+            merged = {}
+            for i in range(index.get("chunks", 0)):
+                fname = os.path.join(base_dir, "rss_history_%d.json" % i)
+                if os.path.exists(fname):
+                    with open(fname, "r", encoding="utf-8") as f:
+                        merged.update(json.load(f))
+            # index 存在即以它为准：回落到主文件会读出上一代被冻结的旧历史
+            # （rss_history.json 已不参与跨构建持久化）。数量对不上说明只还原了半套
+            # 分块，按无历史处理让守卫逼出全量，否则缺的那部分会被当成正常数据继续跳源。
+            expected = int(index.get("total", -1))
+            if len(merged) != expected:
+                print("[历史] 索引声明 %d 篇、实读 %d 篇（分块缺失或缓存半套），按无历史处理"
+                      % (expected, len(merged)), file=sys.stderr)
+                return {}
+            return merged
+        except Exception:
+            pass
+
+    if os.path.exists(hist_file):
+        try:
+            with open(hist_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
 
 
 def _save_history():
-    """保存 72 小时文章历史"""
+    """保存 72 小时文章历史（分块防超 40MB）"""
     try:
-        with open(RSS_HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(_rss_history, f, ensure_ascii=False)
+        _save_history_chunked()
         print("[历史] 保存文章历史: %d 篇" % len(_rss_history))
     except Exception as e:
         print("[历史] 保存失败: %s" % e, file=sys.stderr)
 
 
+# ── 留存出口闸门（设计见 docs/superpowers/specs/2026-09-20-rss-72h-retention-design.md）──
+# 为什么要有这道闸门：上面那套 72h 裁剪只遍历 _rss_history，而当次抓取的条目在
+# src_map[key]["items"] = list(_fetched) 处原样进输出、从未与 cutoff 比较。
+# 线上实测产物 20,904 条里 59% 超过 72h（中位 137h、p99 4 年），主体就是上游 feed
+# 自己挂着的老文章 —— 它们走的是「当次抓取」这条旁路，调历史裁剪参数治不到。
+RETENTION_BASE_H = RSS_HISTORY_HOURS      # 基线窗口 = 用户可见契约 72h
+RETENTION_MAX_WINDOW_H = 168              # 慢源最多放宽到 7 天，再长就不算「近期」了
+RETENTION_COEF = 2.0                      # 窗口 = 系数 × 该源中位发布间隔（实测系数不敏感）
+RETENTION_FLOOR = 3                       # 每源最少留几条：没有它实测 286/938 源会变空
+RETENTION_FLOOR_MAX_H = RETENTION_MAX_WINDOW_H
+# ↑ 保底自己的龄限。线上实测：不设这道限时「保底」一个人放进产物 1,012 条 >168h 的内容
+#   （最老 41,791h ≈ 4.7 年的 CNN 旧文，散在 426 个源上）—— 那和被判死的「无日期回退成 now」
+#   是同一个 bug 换了件衣服。保底的目的是别让卡片整块消失，不是给停更源发永生签证。
+#   代价实测可接受：钳在 168h 后出厂 7,075 条，246 个源颗粒无收，但覆盖率统计
+#   (sources_with_data / per_source) 全部取闸门**之前**的抓取阶段数字，门禁不会因此变红；
+#   那 246 个源是停更源，归信源清单健康度那条线处理，不该由留存策略替它们遮掩。
+RETENTION_MAX_ITEMS = 120                 # 每源条数上限：防高频源把全站可见性吃光
+RETENTION_MIN_SAMPLES = 3                 # 样本不足 3 条不放宽 —— 两条间隔不构成「本就来得慢」
+RETENTION_EPOCH_YEAR = 1971               # 0001-01-01 这类占位值不是发布时间
+RETENTION_OVER_NAME_CAP = 5               # 超龄条目点名上限：破口成百时不许把构建日志刷爆（计数仍全量）
+
+# 缓存侧只有一条体积约束：**72h 时间窗**。2026-09-20 曾加过一道"每源上限 400 条"，
+# 当天就撤销，三条理由全部来自生产实测（台账 §13）：
+#   1) 时间窗本身就把体积框住了 —— 上限上线前的 93 场历史斜率是 **-46.9 条/场**（在往下走）。
+#      我先前看到的 +230/场 只是窗口填装期的暂态，把暂态当成趋势是错的。
+#   2) 条数上限并不省体积：上线后 10 场斜率反而 **+65.7 条/场**（被腾空的名额又填满），
+#      同期却累计淘汰 2,231 条窗内条目 —— 代价是持续的，省下的是暂时的。
+#   3) 它切的几乎全是窗内内容：首落地那场淘汰 1,547 条，同场真过期的只有 21 条。
+# 换留下来的"每源深度哨兵"也已于 2026-09-21 退役：它扫全库只报三项，其中"最老龄期"与
+# 裁剪共用一只表后恒等于把 cutoff 念一遍。体积侧从此只剩一条账 —— 真过期裁掉多少。
+_LAST_HISTORY_ACCOUNT = {}                # 本场历史账：只剩 expired 一条，构建日志消费
+
+
+def _retention_ref_dt(item, offsets=None, source_key=None):
+    """闸门判龄用的时间基准（北京时间 aware）；两条时间线索都不可得时返回 None。
+
+    一律回到 _rss_history 里那份**原始** pub_date 再套声明偏移：出口处那份可能已被
+    _accumulate_history 第二段平移过，在这里再套一次就是二次校正（条目凭空挪 ±偏移）。
+    pub_date 缺失、是纪元占位值、或晚于 first_seen 超容忍（物理上不可能，已被证伪）时
+    改用 first_seen —— 那是我方记录的真实收录时刻。**不再回退成 now**，那正是永生条目的来源。
+
+    降级键（date_fallback）不需要单独认：它只在历史条目缺 pub_date 时才写，所以
+    「历史里没有 pub_date」就等于「出口那份是降级键」，此时基准直接取 first_seen（不套偏移）。
+
+    source_key 必传兜底：当次抓取的 item 字典里没有 source_key（只有历史条目有），
+    少了它就取不到该源声明的 pub_date_offset_min —— 合并阶段是用 src["key"] 现拼的。
+    """
+    _raw = _rss_history.get(item.get("link", "")) or {}
+    in_hist = bool(_raw)
+    fs = _parse_hist_dt(_raw.get("first_seen") or item.get("first_seen"))
+    # 原始 pub_date 只认两个来源：历史里那份（一定是原始值），或压根没入过历史的本轮抓取值。
+    # 绝不能「历史没有就退回 item 的」：第二轮会给历史条目写上 first_seen 派生的降级键，
+    # 那串不是发布时间，再套一次源偏移就凭空挪 ±偏移（对抗审查 P1-3 实测 68h → 76h）。
+    raw_pd = _raw.get("pub_date") if in_hist else item.get("pub_date", "")
+    if not raw_pd:
+        return fs
+    probe = {"pub_date": raw_pd,
+             "source_key": item.get("source_key") or _raw.get("source_key") or source_key}
+    d = _effective_pub_dt(probe, offsets)
+    if d is None or d.year <= RETENTION_EPOCH_YEAR:
+        return fs
+    # 证伪判据用**我方自己的** first_seen：已入历史的条目必须与本轮实际抓取时刻比对 ——
+    # 降级条目的 first_seen 恰是被评估的那个值，d - fs 恒 <= 0，"还没抓到就已发布"的假日期
+    # 反而永远判不倒（实测 d - first_seen = 48h 也放行）。
+    fs_ref = _parse_hist_dt(_raw.get("first_seen")) if in_hist else fs
+    if fs_ref is not None and (d - fs_ref) > datetime.timedelta(minutes=FUTURE_DATE_TOLERANCE_MIN):
+        return fs_ref
+    return d
+
+
+def _retention_age_h(item, offsets=None, now_bj=None, source_key=None):
+    """条目的龄（小时）。返回 None 表示判不了龄 —— 闸门按丢弃处理。"""
+    d = _retention_ref_dt(item, offsets, source_key)
+    if d is None:
+        return None
+    return ((now_bj or _now_bj()) - d).total_seconds() / 3600.0
+
+
+def _source_window_h(items, offsets=None, source_key=None):
+    """该源的保留窗口（小时）：min(168, max(72, 系数 × 中位发布间隔))，样本不足不放宽。
+
+    放宽是给低频源（周更博客、播客一期 30 条）的：一刀切 72h 会把它们整源清空。
+    中位口径与 _detect_pub_date_anomalies 一致（取排序后中位偏上那个）。
+    """
+    ds = []
+    for it in items:
+        d = _retention_ref_dt(it, offsets, source_key)
+        if d is not None:
+            ds.append(d)
+    if len(ds) < RETENTION_MIN_SAMPLES:
+        return float(RETENTION_BASE_H)
+    ds.sort()
+    gaps = sorted((ds[i + 1] - ds[i]).total_seconds() / 3600.0 for i in range(len(ds) - 1))
+    med = gaps[len(gaps) // 2]
+    return min(float(RETENTION_MAX_WINDOW_H),
+               max(float(RETENTION_BASE_H), RETENTION_COEF * med))
+
+
+def _apply_retention(sources, offsets=None, now_bj=None):
+    """出口闸门：窗口 → 每源保底（受硬上限约束）→ 每源上限。返回 (过滤后的 sources, 统计)。
+
+    顺序固定为「窗口 → 保底 → 上限」，且**只删条目**：过滤后按原始下标回填，
+    因为 write_data_chunks 按顺序取首屏前 CHUNK0_SIZE 条，打乱顺序就是改首页。
+    """
+    now_bj = now_bj or _now_bj()
+    before = after = undatable = widened = floored = capped = 0
+    b_le72 = b_mid = b_over = 0
+    over_names = []             # 超龄条目的身份 + 两把尺的读数，见 RETENTION_OVER_NAME_CAP 与 A2 判据
+    emptied = []
+    emptied_detail = []       # 与 emptied 同批：名单 + 各自最后一条的龄期 + 它拿到的窗口
+    out = []
+    for src in sources:
+        items = src.get("items", [])
+        before += len(items)
+        if not items:
+            out.append(src)
+            continue
+        window = _source_window_h(items, offsets, src.get("key"))
+        if window > RETENTION_BASE_H:
+            widened += 1
+        dated = []          # (原始下标, 龄, item)
+        for idx, it in enumerate(items):
+            age = _retention_age_h(it, offsets, now_bj, src.get("key"))
+            if age is None:
+                undatable += 1
+            else:
+                dated.append((idx, age, it))
+        sel = [t for t in dated if t[1] <= window]
+        # 保底只从「可判龄且没超硬上限」的条目里取最新的，凑不满就算了：
+        # 拿无日期条目填空等于留后门，拿 7 天前的旧文填空等于把保底改成永生通道。
+        pad = [t for t in dated if t[1] <= RETENTION_FLOOR_MAX_H]
+        if len(sel) < RETENTION_FLOOR and len(pad) > len(sel):
+            chosen = {t[0] for t in sel}
+            for t in sorted(pad, key=lambda x: x[1]):
+                if len(sel) >= RETENTION_FLOOR:
+                    break
+                if t[0] not in chosen:
+                    sel.append(t)
+                    chosen.add(t[0])
+            floored += 1
+        if len(sel) > RETENTION_MAX_ITEMS:
+            sel = sorted(sel, key=lambda x: x[1])[:RETENTION_MAX_ITEMS]
+            capped += 1
+        retained = sorted(sel, key=lambda x: x[0])
+        kept = [t[2] for t in retained]
+        # 分项按**出厂那串 pub_date**独立算，不复用上面的判定龄：
+        # 判龄走原始 pub_date + 偏移，降级条目（date_fallback）出厂的是收录时刻，两者可以差一个
+        # 偏移量 —— 复用判定龄会得到一个"和用户看到的不一样"的分布（实测显示 20h 的条目被归进
+        # 72-168h 桶）。独立算既对齐外显，也让 ">168h 应为 0" 这条不变量真的可证伪。
+        for _t in retained:
+            _disp = _parse_hist_dt(_t[2].get("pub_date"))
+            if _disp is None:
+                continue
+            _dage = (now_bj - _disp).total_seconds() / 3600.0
+            if _dage <= RETENTION_BASE_H:
+                b_le72 += 1
+            elif _dage <= RETENTION_MAX_WINDOW_H:
+                b_mid += 1
+            else:
+                b_over += 1
+                if len(over_names) < RETENTION_OVER_NAME_CAP:
+                    # 两把尺各读多少都要留下：出厂分项按出厂那串算，闸门判龄走 _retention_ref_dt，
+                    # 一条超龄条目能出厂就说明这两者对不上 —— 对上在哪断的，才是 ② 要改的地方。
+                    _ref = _retention_ref_dt(_t[2], offsets, src.get("key"))
+                    over_names.append({
+                        "link": _t[2].get("link") or "?",
+                        "src": src.get("key") or "?",
+                        "ship": _t[2].get("pub_date") or "",
+                        "ship_age_h": round(_dage, 1),
+                        "ref_age_h": None if _ref is None
+                        else round((now_bj - _ref).total_seconds() / 3600.0, 1),
+                        "dfb": bool(_t[2].get("date_fallback")),
+                    })
+        if items and not kept:
+            emptied.append(src.get("name") or src.get("key", "?"))
+            # 名单要带"为什么"：只有名字的话，下一句必然是"这个源是停更还是被判龄砍了"，
+            # 而那只能再拿手工探针回答（10-05 定案 12 个 megaphone 源就是这么来的）。
+            # newest_age_h 与 window_h 并排放，两个读数一对照就能看出是"上游没货"
+            # （最新一条已远超窗）还是"窗口给小了"（最新一条只差一点点）。
+            _ages = [t[1] for t in dated]
+            emptied_detail.append({
+                "key": src.get("key") or "?",
+                "name": src.get("name") or "?",
+                "n_items": len(items),                    # 闸门**前**抓到几条
+                "newest_age_h": None if not _ages else round(min(_ages), 1),
+                "window_h": round(window, 1),
+                "undatable": len(items) - len(dated),     # 判不了龄因而直接丢弃的那部分
+            })
+        src["items"] = kept
+        after += len(kept)
+        out.append(src)
+    stats = {"before": before, "after": after, "dropped": before - after,
+             "undatable": undatable, "widened": widened,
+             "floored": floored, "capped": capped, "emptied": emptied,
+             "emptied_detail": emptied_detail,
+             "sources_after": sum(1 for s in out if s.get("items")),
+             "le72": b_le72, "mid": b_mid, "over": b_over, "over_names": over_names}
+    print("[留存] 出口闸门：进 %d 条 → 留 %d 条（丢弃 %d，其中判不了龄 %d）"
+          "｜窗口放宽 %d 源｜保底 %d 源｜封顶 %d 源" % (
+              before, after, stats["dropped"], undatable, widened, floored, capped))
+    # 分项直接进构建日志：验收要的是「出厂内容里没有超硬上限的」，
+    # 这个数字不能只存在于本地一次性脚本里，否则下一场构建就没人知道了。
+    print("[留存] 出厂龄期分项：≤%dh %d 条｜%d-%dh %d 条｜>%dh %d 条" % (
+        RETENTION_BASE_H, b_le72, RETENTION_BASE_H, RETENTION_MAX_WINDOW_H, b_mid,
+        RETENTION_MAX_WINDOW_H, b_over))
+    if b_over:
+        # 点名先于 warning：只报一个数字的告警查不动 —— 一天里往往就 0~1 条，等它再冒出来时
+        # 产物里已经找不到那条了（10-03 实测：04:11 场 >168h 1 条，16:4x 现取 rss-data-6.js 已 0 命中）。
+        for _i, _n in enumerate(over_names, 1):
+            _r = "-" if _n["ref_age_h"] is None else "%.1f" % _n["ref_age_h"]
+            print("[留存] 超龄点名 %d/%d: %s｜源 %s｜出厂串 %s｜出厂龄 %.1fh｜判龄基准龄 %sh｜dfb=%s" % (
+                _i, b_over, _n["link"], _n["src"], _n["ship"], _n["ship_age_h"], _r, _n["dfb"]))
+        # 不变量破了要出声。沉默的 0 和沉默的非 0 一样没人看见 —— 本仓库为这类"静默退化"
+        # 付过两次代价（每日洞察连败数天、72h 存档断两天）。
+        print("::warning title=RSS 留存超硬上限::出厂内容里有 %d 条龄期超过 %dh（7 天硬上限被绕过）"
+              % (b_over, RETENTION_MAX_WINDOW_H))
+    if emptied:
+        print("[留存] 无内容可出厂的源 %d 个（停更或全源判不了龄，交信源清单健康度跟进）: %s" % (
+            len(emptied), ", ".join(emptied[:10]) + (" ..." if len(emptied) > 10 else "")),
+            file=sys.stderr)
+    global _LAST_RETENTION_STATS
+    _LAST_RETENTION_STATS = dict(stats, emptied=list(emptied))
+    return out, stats
+
+
 def _accumulate_history(sources_with_items):
-    """将新抓取的文章合并到 72 小时历史，裁剪过期内容，返回重组后的 sources_with_items"""
+    """将新抓取的文章合并到 72 小时历史，裁剪过期内容，返回重组后的 sources_with_items
+
+    返回值已过一道留存出口闸门（_apply_retention）：抓取侧与历史侧同一口径，超窗即丢。
+    """
     now_bj = _now_bj()
     cutoff = now_bj.replace(tzinfo=None) - datetime.timedelta(hours=RSS_HISTORY_HOURS)
+
+    # ── pub_date 时区校正（声明式）与同源系统性倒挂发现 ──
+    # 校正量来自源配置的 pub_date_offset_min（见 _load_pub_date_offsets 里的取舍说明）；
+    # 检测器只报告不落库，避免「猜出来的偏移」静默改写日期。
+    # 后续合并 / 裁剪 / 审计 / 输出四处统一用 _effective_pub_dt，避免多套口径。
+    _pd_offsets = _load_pub_date_offsets()
+    if _pd_offsets:
+        print("[pub_date] 已声明时区校正 %d 个源: %s" % (
+            len(_pd_offsets),
+            ", ".join("%s %+dmin" % (k, v) for k, v in list(_pd_offsets.items())[:8])))
+    _anomalies = _detect_pub_date_anomalies(_rss_history, _pd_offsets)
+    for _a in _anomalies:
+        if _a["kind"] == "tz":
+            print("[pub_date] 疑似时区误标 %s: n=%d 倒挂=%.0f%% 中位=%+.0fmin "
+                  "→ 建议 pub_date_offset_min=%d（需人工确认后写入 rss_sources.json）" % (
+                      _a["key"], _a["n"], _a["inverted_ratio"] * 100,
+                      _a["median_delta_min"], _a["suggest_min"]), file=sys.stderr)
+        else:
+            print("[pub_date] 日期异常（非时区）%s: n=%d 倒挂=%.0f%% 中位=%+.0fmin "
+                  "→ 需要前移 %.0fh，远超真实时区范围，不作时区校正" % (
+                      _a["key"], _a["n"], _a["inverted_ratio"] * 100,
+                      _a["median_delta_min"], _a["need_min"] / 60.0), file=sys.stderr)
 
     # 合并新文章（按 link 去重，新数据覆盖旧数据）
     new_count = 0
@@ -215,25 +750,35 @@ def _accumulate_history(sources_with_items):
             if not link:
                 continue
             pd_str = it.get("pub_date", "")
-            # 解析日期：无日期或解析失败时使用当前时间作为回退
+            # 解析日期：优先 pub_date（按源声明的偏移做时区校正），无日期或不可解析时
+            # 使用 first_seen（首次抓取时间），仅当 first_seen 也不可用时才回退当前时间。
             pd_bj = now_bj.replace(tzinfo=None)  # 默认当前时间
-            if pd_str:
-                try:
-                    pd = datetime.datetime.fromisoformat(pd_str)
-                    if pd.tzinfo:
-                        pd_bj = pd.astimezone(datetime.timezone(datetime.timedelta(hours=8))).replace(tzinfo=None)
-                    else:
-                        pd_bj = pd
-                except ValueError:
-                    pass  # 保持默认当前时间
+            _eff = _effective_pub_dt({"pub_date": pd_str, "source_key": src["key"]}, _pd_offsets)
+            if _eff is not None:
+                pd_bj = _eff.replace(tzinfo=None)
+            else:
+                # 无 pub_date 时使用 first_seen 作为时间基准
+                fs_str = _rss_history.get(link, {}).get("first_seen", "")
+                if fs_str:
+                    try:
+                        fs = datetime.datetime.fromisoformat(fs_str)
+                        pd_bj = fs.replace(tzinfo=None) if fs.tzinfo else fs
+                    except ValueError:
+                        pass  # first_seen 也解析失败，保持当前时间
             if pd_bj < cutoff:
+                # 已过期：若历史里已存在同链接条目（典型是「pub_date 为空、靠 first_seen
+                # 续命」的陈旧条目），用本轮拿到的真实日期覆盖它，让紧随其后的裁剪循环
+                # 按真实日期清掉 —— 否则它会被降级键渲染成「收录 X 前」长期留在页面上。
+                _old = _rss_history.get(link)
+                if _old is not None:
+                    _old["pub_date"] = pd_str
                 continue  # 过期文章跳过
             if link not in _rss_history:
                 genuinely_new += 1
             _rss_history[link] = {
                 "link": link,
                 "source": src["name"], "source_key": src["key"],
-                "cat": src["cat"], "color": src["color"],
+                "cat": src.get("cat", "other"), "color": src.get("color", "#6366f1"),
                 "title": it.get("title", ""), "title_zh": it.get("title_zh", ""),
                 "summary": it.get("summary", ""), "summary_zh": it.get("summary_zh", ""),
                 "full_content": it.get("full_content", ""),
@@ -249,21 +794,33 @@ def _accumulate_history(sources_with_items):
     before = len(_rss_history)
     expired = []
     for link, item in _rss_history.items():
-        pd_str = item.get("pub_date", "")
-        pd_bj = now_bj.replace(tzinfo=None)  # 默认当前时间
-        if pd_str:
-            try:
-                pd = datetime.datetime.fromisoformat(pd_str)
-                if pd.tzinfo:
-                    pd_bj = pd.astimezone(datetime.timezone(datetime.timedelta(hours=8))).replace(tzinfo=None)
-                else:
-                    pd_bj = pd
-            except ValueError:
-                pass  # 保持默认当前时间
-        if pd_bj < cutoff:
+        # 参照日必须是**真取到的**时刻，不能拿 now 兜底：兜底等于「判不了龄就永生」。
+        # 这条与出口闸门 _retention_ref_dt 同一口径（那边判不了龄返回 None 直接丢）。
+        # 2026-09-20 对抗审查实测：线上确实存在 pub_date 为空且 first_seen 也拿不到值的条目
+        # （本地 18,037 条历史里 68 条 pub_date 为空），旧写法对它们永久跳过。
+        # 判龄与出口闸门共用一只表。旧写法只看 pub_date（含时区校正），于是
+        # 「pub_date 被证伪（晚于 first_seen 超容差）」的条目在裁剪眼里还年轻、在闸门眼里
+        # 已经 140h —— 缓存在替假日期的死重续命（真实重放实测保留最老 140.1h）。
+        # 两只时间线索都取不到 ⇒ 按过期删除：合并阶段会用本轮 first_seen 重新入库，
+        # 寿命重新从真实收录时刻起算 72h —— 有界，而不是永生。
+        _ref = _retention_ref_dt(item, _pd_offsets, item.get("source_key"))
+        if _ref is None or _ref.replace(tzinfo=None) < cutoff:
             expired.append(link)
     for link in expired:
         del _rss_history[link]
+
+    # 过期裁剪的净效果当场结清成一条独立的账。体积侧已不存在第二条删路
+    # （每源条数上限 09-20 撤销、深度哨兵 09-21 退役，理由见台账 §18），所以这个数就是"真过期被丢掉多少"，
+    # 不再需要跟淘汰数做减法。
+    # 口径必须是"删掉的条数"而不是历史首尾差：后者在生产全天 12 场实测全是负数
+    # （-264/-201/.../-235），因为每场新抓进来的比删掉的多 —— 那本账从来没存在过。
+    pruned_expired = before - len(_rss_history)
+    _LAST_HISTORY_ACCOUNT["expired"] = pruned_expired
+    # 体积侧到这里就没有第二条账了：条数上限（09-20）与深度哨兵（09-21）都已退役，
+    # 真过期多少由上面那句「裁剪 N 篇过期」播报，日志只带 history_expired 一个字段。
+    # 退役理由是量出来的（台账 §18）：真实 18,037 条快照上裁剪判龄中位 68ms，
+    # 而哨兵还要再扫一遍全库（68.5ms）报三项 —— 其中「保留最老龄期」与这里共用一只表，
+    # 存活条目按构造满足 ref >= cutoff，报出来等于把 cutoff 念一遍。
 
     # 按源重组，更新相对时间
     # 构建 source_key -> url 映射（用于识别 BestBlogs 源）
@@ -273,12 +830,23 @@ def _accumulate_history(sources_with_items):
         if _rs["key"] not in _src_url_map or not _src_url_map[_rs["key"]]:
             _src_url_map[_rs["key"]] = _rs.get("url", "")
     src_map = {}
+    # Fix 2: 保留当次抓取结果，避免被空壳替换
+    # 先用当次抓取的 items 初始化 src_map，后续历史回填时按 link 去重补充
+    _fetch_items_by_key = {}
+    for src in sources_with_items:
+        _items = src.get("items", [])
+        if _items:
+            _fetch_items_by_key[src["key"]] = {it.get("link", ""): it for it in _items if it.get("link")}
+    _n_capture_filled = 0
     for src in sources_with_items:
         _bb = 'bestblogs.dev' in (_src_url_map.get(src["key"]) or '')
+        _fetched = src.get("items", [])
+        # 无日期的当次条目在这里补收录时刻：下面 list(_fetched) 就是出厂的那份
+        _n_capture_filled += sum(1 for _it in _fetched if _fill_undated_from_capture(_it))
         src_map[src["key"]] = {
             "key": src["key"], "name": src["name"],
-            "cat": src["cat"], "color": src["color"],
-            "tier": src.get("tier", 3), "items": [],
+            "cat": src.get("cat", "other"), "color": src.get("color", "#6366f1"),
+            "tier": src.get("tier", 3), "items": list(_fetched),
         }
         if _bb:
             src_map[src["key"]]["bb"] = True
@@ -286,7 +854,8 @@ def _accumulate_history(sources_with_items):
     # 第一遍：按源统计 pub_date 异常比例
     #   异常模式 A: pub_date ≈ first_seen (|delta|<10min) → pub_date 大概率是抓取时间
     #   异常模式 B: pub_date > first_seen (delta<-10min) → 日期倒挂
-    #   已知类目 C: cat=="wechat" → 公众号 RSS 源 pub_date 不可信
+    #   注：公众号源已不再硬编码为不可信——实测 wechat2rss 的 pub_date 均为真实发布时间，
+    #       统一由异常率阈值判定（与其余类目一视同仁）
     _src_date_stats = {}  # source_key -> {total, anomaly_a, anomaly_b}
     for item in _rss_history.values():
         sk = item["source_key"]
@@ -295,14 +864,13 @@ def _accumulate_history(sources_with_items):
         if sk not in _src_date_stats:
             _src_date_stats[sk] = {"total": 0, "anomaly_a": 0, "anomaly_b": 0}
         _src_date_stats[sk]["total"] += 1
-        pd_str = item.get("pub_date", "")
-        fs_str = item.get("first_seen", "")
-        if pd_str and fs_str:
+        # 审计必须跑在**校正后**的发布时间上：否则一个纯时区解析问题会被判成
+        # 「日期不可信」，进而把该源的关键词按 0.3 倍降权（内容质量问题），
+        # 并把卡片改成显示绝对日期 —— 两处都是误伤。
+        pd = _effective_pub_dt(item, _pd_offsets)
+        fs = _parse_hist_dt(item.get("first_seen"))
+        if pd is not None and fs is not None:
             try:
-                pd = datetime.datetime.fromisoformat(pd_str)
-                if pd.tzinfo:
-                    pd = pd.astimezone(datetime.timezone(datetime.timedelta(hours=8))).replace(tzinfo=None)
-                fs = datetime.datetime.fromisoformat(fs_str)
                 delta_sec = (fs - pd).total_seconds()
                 if abs(delta_sec) < 600:      # 模式 A: < 10 分钟
                     _src_date_stats[sk]["anomaly_a"] += 1
@@ -311,833 +879,244 @@ def _accumulate_history(sources_with_items):
             except (ValueError, TypeError):
                 pass
 
-    # 判定不可信源：已知类目 C 或 异常率 > 30%
+    # 判定不可信源：异常率 > 30%
     _unreliable_srcs = set()
     BAD_DATE_ANOMALY_THRESHOLD = 0.3
     for sk, stats in _src_date_stats.items():
         if stats["total"] == 0:
             continue
-        cat = src_map[sk].get("cat", "")
         anomaly_ratio = (stats["anomaly_a"] + stats["anomaly_b"]) / stats["total"]
-        if cat == "wechat":
-            _unreliable_srcs.add(sk)  # 已知不可信类目
-        elif anomaly_ratio > BAD_DATE_ANOMALY_THRESHOLD:
+        if anomaly_ratio > BAD_DATE_ANOMALY_THRESHOLD:
             _unreliable_srcs.add(sk)  # 自动检测为不可信
     if _unreliable_srcs:
         names = [src_map[sk]["name"] for sk in _unreliable_srcs if sk in src_map][:10]
         print("[bad_date] 不可信信源 %d 个: %s%s" % (
             len(_unreliable_srcs), ", ".join(names),
             " ..." if len(_unreliable_srcs) > 10 else ""))
+    # D4：暴露给趋势快照与关键词降权消费
+    global _LAST_UNRELIABLE_SRCS
+    _LAST_UNRELIABLE_SRCS = set(_unreliable_srcs)
 
-    # 第二遍：标记 bad_date 并重组
+    # 模式 C：同日期伪造检测（知乎日报/愆伏/梅之夏等）
+    _uniform_flagged = _detect_uniform_dates(
+        [_rss_history[k] for k in _rss_history],
+        min_items=5, threshold=0.8
+    )
+    if _uniform_flagged:
+        _unreliable_srcs |= _uniform_flagged
+        _LAST_UNRELIABLE_SRCS = set(_unreliable_srcs)
+        _names = [src_map[sk]["name"] for sk in _uniform_flagged if sk in src_map][:5]
+        print("[bad_date-C] 同日期伪造源 %d 个: %s" % (
+            len(_uniform_flagged), ", ".join(_names)))
+        # 立即标记条目
+        for item in _rss_history.values():
+            if item.get("source_key") in _uniform_flagged:
+                item["bad_date"] = True
+
+    # 第二遍：时区校正 → 未来日期处置 → 标记 bad_date → 重组
+    # 判伪条目的回拉位移先算好（按「源 + 抓取批次」分组，保序不折叠 —— 见 _plan_falsify_shifts）
+    _cutoff_aware = cutoff.replace(tzinfo=_BJ_TZ)
+    _falsify_shifts = _plan_falsify_shifts(
+        _rss_history, _pd_offsets, src_keys=set(src_map.keys()))
+    _n_tz_fixed = 0
+    _n_falsified = 0
+    _n_shifted = 0
     for item in _rss_history.values():
         sk = item["source_key"]
         if sk in src_map:
-            entry = dict(item)
+            entry = dict(item)   # 副本：下面的降级改写不得污染历史（历史只存原始 pub_date）
             entry["bad_date"] = sk in _unreliable_srcs
-            entry["time_str"] = _fmt_rel_time(entry.get("pub_date"))
+            # (1) 源级时区校正：把上游标错时区的时间还原成真实发布时间。
+            #     这是根因层修复 —— 校正后条目不再「出生于未来」，
+            #     也就不需要前端钳制介入（钳制会把多条折叠成同一时刻 → 整块钉首屏）。
+            _off = _pd_offsets.get(sk)
+            if _off and entry.get("pub_date"):
+                _shifted = _shift_iso_minutes(entry["pub_date"], _off)
+                if _shifted != entry["pub_date"]:
+                    entry["pub_date"] = _shifted
+                    _n_tz_fixed += 1
+            # (2) 取不到 pub_date 时给一个可排序的降级键（= first_seen，我方首次收录该链接的真实时刻）。
+            #     没有它，条目在默认排序里只能沉底 → 用户永远看不到（2026-09-14：201 条因此不可见）。
+            _fb = _fallback_date_iso(entry)
+            if not _fb and _pub_date_falsified(entry, _pd_offsets):
+                # (3) 有 pub_date，但晚于 first_seen 超过容忍阈值 —— 我们「在文章发布前抓到了它」，
+                #     物理不可能 ⇒ 该日期已被证伪，不能拿来排序。改用它自己的 first_seen：
+                #     这是一个我方记录的真实时刻，既诚实（前端显示「收录」）又能参与排序。
+                #     不选「钳到 now」：那会让多条条目获得同一时刻，正是首屏同刻扎堆的成因。
+                #     也不能整批都写同一个 first_seen（first_seen 是批次戳，实测 8411 条只有
+                #     122 个取值）—— 故按 _falsify_shifts 保序回拉，最新的一条锚在 first_seen，
+                #     组内相对先后保留，且下限钳在 72h cutoff 上。
+                _shift = _falsify_shifts.get(item.get("link"), 0)
+                _fb = _shift_iso_minutes(_first_seen_iso(entry), _shift)
+                _fbd = _parse_hist_dt(_fb)
+                if _fbd is None or _fbd < _cutoff_aware:
+                    _fb = _cutoff_aware.replace(microsecond=0).isoformat()
+                if _fb:
+                    _n_falsified += 1
+                    if _shift:
+                        _n_shifted += 1
+            if _fb:
+                entry["pub_date"] = _fb
+                entry["date_fallback"] = True
+            # 不再烘 time_str：相对时间是"看"的函数，不是事实（口径见 lib/rel_time.js）
+            # Fix 2: 去重 — 跳过当次抓取已存在的同链接条目
+            _link = entry.get("link", "")
+            if _link and sk in _fetch_items_by_key and _link in _fetch_items_by_key[sk]:
+                continue
             src_map[sk]["items"].append(entry)
 
+    if _n_tz_fixed or _n_falsified:
+        print("[pub_date] 口径修正：时区校正 %d 条 / 未来日期改用收录时刻 %d 条"
+              "（其中 %d 条按批次保序回拉，未折叠为同一时刻）" % (
+                  _n_tz_fixed, _n_falsified, _n_shifted))
+
     result = list(src_map.values())
-    total = sum(len(s["items"]) for s in result)
-    pruned = before - len(_rss_history)
+    if _n_capture_filled:
+        print("[出口] 无发布日期的当次条目 %d 条改用收录时刻（前端标「收录」，不冒充发布时间）"
+              % _n_capture_filled)
     print("[历史] 合并 %d 篇新文（其中 %d 篇为新增链接，%d 篇为覆盖更新），裁剪 %d 篇过期，保留 %d 篇（%d 小时窗口）" % (
-        new_count, genuinely_new, new_count - genuinely_new, pruned, len(_rss_history), RSS_HISTORY_HOURS))
+        new_count, genuinely_new, new_count - genuinely_new,
+        pruned_expired, len(_rss_history), RSS_HISTORY_HOURS))
+    # 出口闸门：窗口 → 保底 → 上限。放在 return 之前，本函数的三个消费者
+    # （_save_api_snapshot / build_html / write_data_chunks）共用同一个返回值，
+    # 所以**构建期产物**不会出现「页面裁了 API 没裁」的双标口径。
+    # 注意边界：运行时 api/rss.js 的 ?batch / ?source 自己发 HTTP 抓取，不吃这些产物，
+    # 那条出口要单独过闸（对抗审查 P0-2），别把这句注释当成它已经管住了全站。
+    result, _ret_stats = _apply_retention(result, _pd_offsets, now_bj)
+    total = _ret_stats["after"]
     return result, total
 
 
-def _load_snapshot_meta():
-    """从现有快照读取 meta.last_fetch（各源上次抓取时间）"""
-    try:
-        with open("rss_api_snapshot.json", "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data.get("meta", {}).get("last_fetch", {})
-    except Exception:
-        return {}
+def _save_api_snapshot(sources_with_items):
+    """生成 API 快照 JSON（分块），供 /api/rss 直接返回，避免实时抓取丢失历史累积数据。
+    按 ~80MB 上限拆分为 rss_api_snapshot.json + rss_api_snapshot_1.json ...，
+    避免超过 GitHub 100MB 单文件限制。"""
+    MAX_SNAPSHOT_BYTES = 80 * 1024 * 1024
 
+    # ── 快照级去重：清理历史累积中的残留重复 ──
+    # 历史数据可能包含修复前抓取的重复条目（如 V2EX #replyN）
+    for src in sources_with_items:
+        src["items"] = _dedup_source_items(src.get("items", []), src.get("key", ""))
 
-def _save_api_snapshot(sources_with_items, meta=None):
-    """生成 API 快照 JSON，供 /api/rss 直接返回，避免实时抓取丢失历史累积数据"""
     snapshot_sources = []
     for src in sources_with_items:
         items = []
         for it in src.get("items", []):
             item = {
                 "t": it.get("title_zh", "") or it.get("title", ""),
-                "u": it.get("link", "#"),
-                "s": it.get("summary_zh", "") or it.get("summary", ""),
+                "u": _strip_oss_signature(it.get("link", "#")),
+                # hnrss 的模板行（Article URL/Comments URL/Points/# Comments）在卡片上是纯噪声：
+                # 解析入口包过一层还不够 —— summary_zh 存在 translations.json 里、跨场复用且
+                # 不会被重新解析，所以快照出口要再过一次同一把刀（判据：
+                # tests/rss_history/test_hn_summary_rewrite.py::test_snapshot_exit_does_not_re_expose_meta_lines）。
+                # _rewrite_hn_summary 幂等，已重写过的一行不会被吃第二遍。
+                # _strip_glued_url（Task 11）同因接在这里：老缓存里的 summary_zh 是**剥之前**的
+                # "URL+正文"粘连形状，只在解析入口剥捞不到它们；这条也幂等（判据
+                # test_snapshot_exit_strips_glued_url_from_cached_translation / _is_idempotent）。
+                "s": _strip_oss_signature(_strip_glued_url(
+                    _rewrite_hn_summary(
+                        it.get("summary_zh", "") or it.get("summary", ""), it.get("link", "")))),
                 "d": it.get("pub_date", ""),
             }
             if it.get("bad_date"):
                 item["bad_date"] = True
+            if it.get("date_fallback"):
+                item["date_fallback"] = True
+            _tags = it.get("tags")
+            if _tags:
+                item["tags"] = _tags
             fc = it.get("full_content", "")
             if fc:
-                item["fc"] = fc[:50000]
+                # _cap_body 而不是裸切片：`fc[:50000]` 能正好落在 `<img src="htt` 中间，
+                # 出厂一条静默变形的半截标签（api/rss.js 直接 read 这份快照）。
+                item["fc"] = _strip_oss_signature(_cap_body(fc))
             img = it.get("image", "")
             if img:
-                item["img"] = img
+                item["img"] = _strip_oss_signature(img)
             mu = it.get("media_url", "")
             if mu:
-                item["mu"] = mu
+                item["mu"] = _strip_oss_signature(mu)
                 item["mt"] = it.get("media_type", "")
             items.append(item)
         snapshot_sources.append({
             "key": src["key"], "name": src["name"],
-            "cat": src["cat"], "color": src["color"],
+            "cat": src.get("cat", "other"), "color": src.get("color", "#6366f1"),
             "tier": src.get("tier", 3), "items": items,
         })
-    snapshot = {
-        "t": _now_bj().isoformat(),
-        "sources": snapshot_sources,
-    }
-    if meta:
-        snapshot["meta"] = meta
+
+    # 估算每源体积，按体积均匀分桶
+    src_sizes = []
+    for s in snapshot_sources:
+        try:
+            sz = len(json.dumps(s, ensure_ascii=False).encode("utf-8"))
+        except Exception:
+            sz = 1024
+        src_sizes.append(sz)
+    total_bytes = sum(src_sizes)
+    n_chunks = max(1, (total_bytes + MAX_SNAPSHOT_BYTES - 1) // MAX_SNAPSHOT_BYTES)
+
+    buckets = [[] for _ in range(n_chunks)]
+    bucket_sizes = [0] * n_chunks
+    for i, (s, sz) in enumerate(zip(snapshot_sources, src_sizes)):
+        min_idx = bucket_sizes.index(min(bucket_sizes))
+        buckets[min_idx].append(s)
+        bucket_sizes[min_idx] += sz
+
+    total_items = sum(len(s["items"]) for s in snapshot_sources)
     try:
-        with open("rss_api_snapshot.json", "w", encoding="utf-8") as f:
-            json.dump(snapshot, f, ensure_ascii=False)
-        total_items = sum(len(s["items"]) for s in snapshot_sources)
-        print("[快照] 保存 API 快照: %d 源, %d 篇" % (len(snapshot_sources), total_items))
+        for idx, bucket in enumerate(buckets):
+            fname = "rss_api_snapshot.json" if idx == 0 else "rss_api_snapshot_%d.json" % idx
+            chunk_data = {"t": _now_bj().isoformat(), "sources": bucket}
+            if idx == 0:
+                chunk_data["_total_chunks"] = n_chunks
+            _atomic_write_json(fname, chunk_data, ensure_ascii=False)
+            size_mb = bucket_sizes[idx] / 1024 / 1024
+            print("[快照] %s: %d 源 %.1f MB" % (fname, len(bucket), size_mb))
+
+        # 清理旧的多余快照文件
+        import glob
+        for old_file in glob.glob("rss_api_snapshot_*.json"):
+            try:
+                num = int(old_file.replace("rss_api_snapshot_", "").replace(".json", ""))
+                if num >= n_chunks:
+                    os.remove(old_file)
+                    print("[快照] 清理旧文件: %s" % old_file)
+            except ValueError:
+                pass
+
+        print("[快照] 保存 API 快照: %d 源 %d 篇 (%d 块)" % (len(snapshot_sources), total_items, n_chunks))
     except Exception as e:
         print("[快照] 保存失败: %s" % e, file=sys.stderr)
 
 
-# ── RSS 信源配置（按分类组织，含 BestBlogs 559 源，tier 分层） ─
-RSS_SOURCES = [
-    # ── AI 日报 (26) ──
-    {"key": "agihunt_0", "name": "AGI Hunt", "cat": "ai", "url": "https://agihunt.info/feed.xml", "color": "#6366f1", "tier": 1},
-    {"key": "openai_blog_1", "name": "OpenAI 博客", "cat": "ai", "url": "https://openai.com/news/rss.xml", "color": "#10a37f"},
-    {"key": "google_deepmind_2", "name": "Google DeepMind", "cat": "ai", "url": "https://deepmind.google/blog/rss.xml", "color": "#4285f4"},
-    {"key": "google_ai_blog_3", "name": "Google AI Blog", "cat": "ai", "url": "https://blog.google/technology/ai/rss/", "color": "#34a853"},
-    {"key": "arxiv_ai_4", "name": "arXiv AI", "cat": "ai", "url": "https://rss.arxiv.org/rss/cs.AI", "color": "#b31b1b", "tier": 1},
-    {"key": "arxiv_ml_5", "name": "arXiv 机器学习", "cat": "ai", "url": "https://rss.arxiv.org/rss/cs.LG", "color": "#c62828", "tier": 1},
-    {"key": "arxiv_nlp_6", "name": "arXiv NLP", "cat": "ai", "url": "https://rss.arxiv.org/rss/cs.CL", "color": "#d84315", "tier": 1},
-    {"key": "hn_ai_7", "name": "Hacker News AI", "cat": "ai", "url": "https://hnrss.org/newest?q=AI", "color": "#ff6600", "tier": 1},
-    {"key": "hn_llm_8", "name": "Hacker News LLM", "cat": "ai", "url": "https://hnrss.org/newest?q=LLM", "color": "#ef6c00", "tier": 2},
-    {"key": "google_research_10", "name": "Google Research Blog", "cat": "ai", "url": "https://research.google/blog/rss/", "color": "#4285f4"},
-    {"key": "huggingface_11", "name": "Hugging Face 博客", "cat": "ai", "url": "https://huggingface.co/blog/feed.xml", "color": "#ffd21e"},
-    {"key": "simonwillison_12", "name": "Simon Willison's Blog", "cat": "ai", "url": "https://simonwillison.net/atom/everything/", "color": "#5c6bc0"},
-    {"key": "codex_rel_15", "name": "OpenAI Codex Releases", "cat": "ai", "url": "https://github.com/openai/codex/releases.atom", "color": "#10a37f"},
-    {"key": "claude_code_rel_16", "name": "Claude Code Releases", "cat": "ai", "url": "https://github.com/anthropics/claude-code/releases.atom", "color": "#d4a574"},
-    {"key": "gemini_cli_rel_17", "name": "Gemini CLI Releases", "cat": "ai", "url": "https://github.com/google-gemini/gemini-cli/releases.atom", "color": "#4285f4"},
-    {"key": "mcp_spec_rel_18", "name": "MCP Specification Releases", "cat": "ai", "url": "https://github.com/modelcontextprotocol/specification/releases.atom", "color": "#7c3aed"},
-    {"key": "mcp_servers_rel_19", "name": "MCP Servers Releases", "cat": "ai", "url": "https://github.com/modelcontextprotocol/servers/releases.atom", "color": "#6d28d9"},
-    {"key": "aihot_summary_20", "name": "AI Hot 精选摘要", "cat": "ai", "url": "https://aihot.virxact.com/feed.xml?aihot_actor=0e9cbfcd-db8f-47d6-8c0a-3113a26f3f9c", "color": "#f97316"},
-    {"key": "aihot_full_21", "name": "AI Hot 精选全文", "cat": "ai", "url": "https://aihot.virxact.com/feed/full.xml?aihot_actor=0e9cbfcd-db8f-47d6-8c0a-3113a26f3f9c", "color": "#ea580c", "tier": 2},
-    {"key": "aihot_pool_22", "name": "AI Hot 7天公开池", "cat": "ai", "url": "https://aihot.virxact.com/feed/all.xml?aihot_actor=0e9cbfcd-db8f-47d6-8c0a-3113a26f3f9c", "color": "#dc2626", "tier": 1},
-    {"key": "reddit_ml_103", "name": "r/MachineLearning", "cat": "ai", "url": "https://www.reddit.com/r/MachineLearning/top.rss?t=day", "color": "#d32f2f"},
-    {"key": "reddit_localllama_104", "name": "r/LocalLLaMA", "cat": "ai", "url": "https://www.reddit.com/r/LocalLLaMA/top.rss?t=day", "color": "#f59e0b"},
-    {"key": "reddit_artificial_105", "name": "r/artificial", "cat": "ai", "url": "https://www.reddit.com/r/artificial/top.rss?t=day", "color": "#7c3aed"},
+# ── RSS 信源配置（从 rss_sources.json 读取，tier 分层） ─
+_SOURCES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rss_sources.json")
+try:
+    with open(_SOURCES_FILE, "r", encoding="utf-8") as _f:
+        RSS_SOURCES = json.load(_f)
+    # 补全缺失 tier/color（兼容旧格式；前端与聚合代码直接读 color，缺失会 KeyError）
+    # 丢弃缺 key/name/url 的坏条目：单条坏配置不应炸整场构建（对抗性审查 P3）
+    _BAD = []
+    _COLOR_PALETTE = ["#6366f1", "#10a37f", "#4285f4", "#e61919", "#ff6600", "#7c3aed", "#0891b2", "#d97706", "#d32f2f", "#24292e"]
+    for _s in RSS_SOURCES:
+        if not isinstance(_s, dict):
+            _BAD.append(str(_s)[:30] + "(非dict)")
+            continue
+        if not _s.get("key") or not _s.get("name") or not _s.get("url"):
+            _BAD.append(_s.get("key") or "(无key)")
+    RSS_SOURCES = [s for s in RSS_SOURCES if isinstance(s, dict) and s.get("key") and s.get("name") and s.get("url")]
+    for _s in RSS_SOURCES:
+        _s.setdefault("tier", 3)
+        _s.setdefault("cat", "other")
+        if not _s.get("color"):
+            _s["color"] = _COLOR_PALETTE[int(hashlib.md5(_s.get("key", "").encode("utf-8")).hexdigest(), 16) % len(_COLOR_PALETTE)]
+    if _BAD:
+        print("[RSS] 丢弃 %d 个缺 key/name/url 的坏配置: %s" % (len(_BAD), _BAD[:5]), file=sys.stderr)
+    print("[RSS] 从 rss_sources.json 加载 %d 个源" % len(RSS_SOURCES))
+except (FileNotFoundError, json.JSONDecodeError) as _e:
+    print("[RSS] rss_sources.json 不可用 (%s)，RSS 聚合将跳过" % _e, file=sys.stderr)
+    RSS_SOURCES = []
 
-    # ── 科技资讯 (31) ──
-    {"key": "juliaevans_0", "name": "Julia Evans", "cat": "tech", "url": "https://jvns.ca/atom.xml", "color": "#e31937"},
-    {"key": "overreacted_2", "name": "Overreacted", "cat": "tech", "url": "https://overreacted.io/rss.xml", "color": "#b31b1b"},
-    {"key": "webdev_3", "name": "web.dev", "cat": "tech", "url": "https://web.dev/feed.xml", "color": "#000000"},
-    {"key": "engadget_4", "name": "Engadget", "cat": "tech", "url": "http://www.engadget.com/rss.xml", "color": "#2563eb", "tier": 2},
-    {"key": "joshcomeau_5", "name": "Josh Comeau", "cat": "tech", "url": "https://www.joshwcomeau.com/rss.xml", "color": "#7c3aed"},
-    {"key": "hackernews_6", "name": "Hacker News", "cat": "tech", "url": "https://hnrss.org/frontpage", "color": "#ff6600", "tier": 1},
-    {"key": "techcrunch_7", "name": "TechCrunch", "cat": "tech", "url": "https://techcrunch.com/feed/", "color": "#0a9e01", "tier": 2},
-    {"key": "techcrunchai_7b", "name": "TechCrunch AI", "cat": "tech", "url": "https://techcrunch.com/category/artificial-intelligence/feed/", "color": "#d97706", "tier": 2},
-    {"key": "theverge_8", "name": "The Verge", "cat": "tech", "url": "https://www.theverge.com/rss/index.xml", "color": "#e61919", "tier": 2},
-    {"key": "thevergeai_8b", "name": "The Verge AI", "cat": "tech", "url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml", "color": "#dc2626"},
-    {"key": "wired_10", "name": "WIRED", "cat": "tech", "url": "https://www.wired.com/feed/rss", "color": "#4f46e5", "tier": 2},
-    {"key": "atlasnote_11", "name": "AtlasNote", "cat": "tech", "url": "https://atlasnote.ai/rss.xml", "color": "#ca8a04"},
-    {"key": "redisblog_12", "name": "Redis Blog", "cat": "tech", "url": "https://redis.io/feed/", "color": "#0891b2"},
-    {"key": "arxiv_cs_14", "name": "arXiv CS", "cat": "tech", "url": "https://export.arxiv.org/rss/cs", "color": "#b31b1b"},
-    {"key": "arstechnica_60", "name": "Ars Technica", "cat": "tech", "url": "https://feeds.arstechnica.com/arstechnica/index", "color": "#ff6600", "tier": 2},
-    {"key": "mit_tech_review_61", "name": "MIT Technology Review", "cat": "tech", "url": "https://www.technologyreview.com/feed/", "color": "#a50034"},
-    {"key": "krebs_62", "name": "Krebs on Security", "cat": "tech", "url": "https://krebsonsecurity.com/feed/", "color": "#1a1a1a"},
-    {"key": "thehackernews_63", "name": "The Hacker News", "cat": "tech", "url": "https://feeds.feedburner.com/TheHackersNews", "color": "#e53935", "tier": 2},
-    {"key": "schneier_64", "name": "Schneier on Security", "cat": "tech", "url": "https://www.schneier.com/feed/", "color": "#37474f"},
-    {"key": "github_blog_70", "name": "GitHub Blog", "cat": "tech", "url": "https://github.blog/feed/", "color": "#24292e"},
-    {"key": "github_changelog_71", "name": "GitHub Changelog", "cat": "tech", "url": "https://github.blog/changelog/feed/", "color": "#2d333b"},
-    {"key": "github_copilot_72", "name": "GitHub Copilot Changelog", "cat": "tech", "url": "https://github.blog/changelog/label/copilot/feed/", "color": "#6e40c9"},
-    {"key": "netflix_tech_73", "name": "Netflix Tech Blog", "cat": "tech", "url": "https://netflixtechblog.com/feed", "color": "#e50914"},
-    {"key": "aws_blog_74", "name": "AWS Blog", "cat": "tech", "url": "https://aws.amazon.com/blogs/aws/feed/", "color": "#ff9900"},
-    {"key": "cloudflare_blog_75", "name": "Cloudflare Blog", "cat": "tech", "url": "https://blog.cloudflare.com/rss/", "color": "#f38020"},
-    {"key": "google_dev_76", "name": "Google Developers", "cat": "tech", "url": "https://developers.googleblog.com/feeds/posts/default/", "color": "#4285f4"},
-    {"key": "mozilla_hacks_77", "name": "Mozilla Hacks", "cat": "tech", "url": "https://hacks.mozilla.org/feed/", "color": "#000000"},
-    {"key": "vercel_blog_78", "name": "Vercel Blog", "cat": "tech", "url": "https://vercel.com/atom", "color": "#000000"},
-    {"key": "supabase_blog_79", "name": "Supabase Blog", "cat": "tech", "url": "https://supabase.com/rss.xml", "color": "#3ecf8e"},
-    {"key": "stripe_blog_80", "name": "Stripe Blog", "cat": "tech", "url": "https://stripe.com/blog/feed.rss", "color": "#635bff"},
-    {"key": "meta_eng_81", "name": "Meta Engineering", "cat": "tech", "url": "https://engineering.fb.com/feed/", "color": "#0668E1"},
-
-    # ── 中文科技 (21) ──
-    {"key": "美团技术团队_0", "name": "美团技术团队", "cat": "cn_tech", "url": "https://tech.meituan.com/feed", "color": "#0055ff"},
-    {"key": "v2ex_1", "name": "V2EX", "cat": "cn_tech", "url": "https://v2ex.com/index.xml", "color": "#d7434e", "tier": 1},
-    {"key": "solidot_3", "name": "Solidot", "cat": "cn_tech", "url": "https://www.solidot.org/index.rss", "color": "#0066ff", "tier": 2},
-    {"key": "少数派_4", "name": "少数派", "cat": "cn_tech", "url": "https://sspai.com/feed", "color": "#336699"},
-    {"key": "爱范儿_5", "name": "爱范儿", "cat": "cn_tech", "url": "https://www.ifanr.com/feed", "color": "#333333"},
-    {"key": "小众软件_8", "name": "小众软件", "cat": "cn_tech", "url": "https://www.appinn.com/feed/", "color": "#FFD43B"},
-    {"key": "构建被动收入_9", "name": "构建被动收入", "cat": "cn_tech", "url": "https://www.bmpi.dev/index.xml", "color": "#00bc74"},
-    {"key": "虎嗅_11", "name": "虎嗅", "cat": "cn_tech", "url": "https://rsshub.bestblogs.dev/huxiu/article", "color": "#3a85ff", "tier": 1},
-    {"key": "it之家_13", "name": "IT之家", "cat": "cn_tech", "url": "https://www.ithome.com/rss/", "color": "#1e88e5", "tier": 1},
-    {"key": "月光博客_15", "name": "月光博客", "cat": "cn_tech", "url": "http://www.williamlong.info/rss.xml", "color": "#e53935"},
-    {"key": "理想生活实验室_18", "name": "理想生活实验室", "cat": "cn_tech", "url": "https://www.toodaylab.com/feed", "color": "#43a047"},
-    {"key": "潮流周刊_21", "name": "潮流周刊", "cat": "cn_tech", "url": "https://weekly.tw93.fun/rss.xml", "color": "#ff5722"},
-    {"key": "扯氮集_25", "name": "扯氮集", "cat": "cn_tech", "url": "http://weiwuhui.com/feed", "color": "#6a1b9a"},
-    {"key": "deepzz_26", "name": "Deepzz", "cat": "cn_tech", "url": "https://deepzz.com/feed", "color": "#d32f2f"},
-    {"key": "mit科技评论_28", "name": "MIT科技评论", "cat": "cn_tech", "url": "https://plink.anyfeeder.com/mittrchina/hot", "color": "#0097a7"},
-    {"key": "疯投圈_29", "name": "疯投圈", "cat": "cn_tech", "url": "https://crazy.capital/feed", "color": "#c62828"},
-    {"key": "超能网_31", "name": "超能网", "cat": "cn_tech", "url": "https://plink.anyfeeder.com/expreview", "color": "#0091ea", "tier": 2},
-    {"key": "钛媒体_38", "name": "钛媒体", "cat": "cn_tech", "url": "https://www.tmtpost.com/feed", "color": "#4a90d9", "tier": 1},
-    {"key": "人人都是产品经理_39", "name": "人人都是产品经理", "cat": "cn_tech", "url": "https://www.woshipm.com/feed", "color": "#00aa55", "tier": 2},
-    {"key": "cnbeta_41", "name": "cnBeta", "cat": "cn_tech", "url": "https://plink.anyfeeder.com/cnbeta", "color": "#00bc74", "tier": 1},
-    {"key": "v2ex技术_44", "name": "V2EX技术", "cat": "cn_tech", "url": "https://www.v2ex.com/feed/tab/tech.xml", "color": "#3177cf", "tier": 1},
-
-    # ── 开发者 (53) ──
-    {"key": "阮一峰的网络日志_0", "name": "阮一峰的网络日志", "cat": "dev", "url": "https://www.ruanyifeng.com/blog/atom.xml", "color": "#dc382d"},
-    {"key": "太隐_4", "name": "太隐", "cat": "dev", "url": "https://wangyurui.com/feed.xml", "color": "#336699"},
-    {"key": "云风的blog_5", "name": "云风的BLOG", "cat": "dev", "url": "http://blog.codingnow.com/atom.xml", "color": "#4CAF50"},
-    {"key": "胡涂说_6", "name": "胡涂说", "cat": "dev", "url": "https://hutusi.com/feed.xml", "color": "#8e44ad"},
-    {"key": "程序员的喵_7", "name": "程序员的喵", "cat": "dev", "url": "https://catcoding.me/atom.xml", "color": "#6c5ce7"},
-    {"key": "oldjblog_8", "name": "oldj blog", "cat": "dev", "url": "https://oldj.net/feed", "color": "#2d3436"},
-    {"key": "randy'sblog_12", "name": "Randy's Blog", "cat": "dev", "url": "https://lutaonan.com/rss.xml", "color": "#e67e22"},
-    {"key": "卡瓦邦噶_13", "name": "卡瓦邦噶", "cat": "dev", "url": "https://www.kawabangga.com/feed", "color": "#3498db"},
-    {"key": "风雪之隅_14", "name": "风雪之隅", "cat": "dev", "url": "http://www.laruence.com/feed", "color": "#1abc9c"},
-    {"key": "离别歌_15", "name": "离别歌", "cat": "dev", "url": "https://www.leavesongs.com/feed/", "color": "#9b59b6"},
-    {"key": "hellogithub_17", "name": "HelloGitHub", "cat": "dev", "url": "http://hellogithub.com/rss", "color": "#16a085"},
-    {"key": "张鑫旭_18", "name": "张鑫旭", "cat": "dev", "url": "https://www.zhangxinxu.com/wordpress/feed/", "color": "#f39c12"},
-    {"key": "maxos_19", "name": "maxOS", "cat": "dev", "url": "https://maxoxo.me/rss/", "color": "#dc382d"},
-    {"key": "轶哥博客_20", "name": "轶哥博客", "cat": "dev", "url": "https://www.wyr.me/rss.xml", "color": "#6366f1"},
-    {"key": "geekplux_21", "name": "GeekPlux", "cat": "dev", "url": "https://geekplux.com/feed.xml", "color": "#e34f26"},
-    {"key": "mactalk池建强_22", "name": "MacTalk池建强", "cat": "dev", "url": "http://macshuo.com/?feed=rss2", "color": "#663399"},
-    {"key": "xuanwo_23", "name": "Xuanwo", "cat": "dev", "url": "https://xuanwo.io/index.xml", "color": "#336699"},
-    {"key": "反斗限免_24", "name": "反斗限免", "cat": "dev", "url": "http://free.apprcn.com/feed/", "color": "#4CAF50"},
-    {"key": "halfrost_25", "name": "Halfrost", "cat": "dev", "url": "http://halfrost.com/rss/", "color": "#8e44ad"},
-    {"key": "infoq推荐_26", "name": "InfoQ推荐", "cat": "dev", "url": "https://plink.anyfeeder.com/infoq/recommend", "color": "#6c5ce7", "tier": 2},
-    {"key": "二丫讲梵_27", "name": "二丫讲梵", "cat": "dev", "url": "https://wiki.eryajf.net/rss.xml", "color": "#2d3436"},
-    {"key": "唐巧博客_28", "name": "唐巧博客", "cat": "dev", "url": "http://blog.devtang.com/atom.xml", "color": "#e74c3c"},
-    {"key": "baiyun_30", "name": "BAI YUN", "cat": "dev", "url": "https://baiyun.me/feed", "color": "#2c3e50"},
-    {"key": "elmagnifico_31", "name": "elmagnifico", "cat": "dev", "url": "http://elmagnifico.tech/feed.xml", "color": "#e67e22"},
-    {"key": "tonybai_33", "name": "Tony Bai", "cat": "dev", "url": "http://tonybai.com/feed/", "color": "#1abc9c"},
-    {"key": "全栈应用开发_36", "name": "全栈应用开发", "cat": "dev", "url": "https://www.phodal.com/blog/feeds/rss/", "color": "#16a085"},
-    {"key": "tinyprojects_37", "name": "Tiny Projects", "cat": "dev", "url": "https://tinyprojects.dev/feed.xml", "color": "#f39c12"},
-    {"key": "笨方法学写作_38", "name": "笨方法学写作", "cat": "dev", "url": "https://www.cnfeat.com/feed.xml", "color": "#dc382d"},
-    {"key": "西秦公子_39", "name": "西秦公子", "cat": "dev", "url": "https://www.ixiqin.com/feed/", "color": "#6366f1"},
-    {"key": "涛叔_41", "name": "涛叔", "cat": "dev", "url": "https://taoshu.in/feed.xml", "color": "#663399"},
-    {"key": "小球飞鱼_42", "name": "小球飞鱼", "cat": "dev", "url": "https://mantyke.icu/index.xml", "color": "#336699"},
-    {"key": "王登科dk_43", "name": "王登科DK", "cat": "dev", "url": "https://greatdk.com/feed", "color": "#4CAF50"},
-    {"key": "小胡子哥_44", "name": "小胡子哥", "cat": "dev", "url": "http://www.barretlee.com/rss2.xml", "color": "#8e44ad", "tier": 2},
-    {"key": "dbanotes_45", "name": "DBA Notes", "cat": "dev", "url": "http://dbanotes.net/feed", "color": "#6c5ce7"},
-    {"key": "v2ex_all_50", "name": "V2EX 全站最新", "cat": "dev", "url": "https://www.v2ex.com/index.xml", "color": "#d7434e", "tier": 1},
-    {"key": "v2ex_new_51", "name": "V2EX 最新", "cat": "dev", "url": "https://www.v2ex.com/feed/tab/all.xml", "color": "#e53935", "tier": 1},
-    {"key": "v2ex_creative_52", "name": "V2EX 创意", "cat": "dev", "url": "https://www.v2ex.com/feed/tab/creative.xml", "color": "#8e24aa", "tier": 1},
-    {"key": "v2ex_play_53", "name": "V2EX 好玩", "cat": "dev", "url": "https://www.v2ex.com/feed/tab/play.xml", "color": "#43a047", "tier": 1},
-    {"key": "nodeseek_54", "name": "NodeSeek", "cat": "dev", "url": "https://rss.nodeseek.com/", "color": "#1e88e5", "tier": 1},
-    {"key": "naixi_55", "name": "奶昔论坛", "cat": "dev", "url": "https://forum.naixi.net/forum.php?mod=rss", "color": "#f06292", "tier": 2},
-    {"key": "hn_newest_56", "name": "Hacker News 最新", "cat": "dev", "url": "https://hnrss.org/newest", "color": "#ff6600", "tier": 1},
-    {"key": "hn_ask_57", "name": "Hacker News Ask", "cat": "dev", "url": "https://hnrss.org/ask", "color": "#ef6c00", "tier": 2},
-    {"key": "hn_show_58", "name": "Hacker News Show", "cat": "dev", "url": "https://hnrss.org/show", "color": "#f57c00", "tier": 1},
-    {"key": "linuxdo_latest_59", "name": "LinuxDo 最新话题", "cat": "dev", "url": "https://linux.do/latest.rss", "color": "#2d8cff"},
-    {"key": "linuxdo_top_60", "name": "LinuxDo 热门话题", "cat": "dev", "url": "https://linux.do/top.rss", "color": "#1a73e8"},
-    {"key": "linuxdo_posts_61", "name": "LinuxDo 最新帖子", "cat": "dev", "url": "https://linux.do/posts.rss", "color": "#4a90d9"},
-    {"key": "js_weekly_90", "name": "JavaScript Weekly", "cat": "dev", "url": "https://javascriptweekly.com/rss/", "color": "#f7df1e"},
-    {"key": "rust_weekly_91", "name": "This Week in Rust", "cat": "dev", "url": "https://this-week-in-rust.org/atom.xml", "color": "#dea584"},
-    {"key": "golang_weekly_92", "name": "Golang Weekly", "cat": "dev", "url": "https://golangweekly.com/rss/", "color": "#00add8"},
-    {"key": "bytebytego_93", "name": "ByteByteGo", "cat": "dev", "url": "https://blog.bytebytego.com/feed", "color": "#e53935"},
-    {"key": "reddit_programming_100", "name": "r/programming", "cat": "dev", "url": "https://www.reddit.com/r/programming/top.rss?t=day", "color": "#ff4500"},
-    {"key": "reddit_webdev_101", "name": "r/webdev", "cat": "dev", "url": "https://www.reddit.com/r/webdev/top.rss?t=day", "color": "#0079d4"},
-    {"key": "reddit_selfhosted_102", "name": "r/selfhosted", "cat": "dev", "url": "https://www.reddit.com/r/selfhosted/top.rss?t=day", "color": "#4caf50"},
-
-    # ── 综合新闻 (14) ──
-    {"key": "idaily_1", "name": "iDaily", "cat": "news", "url": "https://plink.anyfeeder.com/idaily/today", "color": "#003399"},
-    {"key": "中国日报双语_2", "name": "中国日报双语", "cat": "news", "url": "https://plink.anyfeeder.com/chinadaily/dual", "color": "#cc0000"},
-    {"key": "知乎日报anyfeeder_3", "name": "知乎日报anyfeeder", "cat": "news", "url": "https://plink.anyfeeder.com/zhihu/daily", "color": "#d32f2f", "tier": 2},
-    {"key": "法广中文_4", "name": "法广中文", "cat": "news", "url": "https://plink.anyfeeder.com/rfi/cn", "color": "#1a1a1a", "tier": 2},
-    {"key": "bbc中文_5", "name": "BBC中文", "cat": "news", "url": "https://plink.anyfeeder.com/bbc/cn", "color": "#cc0000"},
-    {"key": "财富中文网_6", "name": "财富中文网", "cat": "news", "url": "https://plink.anyfeeder.com/fortunechina", "color": "#d32f2f"},
-    {"key": "澎湃新闻_7", "name": "澎湃新闻", "cat": "news", "url": "https://plink.anyfeeder.com/thepaper", "color": "#43a047", "tier": 1},
-    {"key": "人民网_8", "name": "人民网", "cat": "news", "url": "https://plink.anyfeeder.com/people", "color": "#1565c0", "tier": 1},
-    {"key": "南方周末anyfeeder_9", "name": "南方周末anyfeeder", "cat": "news", "url": "https://plink.anyfeeder.com/infzm/news", "color": "#0097a7"},
-    {"key": "纽约时报中文网_10", "name": "纽约时报中文网", "cat": "news", "url": "http://cn.nytimes.com/rss/news.xml", "color": "#1a1a1a"},
-    {"key": "喷嚏网铂程斋_11", "name": "喷嚏网铂程斋", "cat": "news", "url": "https://plink.anyfeeder.com/dapenti/xilei", "color": "#1565c0", "tier": 2},
-    {"key": "雪球热帖_12", "name": "雪球热帖", "cat": "news", "url": "https://xueqiu.com/hots/topic/rss", "color": "#0097a7"},
-    {"key": "bbc英语教学_13", "name": "BBC英语教学", "cat": "news", "url": "https://plink.anyfeeder.com/bbc/learningenglish", "color": "#bb1919"},
-    {"key": "求是网_14", "name": "求是网", "cat": "news", "url": "https://plink.anyfeeder.com/qstheory", "color": "#6a1b9a"},
-    {"key": "半岛电视台_15", "name": "半岛电视台", "cat": "news", "url": "https://www.aljazeera.com/xml/rss/all.xml", "color": "#c4792b", "tier": 1},
-    {"key": "CNN_16", "name": "CNN", "cat": "news", "url": "https://news.google.com/rss/search?q=site:cnn.com&hl=en-US&gl=US&ceid=US:en", "color": "#cc0000", "tier": 1},
-    {"key": "新华社_17", "name": "新华社", "cat": "news", "url": "https://plink.anyfeeder.com/newscn/whxw", "color": "#d32f2f", "tier": 1},
-    {"key": "德国之声DW_18", "name": "德国之声 DW", "cat": "news", "url": "https://rss.dw.com/rdf/rss-en-all", "color": "#00728f", "tier": 1},
-    {"key": "香港01本地_19", "name": "香港01 本地", "cat": "news", "url": "https://news.google.com/rss/search?q=site:hk01.com+%E9%A6%99%E6%B8%AF&hl=zh-HK&gl=HK&ceid=HK:zh-Hant", "color": "#e74c3c", "tier": 2},
-    {"key": "香港01國際_22", "name": "香港01 國際", "cat": "news", "url": "https://news.google.com/rss/search?q=site:hk01.com+%E5%9C%8B%E9%9A%9B&hl=zh-HK&gl=HK&ceid=HK:zh-Hant", "color": "#c0392b", "tier": 2},
-    {"key": "朝日新闻_20", "name": "朝日新闻", "cat": "news", "url": "https://news.google.com/rss/search?q=site:asahi.com&hl=ja&gl=JP&ceid=JP:ja", "color": "#1a1a1a", "tier": 2},
-    {"key": "NHK World_21", "name": "NHK World", "cat": "news", "url": "https://www3.nhk.or.jp/nhkworld/data/en/news/backstory/rss.xml", "color": "#0055a5", "tier": 1},
-
-    # ── 播客 (6) ──
-    {"key": "42章经_1", "name": "42章经", "cat": "podcast", "url": "https://feed.xyzfm.space/evgg6xle9rdc", "color": "#0891b2"},
-    {"key": "三点下班_4", "name": "三点下班", "cat": "podcast", "url": "https://feed.xyzfm.space/tlel9j4tg3eu", "color": "#e11d48"},
-    {"key": "卫诗婕商业漫谈_6", "name": "卫诗婕商业漫谈", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/6627fda4b56459544087d86a", "color": "#7c3aed"},
-    {"key": "得意忘形_7", "name": "得意忘形", "cat": "podcast", "url": "https://feed.xyzfm.space/klaak6nmc3ux", "color": "#0891b2"},
-    {"key": "起朱楼宴宾客_8", "name": "起朱楼宴宾客", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/65253bf350cf691d245b29aa", "color": "#1e40af"},
-    {"key": "tedradiohour_10", "name": "TED Radio Hour", "cat": "podcast", "url": "https://feeds.npr.org/510298/podcast.xml", "color": "#e11d48"},
-
-    # ── BestBlogs 公众号 (375) ──
-    {"key": "人人都是产品经理_0", "name": "人人都是产品经理", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/2d790e38f8af54c5af77fa5fed687a7c66d34c22.xml", "color": "#ff6b6b"},
-    {"key": "腾讯技术工程_1", "name": "腾讯技术工程", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/1e0ac39f8952b2e7f0807313cf2633d25078a171.xml", "color": "#ff6b6b"},
-    {"key": "阿里技术_2", "name": "阿里技术", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6535a444e9651fecae3383363be7589acdebe2b6.xml", "color": "#ff6b6b"},
-    {"key": "阿里云开发者_3", "name": "阿里云开发者", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/39fc51b0b1316137e608c45da5dbbca4f9eb9538.xml", "color": "#ff6b6b"},
-    {"key": "大淘宝技术_4", "name": "大淘宝技术", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/26fef2307bebc8673703f7e726982d8f56c9a219.xml", "color": "#ff6b6b"},
-    {"key": "新智元_5", "name": "新智元", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/e531a18b21c34cf787b83ab444eef659d7a980de.xml", "color": "#ff6b6b"},
-    {"key": "腾讯云开发者_6", "name": "腾讯云开发者", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6cec2c211479a5502896375860009782cf10c2ba.xml", "color": "#ff6b6b"},
-    {"key": "前端早读课_7", "name": "前端早读课", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ce2456e157156d42259c1198f05a33e27b1ed959.xml", "color": "#ff6b6b"},
-    {"key": "founder_park_8", "name": "Founder Park", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/f940695505f2be1399d23cc98182297cadf6f90d.xml", "color": "#ff6b6b"},
-    {"key": "歸藏的ai工具箱_9", "name": "歸藏的AI工具箱", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/1c3e3571b1627d23ee9c64521a0b0a41d3fe2987.xml", "color": "#ff6b6b"},
-    {"key": "腾讯科技_10", "name": "腾讯科技", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/a81bdfcbb9eefe870d285e81510ffa1af26e4520.xml", "color": "#ff6b6b"},
-    {"key": "infoq_11", "name": "InfoQ", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/13da94d7eb314b49fa251cb7e8399cae29d772db.xml", "color": "#ff6b6b"},
-    {"key": "赛博禅心_12", "name": "赛博禅心", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/752c31ca0446b837339463fc5440539e20267d2f.xml", "color": "#ff6b6b"},
-    {"key": "数字生命卡兹克_13", "name": "数字生命卡兹克", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ff621c3e98d6ae6fceb3397e57441ffc6ea3c17f.xml", "color": "#ff6b6b"},
-    {"key": "十字路口crossing_14", "name": "十字路口Crossing", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/20492a5f2d3637c178c01ab0bab7ed86a4a0995b.xml", "color": "#ff6b6b"},
-    {"key": "极客公园_15", "name": "极客公园", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/11ea7163fbea99e2ab9fa2812ac3d179574886cc.xml", "color": "#ff6b6b"},
-    {"key": "京东技术_16", "name": "京东技术", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/fa0be550682410cc187c0d1eab1a0fc4e073b949.xml", "color": "#ff6b6b"},
-    {"key": "web3天空之城_17", "name": "Web3天空之城", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6aac3cc6d4c6df6fb3f77dea4ea4ba4a2053d6e7.xml", "color": "#ff6b6b"},
-    {"key": "ai前线_18", "name": "AI前线", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/25185b01482da0f485418ecb92e208b4416712fb.xml", "color": "#ff6b6b"},
-    {"key": "51cto技术栈_19", "name": "51CTO技术栈", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/d1fabe6c569ffc44979075dde2f57c65e07c3045.xml", "color": "#ff6b6b"},
-    {"key": "稀土掘金技术社区_20", "name": "稀土掘金技术社区", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/33ecd2122ae788ea02dfcf1df857a54b9ae1338d.xml", "color": "#ff6b6b"},
-    {"key": "dbaplus社群_21", "name": "dbaplus社群", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/a92cc44a756e2b9165fed5572aa7337843a73eee.xml", "color": "#ff6b6b"},
-    {"key": "深思圈_22", "name": "深思圈", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/3e6fcb56a39b2e18f1036113655d4ff8fe726b62.xml", "color": "#ff6b6b"},
-    {"key": "海外独角兽_23", "name": "海外独角兽", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/7200d3a5e976d231deb1e40ad33745c0e649b029.xml", "color": "#ff6b6b"},
-    {"key": "谷歌开发者_24", "name": "谷歌开发者", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/9c65b8470acb8a5400199616536995d5ba90f52e.xml", "color": "#ff6b6b"},
-    {"key": "笔记侠_25", "name": "笔记侠", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/4c5d9bcc2fbfcd1dc81fb67559653f8957ef4760.xml", "color": "#ff6b6b"},
-    {"key": "月之暗面_kimi_26", "name": "月之暗面 Kimi", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c5c43d4bc17bae656763859ed0903bb6314ec6fe.xml", "color": "#ff6b6b"},
-    {"key": "腾讯研究院_27", "name": "腾讯研究院", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6152301e0978bffb0a8284cab339262b9764dcfb.xml", "color": "#ff6b6b"},
-    {"key": "浮之静_28", "name": "浮之静", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/abb0de0c0cb8f684a1606a4b20121b245547adce.xml", "color": "#ff6b6b"},
-    {"key": "甲子光年_29", "name": "甲子光年", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/1c4008936645d5c17239d99bba91522cf2bdfa26.xml", "color": "#ff6b6b"},
-    {"key": "z_potentials_30", "name": "Z Potentials", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c47f4bc00ea912c37b6e23b22b146db0e85b3e19.xml", "color": "#ff6b6b"},
-    {"key": "deepseek_31", "name": "DeepSeek", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/1709da4f538d4ce4fb6d7a8ba1a5a1c297919601.xml", "color": "#ff6b6b"},
-    {"key": "jina_ai_32", "name": "Jina AI", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ff2c5468828ebe7236afd6c1d128e219774487c2.xml", "color": "#ff6b6b"},
-    {"key": "datawhale_33", "name": "Datawhale", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ea0dd8bddfe4fbfb32eaa81a1e1b628d45e97a80.xml", "color": "#ff6b6b"},
-    {"key": "向阳乔木推荐看_34", "name": "向阳乔木推荐看", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/3e50f11753a7c5ed689565fbf5abf96cb4541c57.xml", "color": "#ff6b6b"},
-    {"key": "语言即世界language_is_world_35", "name": "语言即世界language is world", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/e1ed0d3edd93f90aef602105eb7ca51b35b7060a.xml", "color": "#ff6b6b"},
-    {"key": "dify_36", "name": "Dify", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/e46c03a4cb65509e22ab9a8507888a2096319d65.xml", "color": "#ff6b6b"},
-    {"key": "智谱_37", "name": "智谱", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/433d2134dca54d80804daf32e8be546155be3300.xml", "color": "#ff6b6b"},
-    {"key": "通义实验室_38", "name": "通义实验室", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/4ebee6222ae08705b8aabc9116f0defbcb6b17c6.xml", "color": "#ff6b6b"},
-    {"key": "百度文心_39", "name": "百度文心", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/d0767d885e6ba213344fb0c0408c51331e23a994.xml", "color": "#ff6b6b"},
-    {"key": "腾讯混元_40", "name": "腾讯混元", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/306ce19a1ca590c9c2df781789e828d1acfa1356.xml", "color": "#ff6b6b"},
-    {"key": "智东西_41", "name": "智东西", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/cfd52b4245ca6119b2fda4ef934832c689028927.xml", "color": "#ff6b6b"},
-    {"key": "agent橘_42", "name": "AGENT橘", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6cef434b771dd75a91864b2e699a622cb4e3eb33.xml", "color": "#ff6b6b"},
-    {"key": "大模型智能_43", "name": "大模型智能", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/bfc6440c1a2443fab9a6bf607137d41db5cd5c93.xml", "color": "#ff6b6b"},
-    {"key": "ai炼金术_44", "name": "AI炼金术", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/4915f3747653bbb9c7975323c11b768d2b9cd6c9.xml", "color": "#ff6b6b"},
-    {"key": "ai科技评论_45", "name": "AI科技评论", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/789e5fefb9cc2646ba7b680cb7a88378a34eb7a4.xml", "color": "#ff6b6b"},
-    {"key": "山行ai_46", "name": "山行AI", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/98bc16b6f53902a2ab511b4faa3499e0a1c78eb1.xml", "color": "#ff6b6b"},
-    {"key": "土猛的员外_47", "name": "土猛的员外", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/3ee671d065adc460bc20bbd269115987098c54a0.xml", "color": "#ff6b6b"},
-    {"key": "deeplearningai_48", "name": "DeeplearningAI", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/9d094d066a5faacff0eb0a6b95efbba20d4f1fc9.xml", "color": "#ff6b6b"},
-    {"key": "机器之心sota模型_49", "name": "机器之心SOTA模型", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/2f520471856d56c7b3a95cd09eb777149b32828a.xml", "color": "#ff6b6b"},
-    {"key": "阶跃星辰_50", "name": "阶跃星辰", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/3e2714d06aa36142e8ed6b3f4e5cf9090a069dd2.xml", "color": "#ff6b6b"},
-    {"key": "字节跳动seed_51", "name": "字节跳动Seed", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6efd40bb335d2037f365d284cb5e00f0843e737e.xml", "color": "#ff6b6b"},
-    {"key": "ai寒武纪_52", "name": "AI寒武纪", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/5903009f48a5e4aa44d8ac941a54fe3aafc3e03c.xml", "color": "#ff6b6b"},
-    {"key": "minimax_稀宇科技_53", "name": "MiniMax 稀宇科技", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/00306b171f754d463b28cf83f3ba086ad009b430.xml", "color": "#ff6b6b"},
-    {"key": "花叔_54", "name": "花叔", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ed3e181242a4622709081439d802523ecf7b78f2.xml", "color": "#ff6b6b"},
-    {"key": "ainlp_55", "name": "AINLP", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/875df1d1a991bf9250ba9813e3148f58ef2240d4.xml", "color": "#ff6b6b"},
-    {"key": "硅基观察pro_56", "name": "硅基观察Pro", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/f21c3e34df9b5fecfda57e2e53512864255ed4cd.xml", "color": "#ff6b6b"},
-    {"key": "李继刚_57", "name": "李继刚", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/9645a69180041ff935c458753174fa8bc2061295.xml", "color": "#ff6b6b"},
-    {"key": "沃垠ai_58", "name": "沃垠AI", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/339818dbd5154cecdf5f4161f3391c7038a72bae.xml", "color": "#ff6b6b"},
-    {"key": "袋鼠帝ai客栈_59", "name": "袋鼠帝AI客栈", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/24d0930cc9f4f0c708182dc1c087d41e1f4cbd33.xml", "color": "#ff6b6b"},
-    {"key": "ai科技大本营_60", "name": "AI科技大本营", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/dfd3b5e742e32d8032a445832373191957202bf3.xml", "color": "#ff6b6b"},
-    {"key": "卡尔的ai沃茨_61", "name": "卡尔的AI沃茨", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/8a1fc997e5c742e91ad7c253836c28ca3a69ccb1.xml", "color": "#ff6b6b"},
-    {"key": "阿真irene_62", "name": "阿真Irene", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/d5ead392b0cf117d0ba4070e2261111fdde49711.xml", "color": "#ff6b6b"},
-    {"key": "优设_63", "name": "优设", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/8fee9d33e883a769a59a5a3e27d249cf8567b55a.xml", "color": "#ff6b6b"},
-    {"key": "体验进阶_64", "name": "体验进阶", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/083c360a74b36b2c33820a995d21cbf60c813c0a.xml", "color": "#ff6b6b"},
-    {"key": "超人的电话亭_65", "name": "超人的电话亭", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/4be15abcd5621887bb7c1e2efd2d1cd8c68a16f0.xml", "color": "#ff6b6b"},
-    {"key": "clip设计夹_66", "name": "Clip设计夹", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ebd5f5bd705dd531066eeca5ee500a1e6a269e17.xml", "color": "#ff6b6b"},
-    {"key": "ai产品黄叔_67", "name": "AI产品黄叔", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/1f1030491e15e5349aae42367513d6b3f70a8f8b.xml", "color": "#ff6b6b"},
-    {"key": "强少来了_68", "name": "强少来了", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/3c36fe804f63a7b936e372a37929d81fa0ad948a.xml", "color": "#ff6b6b"},
-    {"key": "小米技术_69", "name": "小米技术", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/8bbc1ba1d363e70cd42d1ce89fb9070cb075c3b3.xml", "color": "#ff6b6b"},
-    {"key": "哔哩哔哩技术_70", "name": "哔哩哔哩技术", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/3a12ae4fde5bb74aab2fddc9f710a3c057eab82f.xml", "color": "#ff6b6b"},
-    {"key": "字节跳动技术团队_71", "name": "字节跳动技术团队", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/d3a9e4d6f125cc98d1691dbc30cd97fec7ae2d03.xml", "color": "#ff6b6b"},
-    {"key": "滴滴技术_72", "name": "滴滴技术", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/b9a02e7d9e35178ef44fc560fcb5ec4995613af2.xml", "color": "#ff6b6b"},
-    {"key": "奇舞精选_73", "name": "奇舞精选", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/156a64fe3e95eebe4b85bf981d6ebb85441897bf.xml", "color": "#ff6b6b"},
-    {"key": "得物技术_74", "name": "得物技术", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/1cde72c9129b1f79cbb150166e7fed9a7568ee10.xml", "color": "#ff6b6b"},
-    {"key": "百度geek说_75", "name": "百度Geek说", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6cc437d76f9dc4f7c35011c72e471e33e7bdd384.xml", "color": "#ff6b6b"},
-    {"key": "前端充电宝_76", "name": "前端充电宝", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/efed19b684285ee14f88b3f234b350fba9376d7a.xml", "color": "#ff6b6b"},
-    {"key": "qunar技术沙龙_77", "name": "Qunar技术沙龙", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/84c072f8d34d1690f2783d7dda6013cf6d892b7f.xml", "color": "#ff6b6b"},
-    {"key": "vivo互联网技术_78", "name": "vivo互联网技术", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/b3ceb5cb1e4602ca55704650a157ec9c5b2f0d31.xml", "color": "#ff6b6b"},
-    {"key": "小红书技术redtech_79", "name": "小红书技术REDtech", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/0f8c47df6fd304112518544776e0bbf1d98ba0b9.xml", "color": "#ff6b6b"},
-    {"key": "hellogithub_80", "name": "HelloGitHub", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/e6cc80b97bf64eeef61cc5927c78ba6ce3356422.xml", "color": "#ff6b6b"},
-    {"key": "印记中文_81", "name": "印记中文", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/2b038bb5307a75a603405f7191b5030576d3e8bd.xml", "color": "#ff6b6b"},
-    {"key": "快手技术_82", "name": "快手技术", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c4cc10d2e32a5fa12927581ae581a336f399fe75.xml", "color": "#ff6b6b"},
-    {"key": "逛逛github_83", "name": "逛逛GitHub", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/38be32e5376d852c13d3383e4d7a757fd9a55ff6.xml", "color": "#ff6b6b"},
-    {"key": "架构师之路_84", "name": "架构师之路", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/f6dec1c3ad16e43532dd427c85eaeb3a7b7b084e.xml", "color": "#ff6b6b"},
-    {"key": "硅谷科技评论_85", "name": "硅谷科技评论", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/4515ee058133ff68570ad586abdd81f54f2b6ee3.xml", "color": "#ff6b6b"},
-    {"key": "42章经_86", "name": "42章经", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/f6694726ced4ba3d7c7cd65c6edf2160c5978387.xml", "color": "#ff6b6b"},
-    {"key": "随机小分队_87", "name": "随机小分队", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/115e814e7b12d373a55459cb2aea3223152f2af2.xml", "color": "#ff6b6b"},
-    {"key": "阿里研究院_88", "name": "阿里研究院", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/e2f1190c120f7f3d74b630bfcfe9e58296bd535c.xml", "color": "#ff6b6b"},
-    {"key": "创业邦_89", "name": "创业邦", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/f5e0d8e342d9e2ec5b2942f08522cfaec17acc8d.xml", "color": "#ff6b6b"},
-    {"key": "csdn_90", "name": "CSDN", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/b0b7f2852aecdcc5a0eb08d33afc1c08b855d98b.xml", "color": "#ff6b6b"},
-    {"key": "吴晓波频道_91", "name": "吴晓波频道", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/604fd0bfbb0214958f7fd2718509e4ea038c6afc.xml", "color": "#ff6b6b"},
-    {"key": "投资实习所_92", "name": "投资实习所", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/1324caa248157b73a64412393f5612931368dd52.xml", "color": "#ff6b6b"},
-    {"key": "经纬创投_93", "name": "经纬创投", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/05efb1c4cf91e5a37443cc323150ea38a838e9fd.xml", "color": "#ff6b6b"},
-    {"key": "少数派_94", "name": "少数派", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/f0e37a7d597231efed4bf6dd05b5d904de6dbcc1.xml", "color": "#ff6b6b"},
-    {"key": "网易科技_95", "name": "网易科技", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/028fbc21062e744c7b606880ebca01e22cb4b7b7.xml", "color": "#ff6b6b"},
-    {"key": "硅谷101_96", "name": "硅谷101", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/8f8fe34034f6123b168ed7847c51d50ff47cd7ee.xml", "color": "#ff6b6b"},
-    {"key": "真格基金_97", "name": "真格基金", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/47798a14d51da72e68fae4f7a259f096750cf03e.xml", "color": "#ff6b6b"},
-    {"key": "深网腾讯新闻_98", "name": "深网腾讯新闻", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/396591aa7d3ef15fa3b5b17ec4b1aa840ebde335.xml", "color": "#ff6b6b"},
-    {"key": "白鲸出海_99", "name": "白鲸出海", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/2b8f03a73a0f2ac92a8ca69c124e5be6f442dbdc.xml", "color": "#ff6b6b"},
-    {"key": "硅星人pro_100", "name": "硅星人Pro", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c62ceda9eed269d851802bdbc5f33c4fabbf7462.xml", "color": "#ff6b6b"},
-    {"key": "暗涌waves_101", "name": "暗涌Waves", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/bd586c1499b56aaec02dfefa87126232d234b010.xml", "color": "#ff6b6b"},
-    {"key": "夕小瑶科技说_102", "name": "夕小瑶科技说", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/64b57d666259aee6bd097e76164e4a8371f0ad04.xml", "color": "#ff6b6b"},
-    {"key": "l先生说_103", "name": "L先生说", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/31c7fb6f7959a5ff90ae997b536e78b8b3f23321.xml", "color": "#ff6b6b"},
-    {"key": "有新newin_104", "name": "有新Newin", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/74554dcb3da8982083426b871bc8c314a9de9729.xml", "color": "#ff6b6b"},
-    {"key": "晚点latepost_105", "name": "晚点LatePost", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c442206ec9957f3c52f2f40300ca532079538b31.xml", "color": "#ff6b6b"},
-    {"key": "刘润_106", "name": "刘润", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c1354f67c314d25d6e236a58724043bdc46d6079.xml", "color": "#ff6b6b"},
-    {"key": "刘小排r_107", "name": "刘小排r", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/484d4199ae6c0b72ea01e7e0597a1f74933dfb62.xml", "color": "#ff6b6b"},
-    {"key": "机器之心_108", "name": "机器之心", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/8d97af31b0de9e48da74558af128a4673d78c9a3.xml", "color": "#ff6b6b"},
-    {"key": "魔搭modelscope社区_109", "name": "魔搭ModelScope社区", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/d993a885260f96057b9a4c96212cb2c95bb5054b.xml", "color": "#ff6b6b"},
-    {"key": "43_talks_110", "name": "43 Talks", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/4efe7ec6970afd4a050d6f10b9e8131a9d5e6816.xml", "color": "#ff6b6b"},
-    {"key": "言午_111", "name": "言午", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/138de227ebfbee6ea26564564f7bcd6c0c27af60.xml", "color": "#ff6b6b"},
-    {"key": "思特沃克洞见_112", "name": "思特沃克洞见", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6c6865b59e528f6f86d80b9a2071052416ef561f.xml", "color": "#ff6b6b"},
-    {"key": "数据可视化_antv_113", "name": "数据可视化 AntV", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c1a09e8847fbaea14eaa89db218d783fe176c5a6.xml", "color": "#ff6b6b"},
-    {"key": "晚点再听latercast_114", "name": "晚点再听LaterCast", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/1193affe8f8ed7a64281054cb022a7176054fa38.xml", "color": "#ff6b6b"},
-    {"key": "古典古少侠_115", "name": "古典古少侠", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/63554903d26c4e94ba031e9c8a93492b7ebcfbb9.xml", "color": "#ff6b6b"},
-    {"key": "ai异类弗兰克_116", "name": "AI异类弗兰克", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/e0415653cbf6f41e25fa266d010b3238b91a65e3.xml", "color": "#ff6b6b"},
-    {"key": "ai产品阿颖_117", "name": "AI产品阿颖", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/5000fe62390006b10eef8a737d89c478611994a7.xml", "color": "#ff6b6b"},
-    {"key": "阑夕_118", "name": "阑夕", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/fe0fc82458663820d6e91f6331dea05f3db223d4.xml", "color": "#ff6b6b"},
-    {"key": "pm圈子_119", "name": "PM圈子", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/bf07a12ef2909114f17c6734d6c7ad166221c5e7.xml", "color": "#ff6b6b"},
-    {"key": "哈佛商业评论_120", "name": "哈佛商业评论", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/205f074dd6b962e0f4de876e9ebfe70a33bd8f66.xml", "color": "#ff6b6b"},
-    {"key": "paperagent_121", "name": "PaperAgent", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/54001ca616dbc4b55d2b25d79d68a70191a0ddf4.xml", "color": "#ff6b6b"},
-    {"key": "有赞coder_122", "name": "有赞coder", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/75ad69f1c1d0d1f289f7702cf5eb553287441fdc.xml", "color": "#ff6b6b"},
-    {"key": "draco正在vibecoding_123", "name": "Draco正在VibeCoding", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/54dd1b1511fd066dfea2b4acde3e62787e8a687b.xml", "color": "#ff6b6b"},
-    {"key": "36氪_124", "name": "36氪", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c68b58fb17ac7ae4b23c2af276cdd61c9eca1a48.xml", "color": "#ff6b6b"},
-    {"key": "36氪官网_376", "name": "36氪官网", "cat": "cn_tech", "url": "https://rsshub.ktachibana.party/36kr/information/AI", "color": "#ff6b6b", "tier": 2},
-    {"key": "playwright实战教程_125", "name": "Playwright实战教程", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/bd8be44d64fa249f76615867dfb89e1d9f905d3e.xml", "color": "#ff6b6b"},
-    {"key": "华尔街见闻_126", "name": "华尔街见闻", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/4162e7fc1ecdeca20d88e9ce3fa0d9070af3eaff.xml", "color": "#ff6b6b"},
-    {"key": "青稞ai_127", "name": "青稞AI", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/b22be100fcd702f02cd6574b5aecb8a08d48438f.xml", "color": "#ff6b6b"},
-    {"key": "ai闲谈_128", "name": "AI闲谈", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/baa2c36e1ead8e94c51c504ebddcc1ed682dc0b8.xml", "color": "#ff6b6b"},
-    {"key": "罗西的思考_129", "name": "罗西的思考", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/7dbc05b457a855d5cdee726ee78730b6e3a103f4.xml", "color": "#ff6b6b"},
-    {"key": "武志红_130", "name": "武志红", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/7f1dc0e04603db8e1ddadfc4beea4a190af49cf6.xml", "color": "#ff6b6b"},
-    {"key": "槽边往事_131", "name": "槽边往事", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/0e8853d7a9fba6a4ed3556806c0ee832539a703e.xml", "color": "#ff6b6b"},
-    {"key": "人物_132", "name": "人物", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ffd27daeb694ea7d39b113aa143deb3669d4a4a4.xml", "color": "#ff6b6b"},
-    {"key": "猫笔刀_133", "name": "猫笔刀", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/21762bfa023b817580db467d80c446ec0dd752fe.xml", "color": "#ff6b6b"},
-    {"key": "周国平_134", "name": "周国平", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/50a452615d3b1f0054662056aa25c666a12a37de.xml", "color": "#ff6b6b"},
-    {"key": "南方周末_135", "name": "南方周末", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/eeb58b367f5515e9e3b56a8517aac4f7a71ce821.xml", "color": "#ff6b6b"},
-    {"key": "财新_136", "name": "财新", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/871af46d93b7b7370c4ab65330e5d9599f7f540c.xml", "color": "#ff6b6b"},
-    {"key": "三联生活周刊_137", "name": "三联生活周刊", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/29d9e4b80072d04e39dc5a25735733853496390d.xml", "color": "#ff6b6b"},
-    {"key": "一席_138", "name": "一席", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/4f8c07cc1c9eee6998b27eb99d7f134778871f0f.xml", "color": "#ff6b6b"},
-    {"key": "xiaomi_mimo_139", "name": "Xiaomi MiMo", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/19c2af88005704d49ea397c203dcb45339532946.xml", "color": "#ff6b6b"},
-    {"key": "钉钉_140", "name": "钉钉", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/3291b88d0dc81c3c094752f756256c715d038a7b.xml", "color": "#ff6b6b"},
-    {"key": "飞书_141", "name": "飞书", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/acae39126a4fe47d9c99714708d606f5c3ab0169.xml", "color": "#ff6b6b"},
-    {"key": "携程技术_142", "name": "携程技术", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/b5d5237d609fe96d74ae9d0241ffa8daad2f147b.xml", "color": "#ff6b6b"},
-    {"key": "蚂蚁技术anttech_143", "name": "蚂蚁技术AntTech", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/15738401f49466ad01b324b69f779f9bef0cb3e7.xml", "color": "#ff6b6b"},
-    {"key": "爱奇艺技术产品团队_144", "name": "爱奇艺技术产品团队", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/8fbf4e8a45332ee325cf68cb15733c5d67e1dca4.xml", "color": "#ff6b6b"},
-    {"key": "丁香医生_145", "name": "丁香医生", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/88a040c0813d22de5d8ffa62131ae40fa70f765f.xml", "color": "#ff6b6b"},
-    {"key": "saas白夜行_146", "name": "SaaS白夜行", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/a0f20f6277c356668a2567632a67e15b0413f395.xml", "color": "#ff6b6b"},
-    {"key": "世界银行_147", "name": "世界银行", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/8914290fa6b113568831e7e8ae52a3c9cbd061e4.xml", "color": "#ff6b6b"},
-    {"key": "老俞闲话_148", "name": "老俞闲话", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/3af3c0ee7e1a66619e1ca08c56c2147b790102b7.xml", "color": "#ff6b6b"},
-    {"key": "小林coding_149", "name": "小林coding", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/63357dd728b2d9de9bc4b0cc9fac6fedbab64dc2.xml", "color": "#ff6b6b"},
-    {"key": "斯坦福社会创新评论_150", "name": "斯坦福社会创新评论", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/176467712d648b3d629e9a5c229630883cd16eb7.xml", "color": "#ff6b6b"},
-    {"key": "谷雨实验室_151", "name": "谷雨实验室", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/32a2be6b236d2d781cc673bfb7dc2e4ad90916b3.xml", "color": "#ff6b6b"},
-    {"key": "每日豆瓣_152", "name": "每日豆瓣", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/446ef0aa21444f0f1fa2a7f9065df62e1316b029.xml", "color": "#ff6b6b"},
-    {"key": "新周刊_153", "name": "新周刊", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/caded2232a667e519168abd292ed0784d1442c69.xml", "color": "#ff6b6b"},
-    {"key": "果壳_154", "name": "果壳", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/f6110e1e1dd6986dacc3aa77cc3ea15dbe00ebdc.xml", "color": "#ff6b6b"},
-    {"key": "knowyourself_155", "name": "KnowYourself", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/bacffc35c016c560bb0bb4964dd817716ce87ce0.xml", "color": "#ff6b6b"},
-    {"key": "凤凰网财经_156", "name": "凤凰网财经", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/404573560480142fd2322430f3c1efe696cc89af.xml", "color": "#ff6b6b"},
-    {"key": "凤凰网_157", "name": "凤凰网", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/884b4351f91518b48d4e763d4afe94eee728966b.xml", "color": "#ff6b6b"},
-    {"key": "雪球_158", "name": "雪球", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/9d5320cc173fb50df6aadf7e7756d30e5fefa1c3.xml", "color": "#ff6b6b"},
-    {"key": "财联社_159", "name": "财联社", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/8e9c7dfaf07013f4da379dd0f87c3a298f2ed501.xml", "color": "#ff6b6b"},
-    {"key": "张佳玮写字的地方_160", "name": "张佳玮写字的地方", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/5019ddf8938007d443a07a12874aa10d3a5bdfb5.xml", "color": "#ff6b6b"},
-    {"key": "投资界_161", "name": "投资界", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/94251955e48961a24956ccb721652d02c75a75d0.xml", "color": "#ff6b6b"},
-    {"key": "央视财经_162", "name": "央视财经", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/f53a1ab575594fbfdcb65815157c1eccf2de048a.xml", "color": "#ff6b6b"},
-    {"key": "支付宝体验科技_163", "name": "支付宝体验科技", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/666d6e30c773dd35ecc593866bab680db95b27f2.xml", "color": "#ff6b6b"},
-    {"key": "秋芝2046_164", "name": "秋芝2046", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/d1a81ccce98b8faae6018498fa743eaca5db68c0.xml", "color": "#ff6b6b"},
-    {"key": "吴鲁加_165", "name": "吴鲁加", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/657f15577e56c95966cd81e48129ff9abf33ab97.xml", "color": "#ff6b6b"},
-    {"key": "香帅的金融江湖_166", "name": "香帅的金融江湖", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/14cb1167539ceb3e3b235e1fb01e478056244e23.xml", "color": "#ff6b6b"},
-    {"key": "效率火箭_167", "name": "效率火箭", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/86d7291e830e7503595cb126a6d225fb80d7c1ae.xml", "color": "#ff6b6b"},
-    {"key": "高可用架构_168", "name": "高可用架构", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ee1046514840272a85fe7f67731bc322a0a2c18d.xml", "color": "#ff6b6b"},
-    {"key": "腾讯云中间件_169", "name": "腾讯云中间件", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/bf602c1e692b10b8f0192f2379d0f64dee58eba0.xml", "color": "#ff6b6b"},
-    {"key": "虎嗅app_170", "name": "虎嗅APP", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/804d04874a3bbfce3cdc4ad0a0b5520943b9f551.xml", "color": "#ff6b6b"},
-    {"key": "雷峰网_171", "name": "雷峰网", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/5e4d00adff41e5f5b2bd823215c9949e7e678bd5.xml", "color": "#ff6b6b"},
-    {"key": "钛媒体_172", "name": "钛媒体", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/3d5672d87be7aba570671c8cb2fdbda36a5dfd9e.xml", "color": "#ff6b6b"},
-    {"key": "paperweekly_173", "name": "PaperWeekly", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/0120e999fc95e098c74bd5482a2a4c8407c42c38.xml", "color": "#ff6b6b"},
-    {"key": "智能涌现_174", "name": "智能涌现", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/049f4d78f94b31ab6afda95b1a65f0e562c8d5c2.xml", "color": "#ff6b6b"},
-    {"key": "飞哥说ai_175", "name": "飞哥说AI", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/31c318a7a9660e5b2391115b0f83839f486570eb.xml", "color": "#ff6b6b"},
-    {"key": "水木人工智能学堂_176", "name": "水木人工智能学堂", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/87c921eb79326f3c51b4bc6a1704e8dc0420807e.xml", "color": "#ff6b6b"},
-    {"key": "从码农到工匠_177", "name": "从码农到工匠", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/62cea86161773d55ff6ce9227ab38f0a7c6051c0.xml", "color": "#ff6b6b"},
-    {"key": "快刀青衣_178", "name": "快刀青衣", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/b528adeff7b27026e7a69163ad77f262d99b33a4.xml", "color": "#ff6b6b"},
-    {"key": "hellosreagent_179", "name": "HelloSREAgent", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/e0e96fb81b9b94067a27f8027462bea49cde20c3.xml", "color": "#ff6b6b"},
-    {"key": "mactalk_180", "name": "MacTalk", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/a657b0a3a865418b8ed7c619214cd4b8c7a28218.xml", "color": "#ff6b6b"},
-    {"key": "刘言飞语_181", "name": "刘言飞语", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/0bbf4e1271c70b60721eb2ce4126f11943d14558.xml", "color": "#ff6b6b"},
-    {"key": "产品二姐_182", "name": "产品二姐", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/55de4108d258a231633eafd1810377e2bd674c8c.xml", "color": "#ff6b6b"},
-    {"key": "ai大模型应用实践_183", "name": "AI大模型应用实践", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ab58feca07412e57049e5d8561439c3fb35783c2.xml", "color": "#ff6b6b"},
-    {"key": "王吉伟_184", "name": "王吉伟", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/9ebca45070e74a337b19ca8ff87490194a2b4060.xml", "color": "#ff6b6b"},
-    {"key": "风叔云_185", "name": "风叔云", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c02b5c42c685455f9fbe1da955d87567ea08d63f.xml", "color": "#ff6b6b"},
-    {"key": "脑极体_186", "name": "脑极体", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/5044161439fe8773e9d906a04d6df8f711e770ea.xml", "color": "#ff6b6b"},
-    {"key": "麦肯锡_187", "name": "麦肯锡", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6e3fe51cfebc623cfe8ac3cd8b4eed63c851c777.xml", "color": "#ff6b6b"},
-    {"key": "麻省理工科技评论app_188", "name": "麻省理工科技评论APP", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/b776c2d89a99c852e9eb17d0d46f7f6d79febde4.xml", "color": "#ff6b6b"},
-    {"key": "砺石商业评论_189", "name": "砺石商业评论", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/5cdd765d3973322da7992e0c919a99246fbcd0fc.xml", "color": "#ff6b6b"},
-    {"key": "通往agi之路_190", "name": "通往AGI之路", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ddc8d4d93c8ab3faa82675c2797aed5069cbc6f0.xml", "color": "#ff6b6b"},
-    {"key": "小互ai_191", "name": "小互AI", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/d87570ae13ab1ce240cd538181c131a8baebce4b.xml", "color": "#ff6b6b"},
-    {"key": "喔家archiself_192", "name": "喔家ArchiSelf", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/a68a06d7c803848f0b6fb9604fd68b3ba65e148f.xml", "color": "#ff6b6b"},
-    {"key": "乱翻书_193", "name": "乱翻书", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/43e3aa5cabe4ae49ec50410ecefc859d4501aedf.xml", "color": "#ff6b6b"},
-    {"key": "见实_194", "name": "见实", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/194b072227430108e54f40a67c9a514aff599a2f.xml", "color": "#ff6b6b"},
-    {"key": "zartbot_195", "name": "zartbot", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/12557a2985e797b6cf8dc5079016dbb58bc8664d.xml", "color": "#ff6b6b"},
-    {"key": "产品犬舍_196", "name": "产品犬舍", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/39221421bad19cf3c0041ba27b11618dc1123e75.xml", "color": "#ff6b6b"},
-    {"key": "字节跳动开源_197", "name": "字节跳动开源", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/bbe26264379897525e0803213c617b4c3c205f5f.xml", "color": "#ff6b6b"},
-    {"key": "二一的笔记_198", "name": "二一的笔记", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/be5a304ec616b24307b08e9b8d509f7db9be9b24.xml", "color": "#ff6b6b"},
-    {"key": "一泽eze_199", "name": "一泽Eze", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/e0f763bed9b986b261814acd3f0afa0200db4645.xml", "color": "#ff6b6b"},
-    {"key": "前端开发爱好者_200", "name": "前端开发爱好者", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/e208f73e985a4e9fe0af8ff46e3748af8764871d.xml", "color": "#ff6b6b"},
-    {"key": "南京发布_201", "name": "南京发布", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/681f69fea8433abc28c5c7c7a03b6b7b51b66690.xml", "color": "#ff6b6b"},
-    {"key": "网信中国_202", "name": "网信中国", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c41dc7a4e9417519b0158564ad71474f6f8bd296.xml", "color": "#ff6b6b"},
-    {"key": "网信北京_203", "name": "网信北京", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/252b77943894dfaa846848b155ba4a576759981e.xml", "color": "#ff6b6b"},
-    {"key": "公安部网安局_204", "name": "公安部网安局", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/10920f6c84277afcd319a28689d91892c837189c.xml", "color": "#ff6b6b"},
-    {"key": "方伟看十年_205", "name": "方伟看十年", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/eaf95898f79359a2e689481c249e4009cde21bd6.xml", "color": "#ff6b6b"},
-    {"key": "写代码的宝哥_206", "name": "写代码的宝哥", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/39407ad821c78811f088d038d4c33d07696f2122.xml", "color": "#ff6b6b"},
-    {"key": "phodal_207", "name": "phodal", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/1ee069bd83f544b3973ed86e75b3c3126ddeb173.xml", "color": "#ff6b6b"},
-    {"key": "毛有话说_208", "name": "毛有话说", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/4d8e24304b901d974a773c00c12bc87f1c7eaf4d.xml", "color": "#ff6b6b"},
-    {"key": "nov心理_209", "name": "NOV心理", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/360c6d90937821e93a076066b7f72401680491bd.xml", "color": "#ff6b6b"},
-    {"key": "泽平宏观_210", "name": "泽平宏观", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/4457d527901114d399a081ba4cf74688617a0ff4.xml", "color": "#ff6b6b"},
-    {"key": "峰瑞资本_211", "name": "峰瑞资本", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/add0d6261e87b188e868179f1dc5afc0a5d06c3f.xml", "color": "#ff6b6b"},
-    {"key": "高瓴时间_212", "name": "高瓴时间", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/48cf51f4ce98b1a44be820caf6bec3f7e40fae0c.xml", "color": "#ff6b6b"},
-    {"key": "高瓴创投_213", "name": "高瓴创投", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c678fe78920139132d57163ee5612dc880566ce4.xml", "color": "#ff6b6b"},
-    {"key": "聪明投资者_214", "name": "聪明投资者", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/d141c2a7c08d56f573b32c7e2f09b6ee779dc51d.xml", "color": "#ff6b6b"},
-    {"key": "中金点睛_215", "name": "中金点睛", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/5d4eef298108dd63ce77f40257436e0585bab425.xml", "color": "#ff6b6b"},
-    {"key": "也谈钱_216", "name": "也谈钱", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c89b83a7d10ad638414aed3a3524e2a32566a8fa.xml", "color": "#ff6b6b"},
-    {"key": "山行资本_217", "name": "山行资本", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/76787a745daab4bbc83fe3155aa74aaa1d54c7a0.xml", "color": "#ff6b6b"},
-    {"key": "格隆汇app_218", "name": "格隆汇APP", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/379ce45e27b2c096121d11c0eccdda4cc15511de.xml", "color": "#ff6b6b"},
-    {"key": "棱镜_219", "name": "棱镜", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ebf208faff5c5ad865ab5e5a30548633f3b51da7.xml", "color": "#ff6b6b"},
-    {"key": "海豚研究_220", "name": "海豚研究", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/60b1f9007c87ab75cd83314bf5cfede30addd40a.xml", "color": "#ff6b6b"},
-    {"key": "经济观察报_221", "name": "经济观察报", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/d930069e140c08f249e636f46a2c1f03182b3d0f.xml", "color": "#ff6b6b"},
-    {"key": "21世纪经济报道_222", "name": "21世纪经济报道", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c6a39cae0e7e0979ed9f2eece16695c5f664f147.xml", "color": "#ff6b6b"},
-    {"key": "老钱说钱_223", "name": "老钱说钱", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/88fb06f77c904a2a8b2077ed5bf2b62817b2c59f.xml", "color": "#ff6b6b"},
-    {"key": "老钱日日谈_224", "name": "老钱日日谈", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6e8528014a81863ccd43207355399c224314e405.xml", "color": "#ff6b6b"},
-    {"key": "东方财富网_225", "name": "东方财富网", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/704303062c285fa1417079b9c95c5c143378bbd8.xml", "color": "#ff6b6b"},
-    {"key": "郑立涛_226", "name": "郑立涛", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/14fb6a008b286103e05bc153c9dc37d7f5d42c36.xml", "color": "#ff6b6b"},
-    {"key": "佳芮的创业笔记_227", "name": "佳芮的创业笔记", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/5aa6b8e04fc2fbf62166365c6b87cea2ecf3d44a.xml", "color": "#ff6b6b"},
-    {"key": "财经早餐_228", "name": "财经早餐", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/fa79da40977d8741fa9ec8a24989718f0707cfcf.xml", "color": "#ff6b6b"},
-    {"key": "中国新闻周刊_229", "name": "中国新闻周刊", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/d54b08f4e62345d5516c26fbff3de9e499f18cfb.xml", "color": "#ff6b6b"},
-    {"key": "第一财经_230", "name": "第一财经", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/e2cc4ff2ae914ebfd4150420ece80dd93be7a6d9.xml", "color": "#ff6b6b"},
-    {"key": "券商中国_231", "name": "券商中国", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/eb2d4afb6b3f89a5dda9f796a95ca5372bd83621.xml", "color": "#ff6b6b"},
-    {"key": "单读_232", "name": "单读", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/62c32960749b3c7ec9e2619525df1f2f009aaa86.xml", "color": "#ff6b6b"},
-    {"key": "艾逗笔_233", "name": "艾逗笔", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/31cf8adcf5ad2bfe8cbd8409c6d84c08784d2ca5.xml", "color": "#ff6b6b"},
-    {"key": "腾讯nba_234", "name": "腾讯NBA", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/b8cdac6015dab300f2468038221dfd297dceacc1.xml", "color": "#ff6b6b"},
-    {"key": "苏群_235", "name": "苏群", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/297ed052ab6f3726d9933df0961f025beb36542c.xml", "color": "#ff6b6b"},
-    {"key": "篮球先锋报_236", "name": "篮球先锋报", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/f076b25e8c5358880e9f7c8ceec58992feb5562f.xml", "color": "#ff6b6b"},
-    {"key": "杨毅侃球_237", "name": "杨毅侃球", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/265c3ebcfe26f9455a4f650a806483c9950a3958.xml", "color": "#ff6b6b"},
-    {"key": "懂球娘娘_238", "name": "懂球娘娘", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/67246a8ef8bfcc82ae693fbb5ebd5567f6ae139e.xml", "color": "#ff6b6b"},
-    {"key": "足球报_239", "name": "足球报", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6f55a87674766367be332b6d463021613c2b8630.xml", "color": "#ff6b6b"},
-    {"key": "体坛周报_240", "name": "体坛周报", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/43e3b2bdf6d571e6b0cb02441d4046509ce61a38.xml", "color": "#ff6b6b"},
-    {"key": "澎湃运动家_241", "name": "澎湃运动家", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c27cf2dba8368d4cf9f93d9d85ee63fafc69fa0e.xml", "color": "#ff6b6b"},
-    {"key": "五星体育_242", "name": "五星体育", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/560bc0b98b3535e6e74ce318eb215a7a5301b1db.xml", "color": "#ff6b6b"},
-    {"key": "天下足球_243", "name": "天下足球", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/8b16711ae36ee21d44e7c2c12329ed56ffe64ae2.xml", "color": "#ff6b6b"},
-    {"key": "央视网体育_244", "name": "央视网体育", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/adf8efe8a3e3ba537ad768152f8458112486131e.xml", "color": "#ff6b6b"},
-    {"key": "央视新闻_245", "name": "央视新闻", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/3ab1b6ca312f460cef0a80a0e2dd757c6104dd46.xml", "color": "#ff6b6b"},
-    {"key": "环球时报_246", "name": "环球时报", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/9a99611016a68f3d04407bbbd5f6ace3d00fda11.xml", "color": "#ff6b6b"},
-    {"key": "新华社_247", "name": "新华社", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6671f30c6010d2efdd1338836e6063748b5f1e0e.xml", "color": "#ff6b6b"},
-    {"key": "每日经济新闻_248", "name": "每日经济新闻", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/2a223faf5b8fdf7b95e2ad2f7ab8bfb8e21e5075.xml", "color": "#ff6b6b"},
-    {"key": "腾讯财经_249", "name": "腾讯财经", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/2bbef5993740fcd6ed968d19203962f24db7b442.xml", "color": "#ff6b6b"},
-    {"key": "乒乓世界_250", "name": "乒乓世界", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/3b6a03a990ff85053770442121052b9c769306ca.xml", "color": "#ff6b6b"},
-    {"key": "南风窗_251", "name": "南风窗", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ae718c0cb66cf853eb83a435dc99341942948878.xml", "color": "#ff6b6b"},
-    {"key": "央广网_252", "name": "央广网", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/2d579b20439bc8e6bb94a3cac7877425a10c85f3.xml", "color": "#ff6b6b"},
-    {"key": "科普中国_253", "name": "科普中国", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/54afcdd9db381d5e4a9469d08479b34b8a59d78c.xml", "color": "#ff6b6b"},
-    {"key": "网球之家_254", "name": "网球之家", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/64a019a1e45694a099bfb865ef40ffe944f47cb4.xml", "color": "#ff6b6b"},
-    {"key": "晚点对话_255", "name": "晚点对话", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/7d94425ba74a9342a26b19cade3dcf4208038a43.xml", "color": "#ff6b6b"},
-    {"key": "aibase基地_256", "name": "AIBase基地", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/27b06b577fc8f39566b7653621a376479ef3e3a8.xml", "color": "#ff6b6b"},
-    {"key": "非凡产研_257", "name": "非凡产研", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/fb99bd76d9b9a99155d2f9e03868d29eb43ea3fb.xml", "color": "#ff6b6b"},
-    {"key": "晚点ai_258", "name": "晚点AI", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/316def62ee3a6d499bf3981ffe22a09bf7256265.xml", "color": "#ff6b6b"},
-    {"key": "洞见_259", "name": "洞见", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/726da95f547b13ddd0d973689951e662c7ef18c6.xml", "color": "#ff6b6b"},
-    {"key": "十点读书_260", "name": "十点读书", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ab06f5f1e4d78417466bd4ff3330d36284ba0503.xml", "color": "#ff6b6b"},
-    {"key": "人民日报_261", "name": "人民日报", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/492cbcab81fba00ffe2d16199c2170f8c1830bb3.xml", "color": "#ff6b6b"},
-    {"key": "央视网_262", "name": "央视网", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/d2731f73d40fb0b4bac0536080ba43203d96134e.xml", "color": "#ff6b6b"},
-    {"key": "跑步指南_263", "name": "跑步指南", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/d130728bb7a2615be7894053b86e9c0918e64be5.xml", "color": "#ff6b6b"},
-    {"key": "生命时报_264", "name": "生命时报", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/1e168442323bbd9dc309ecdcb6172ad80f4e2bad.xml", "color": "#ff6b6b"},
-    {"key": "梅斯医学_265", "name": "梅斯医学", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/f062c077bc14545b7c8ebc429fc9883a73d50f36.xml", "color": "#ff6b6b"},
-    {"key": "cctv生活圈_266", "name": "CCTV生活圈", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/f0b0023f42c51e9ebe2ea63c514403098675802e.xml", "color": "#ff6b6b"},
-    {"key": "每晚一卷书_267", "name": "每晚一卷书", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/0d967f0498349ffa915e9bef7b51c7d0db0dff47.xml", "color": "#ff6b6b"},
-    {"key": "看理想_268", "name": "看理想", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/8e89bd4921808bd78b1a6a1310c1f333588aea32.xml", "color": "#ff6b6b"},
-    {"key": "罗辑思维_269", "name": "罗辑思维", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/63deef75fd7e51c6717d17d9215d1969f99f401c.xml", "color": "#ff6b6b"},
-    {"key": "叶檀财经_270", "name": "叶檀财经", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6c0b8961f68734b500af357c85e31bd77b9107e9.xml", "color": "#ff6b6b"},
-    {"key": "张湧说财经_271", "name": "张湧说财经", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ca54330be89d40f35f8ec253a253d32fdb9d5549.xml", "color": "#ff6b6b"},
-    {"key": "wind万得_272", "name": "Wind万得", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/db72a8e611d59e9184668bbdf5089fb298cde97d.xml", "color": "#ff6b6b"},
-    {"key": "功夫财经_273", "name": "功夫财经", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6471fce0de540deb1b8b977824aab1c86487fcfd.xml", "color": "#ff6b6b"},
-    {"key": "混知_274", "name": "混知", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/b9b0a09ada656c4064bce64776131a8495870ea2.xml", "color": "#ff6b6b"},
-    {"key": "科技美学_275", "name": "科技美学", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/72a33b2505db2ae3feebe81d72508f1915b96f3d.xml", "color": "#ff6b6b"},
-    {"key": "心智工具箱_276", "name": "心智工具箱", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/f6dd3f7a5ed195c85e62c52a41f95defcd560588.xml", "color": "#ff6b6b"},
-    {"key": "iamsujie_277", "name": "iamsujie", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/d4a1f467bf0d41f72ed827ed0ff2f8e93695828a.xml", "color": "#ff6b6b"},
-    {"key": "一条_278", "name": "一条", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/8b41f783bf37ab39171e6da45730047e0e65e660.xml", "color": "#ff6b6b"},
-    {"key": "中国国家地理_279", "name": "中国国家地理", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/7bd19c521ac941dc14c425a562c80b6db2914e0d.xml", "color": "#ff6b6b"},
-    {"key": "混沌学园_280", "name": "混沌学园", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/320f3eb9bb5d025eff72a56c920e1a85a6418363.xml", "color": "#ff6b6b"},
-    {"key": "携隐melody_281", "name": "携隐Melody", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/42992fc03cdcee9ef03dfc4623b538b18dd923ce.xml", "color": "#ff6b6b"},
-    {"key": "集智俱乐部_282", "name": "集智俱乐部", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/bb50f406adb7c85720fcbf0882dc84887f81b67a.xml", "color": "#ff6b6b"},
-    {"key": "格兰投研_283", "name": "格兰投研", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/fdb968fa04c741aee954dc36c25d3dee8063ecee.xml", "color": "#ff6b6b"},
-    {"key": "区块链头条_284", "name": "区块链头条", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/f071affb5e43886a3ad54df80568942d645558af.xml", "color": "#ff6b6b"},
-    {"key": "转转技术_285", "name": "转转技术", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/321ca7771cad36a3875e232d2a7bec9049dd2ed3.xml", "color": "#ff6b6b"},
-    {"key": "陈鲁豫的电影沙发_286", "name": "陈鲁豫的电影沙发", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/fee950422254d8f05a80a91d254017b0c2821ddd.xml", "color": "#ff6b6b"},
-    {"key": "半导体行业观察_287", "name": "半导体行业观察", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/39f625822b35f7573a7e70d3b27a735a3c0d24a4.xml", "color": "#ff6b6b"},
-    {"key": "饭统戴老板_288", "name": "饭统戴老板", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/5f4c620560bd63023df9fb7d330aeee524e41676.xml", "color": "#ff6b6b"},
-    {"key": "远川研究所_289", "name": "远川研究所", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/fae262a71b2c0f867011d3c40e02bff3272d90df.xml", "color": "#ff6b6b"},
-    {"key": "caoz的梦呓_290", "name": "caoz的梦呓", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/8e2047ef236238b91abf91562b79ef4a1e7ba39d.xml", "color": "#ff6b6b"},
-    {"key": "孤独大脑_291", "name": "孤独大脑", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/700f40ffc993431fec55d910ceee880fb4e4eec3.xml", "color": "#ff6b6b"},
-    {"key": "孟岩_292", "name": "孟岩", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/625e18375243cf380f7f1bcec4b0b3d79e5a3dea.xml", "color": "#ff6b6b"},
-    {"key": "appso_293", "name": "APPSO", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/4ae111e5b509609a5ee96c9894f1868fbafd793e.xml", "color": "#ff6b6b"},
-    {"key": "i食色摇闲情_294", "name": "i食色摇闲情", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ac6aa8f5f74483ec103b07458e0525413fee037f.xml", "color": "#ff6b6b"},
-    {"key": "地球知识局_295", "name": "地球知识局", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c8500fccbf17324e8e865ef13e1fe972c946ee7c.xml", "color": "#ff6b6b"},
-    {"key": "星球研究所_296", "name": "星球研究所", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/1626938486da8a55e24292d98188a33aa4a6050b.xml", "color": "#ff6b6b"},
-    {"key": "利维坦_297", "name": "利维坦", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/46777e07507a7009d645c1ec89917c39ba65334a.xml", "color": "#ff6b6b"},
-    {"key": "小众消息_298", "name": "小众消息", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/317e436475d34a5cfdfa094e1b2cc7085413903d.xml", "color": "#ff6b6b"},
-    {"key": "互联网怪盗团_299", "name": "互联网怪盗团", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/59d988bead1c70401df2a3a11544e2c5d4df6dc3.xml", "color": "#ff6b6b"},
-    {"key": "九边_300", "name": "九边", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/b85be415c6565525bb31dffeceb24109bc5dfc77.xml", "color": "#ff6b6b"},
-    {"key": "知识分子_301", "name": "知识分子", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/e32f65752d69e5ddab37891db2849a93bde4447b.xml", "color": "#ff6b6b"},
-    {"key": "deeptech深科技_302", "name": "DeepTech深科技", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/7229d3e3e0c59e13fb0b8b3626881488bab76156.xml", "color": "#ff6b6b"},
-    {"key": "warfalcon_303", "name": "warfalcon", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/effd0ca5c05e1a8aa6937c07abff3e11266b501c.xml", "color": "#ff6b6b"},
-    {"key": "investguru_304", "name": "investguru", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/4fb41730a2fa1140fef4d0c1e8e8e70780c7a2c8.xml", "color": "#ff6b6b"},
-    {"key": "环球科学_305", "name": "环球科学", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/8cbe556234151dbfd436797112383282f3fd3b1c.xml", "color": "#ff6b6b"},
-    {"key": "廖信忠_306", "name": "廖信忠", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/349317d9f6208ffd0f0e370b297ed6120b17159b.xml", "color": "#ff6b6b"},
-    {"key": "大力如山_307", "name": "大力如山", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/e725f176952cae77a5af36a3384eceb4db9b8450.xml", "color": "#ff6b6b"},
-    {"key": "新京报书评周刊_308", "name": "新京报书评周刊", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/24adc53cf876f285c77e78254ccb8832ee14dc1c.xml", "color": "#ff6b6b"},
-    {"key": "老张投研_309", "name": "老张投研", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/90d66a1550113ac5ee878490529a3bf9f3da8c74.xml", "color": "#ff6b6b"},
-    {"key": "心木微笔_310", "name": "心木微笔", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c4be152d8568cb0de06dbf97f164579b80fe614f.xml", "color": "#ff6b6b"},
-    {"key": "知乎日报_311", "name": "知乎日报", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/66409f5474b55660063087a3aa0cee09949c60e6.xml", "color": "#ff6b6b"},
-    {"key": "真实故事计划_312", "name": "真实故事计划", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/537095dea689bedcd7bf7418cebe0a0aa57ddf4b.xml", "color": "#ff6b6b"},
-    {"key": "刘备教授_313", "name": "刘备教授", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/1491cf7d5d9179503e809e6e9ffb1da27fed027d.xml", "color": "#ff6b6b"},
-    {"key": "理想国imaginist_314", "name": "理想国imaginist", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/cecf220bb3ee02e582839f1f70df4160a8485ecf.xml", "color": "#ff6b6b"},
-    {"key": "智族life_315", "name": "智族Life", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ff3731e552a75ee48046d2266887f76671872d4f.xml", "color": "#ff6b6b"},
-    {"key": "神经现实_316", "name": "神经现实", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/66c8815235aa2853fb61e2f08d5bd930b4156cef.xml", "color": "#ff6b6b"},
-    {"key": "中科院物理所_317", "name": "中科院物理所", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ac81c77745a3add18aaaae0bc5832b2f3fb81ccc.xml", "color": "#ff6b6b"},
-    {"key": "六神磊磊读金庸_318", "name": "六神磊磊读金庸", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6bb185f6cc614c9ba70fa56b83bb785969665324.xml", "color": "#ff6b6b"},
-    {"key": "思想钢印_319", "name": "思想钢印", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/9c25c03fc6a13471a096f0737d1cdfe62a7e95bc.xml", "color": "#ff6b6b"},
-    {"key": "智族lab_320", "name": "智族Lab", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c29d01cd51dea963eb0a207501e2ee8eaf4f3d8c.xml", "color": "#ff6b6b"},
-    {"key": "原理_321", "name": "原理", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6277fa743e14d652186218225a5cff02d437d76e.xml", "color": "#ff6b6b"},
-    {"key": "标志情报局_322", "name": "标志情报局", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/5704232ef2273a7a9b40754782f61d88fdeaf902.xml", "color": "#ff6b6b"},
-    {"key": "游戏研究社_323", "name": "游戏研究社", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c522d602bc999594b7d99aa1199593b8540e4c5c.xml", "color": "#ff6b6b"},
-    {"key": "王建硕_324", "name": "王建硕", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/98bc4f50442b51ab17e9e07ff42799377abeabe2.xml", "color": "#ff6b6b"},
-    {"key": "返朴_325", "name": "返朴", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/950508da45d4ca1be856422f6fcc6c9822ea0439.xml", "color": "#ff6b6b"},
-    {"key": "澎湃新闻_326", "name": "澎湃新闻", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ed85189b22405227e975c12f106949b0b6b6e0a6.xml", "color": "#ff6b6b"},
-    {"key": "读者_327", "name": "读者", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/b16a256d8b865ffcae1bd0dda1abc584417dcbb3.xml", "color": "#ff6b6b"},
-    {"key": "半月谈_328", "name": "半月谈", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/bdc990934c9cc6339857f74131ef82bd32434f31.xml", "color": "#ff6b6b"},
-    {"key": "国家人文历史_329", "name": "国家人文历史", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/be3f8c28433331ae342e0c3dd77da3a4b29a1f0a.xml", "color": "#ff6b6b"},
-    {"key": "人民日报评论_330", "name": "人民日报评论", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/3f9af2e0fa36e1305f82f6c7e482dff731e17de9.xml", "color": "#ff6b6b"},
-    {"key": "人民网_331", "name": "人民网", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/5fd28dd56817044bc6bca1fda2babf1aab34c2ea.xml", "color": "#ff6b6b"},
-    {"key": "范冰的二次学习_332", "name": "范冰的二次学习", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/f76c4c4bac53814b2d95010ddfd75305320b5931.xml", "color": "#ff6b6b"},
-    {"key": "南方人物周刊_333", "name": "南方人物周刊", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/aad290f27f2806789b2831faacee8b1d05efe1fd.xml", "color": "#ff6b6b"},
-    {"key": "正和岛_334", "name": "正和岛", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/1c03ed468f442bd1c16633c05cc39225884f468a.xml", "color": "#ff6b6b"},
-    {"key": "界面新闻_335", "name": "界面新闻", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/8fb942f54d4395888e787210c710e58631d2dacc.xml", "color": "#ff6b6b"},
-    {"key": "浪潮工作室_336", "name": "浪潮工作室", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/4badc49b90ce718fb6f4b9e80393463916eaca77.xml", "color": "#ff6b6b"},
-    {"key": "pricetag发现好应用_337", "name": "PriceTag发现好应用", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/06ce06c7735de89c7c29df15c64328a034f7c25b.xml", "color": "#ff6b6b"},
-    {"key": "红杉汇_338", "name": "红杉汇", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/fb9c7a3ba3666dc1b0956b0dac916cd5c56ecf9f.xml", "color": "#ff6b6b"},
-    {"key": "银行螺丝钉_339", "name": "银行螺丝钉", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/06bb878110fe389ca828db3bacaec38630c7ddc7.xml", "color": "#ff6b6b"},
-    {"key": "集思录_340", "name": "集思录", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/bfc272e0503b84b5f0283ff9042ba105990655ed.xml", "color": "#ff6b6b"},
-    {"key": "etf进化论_341", "name": "ETF进化论", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/0f497c4aabdb12a8831aaa266d595e971962bb68.xml", "color": "#ff6b6b"},
-    {"key": "阿虚同学_342", "name": "阿虚同学", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/8ca0eb543698f95bc5395520db5ae668949af82d.xml", "color": "#ff6b6b"},
-    {"key": "虹膜_343", "name": "虹膜", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/19ea74661aa76e0386193b971962d4a614021109.xml", "color": "#ff6b6b"},
-    {"key": "环球设计_344", "name": "环球设计", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/df56a06654519bbce26497d23d868f87fa7c06d4.xml", "color": "#ff6b6b"},
-    {"key": "日本设计小站_345", "name": "日本设计小站", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/a88e67882b9c95bb1678b5aac90e630cd5f22c19.xml", "color": "#ff6b6b"},
-    {"key": "memm设计知识分享_346", "name": "Memm设计知识分享", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/c0bcc1f9b617d41b978d5d49c1452b3395fec216.xml", "color": "#ff6b6b"},
-    {"key": "设计癖_347", "name": "设计癖", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/98a2bf21444bea3b58a241ffc864a23fbaecb36f.xml", "color": "#ff6b6b"},
-    {"key": "淘宝设计_348", "name": "淘宝设计", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6d515611c75b76de8e766e08f0beca8c491a8e82.xml", "color": "#ff6b6b"},
-    {"key": "独立鱼电影_349", "name": "独立鱼电影", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/826179f766e2376c59c01184bca683a42d0e30f9.xml", "color": "#ff6b6b"},
-    {"key": "澎湃思想市场_350", "name": "澎湃思想市场", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/96795edb72b7a9580b24e6662c46be99dd9a905a.xml", "color": "#ff6b6b"},
-    {"key": "游戏葡萄_351", "name": "游戏葡萄", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/6aadbb03d02c59093f48afa5723fa2c44d1a81dc.xml", "color": "#ff6b6b"},
-    {"key": "后浪研究所_352", "name": "后浪研究所", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/7abc9d02f335cf08a49a4957041e5a51da5883d1.xml", "color": "#ff6b6b"},
-    {"key": "太阳照常升起_353", "name": "太阳照常升起", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/ddca396fc887ac5006719b240d232ef517bca30e.xml", "color": "#ff6b6b"},
-    {"key": "githubdaily_354", "name": "GitHubDaily", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/5b195b2d021f8151ac4f81ceae54cd48f08b0632.xml", "color": "#ff6b6b"},
-    {"key": "githubstore_355", "name": "GitHubStore", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/bbc6b268b1723fa06b2d2ac382c484cb71ea90fa.xml", "color": "#ff6b6b"},
-    {"key": "一天一篇经济学人_356", "name": "一天一篇经济学人", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/fc75f34053a2d04d099e2e797b88df189f0cd76a.xml", "color": "#ff6b6b"},
-    {"key": "财经杂志_357", "name": "财经杂志", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/746c29d98c0bec3969f2613b04c4755fd4786f53.xml", "color": "#ff6b6b"},
-    {"key": "得到_358", "name": "得到", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/4284c317590bdeedcddf0cf9fccb4b1fc377c97b.xml", "color": "#ff6b6b"},
-    {"key": "帆书樊登讲书_359", "name": "帆书樊登讲书", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/eac9a519fee8d8e7c998286758a337c6daaccbae.xml", "color": "#ff6b6b"},
-    {"key": "中国金融四十人论坛_360", "name": "中国金融四十人论坛", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/effdfffc5993e7260f3766aaafafc5536b685a54.xml", "color": "#ff6b6b"},
-    {"key": "barrons巴伦_361", "name": "Barrons巴伦", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/707728196d05deab425a8dfa96f0084b6946f8cf.xml", "color": "#ff6b6b"},
-    {"key": "新榜_362", "name": "新榜", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/16647c855b3c08c6406fb029f3cd9bb826e70d0c.xml", "color": "#ff6b6b"},
-    {"key": "运营研究社_363", "name": "运营研究社", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/bc7bf2a738eebe7ef9728f407721300ac884ad74.xml", "color": "#ff6b6b"},
-    {"key": "窄播_364", "name": "窄播", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/61bdf2799e5208df45c8bbbd96ba81dd088d2483.xml", "color": "#ff6b6b"},
-    {"key": "界面文化_365", "name": "界面文化", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/b51b75b1b2696c32d91ddf300492f2678ba77a0b.xml", "color": "#ff6b6b"},
-    {"key": "design360_366", "name": "Design360", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/0caba9bee40b0d980821bc9e8d5959aa75e6c0c7.xml", "color": "#ff6b6b"},
-    {"key": "brand的好奇心_367", "name": "BranD的好奇心", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/34d96e92ccf01ddc902863a94dc390794050edd7.xml", "color": "#ff6b6b"},
-    {"key": "企鹅吃喝指南_368", "name": "企鹅吃喝指南", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/00271ca16aecf74e8bdf412d761aa9761373e85e.xml", "color": "#ff6b6b"},
-    {"key": "wallpaper中文版_369", "name": "Wallpaper中文版", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/3865e1eb71366ebddfc6d292da83fde9162e7b01.xml", "color": "#ff6b6b"},
-    {"key": "工业设计_370", "name": "工业设计", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/8d9a13f8abd8e51811fbc1df3c7b0fed7b4b2b68.xml", "color": "#ff6b6b"},
-    {"key": "点拾投资_371", "name": "点拾投资", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/e460ce1e8b48d9c4baa4fb762e93e4409c7a14fd.xml", "color": "#ff6b6b"},
-    {"key": "三折人生_372", "name": "三折人生", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/70169da59e7e342ec7b63c90351b224b50cf7cb7.xml", "color": "#ff6b6b"},
-    {"key": "小lin说的公众号_373", "name": "小Lin说的公众号", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/57bdb3ca8c26dd738f78e44985b1030c4d38ddbf.xml", "color": "#ff6b6b"},
-    {"key": "刀法研究所_374", "name": "刀法研究所", "cat": "cn_tech", "url": "https://wechat2rss.bestblogs.dev/feed/9a650290a6093330e410549cea75251cb5a3249c.xml", "color": "#ff6b6b"},
-
-    # ── BestBlogs 播客 (60) ──
-    {"key": "张小珺jùn｜商业访谈录_0", "name": "张小珺Jùn｜商业访谈录", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/626b46ea9cbbf0451cf5a962", "color": "#4ecdc4"},
-    {"key": "罗永浩的十字路口_1", "name": "罗永浩的十字路口", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/68981df29e7bcd326eb91d88", "color": "#4ecdc4"},
-    {"key": "屠龙之术_2", "name": "屠龙之术", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/6507bc165c88d2412626b401", "color": "#4ecdc4"},
-    {"key": "42章经_3", "name": "42章经", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/648b0b641c48983391a63f98", "color": "#4ecdc4"},
-    {"key": "硬地骇客_4", "name": "硬地骇客", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/640ee2438be5d40013fe4a87", "color": "#4ecdc4"},
-    {"key": "硅谷101_5", "name": "硅谷101", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e5c52c9418a84a04625e6cc", "color": "#4ecdc4"},
-    {"key": "半拿铁_|_商业沉浮录_6", "name": "半拿铁 | 商业沉浮录", "cat": "podcast", "url": "http://rsshub.bestblogs.dev/xiaoyuzhou/podcast/62382c1103bea1ebfffa1c00", "color": "#4ecdc4"},
-    {"key": "开始连接_linkstart_7", "name": "开始连接 LinkStart", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/63ff0da51b1faf8a0b70b337", "color": "#4ecdc4"},
-    {"key": "高能量_8", "name": "高能量", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/62c6ae08c4eaa82b112b9c84", "color": "#4ecdc4"},
-    {"key": "此话当真_9", "name": "此话当真", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/646f194853a5e5ea1408d97c", "color": "#4ecdc4"},
-    {"key": "牛油果烤面包_10", "name": "牛油果烤面包", "cat": "podcast", "url": "http://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e7c8b2b418a84a046e3ecbc", "color": "#4ecdc4"},
-    {"key": "晚点聊_latetalk_11", "name": "晚点聊 LateTalk", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/61933ace1b4320461e91fd55", "color": "#4ecdc4"},
-    {"key": "乱翻书_12", "name": "乱翻书", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/61358d971c5d56efe5bcb5d2", "color": "#4ecdc4"},
-    {"key": "tianyu2fm_—_对谈未知领域_13", "name": "TIANYU2FM — 对谈未知领域", "cat": "podcast", "url": "https://rsshub.xiaowuaiblog.com/xiaoyuzhou/podcast/5f22729f9504bbdb77253e46", "color": "#4ecdc4"},
-    {"key": "声动早咖啡_14", "name": "声动早咖啡", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/60de7c003dd577b40d5a40f3", "color": "#4ecdc4"},
-    {"key": "科技乱炖_15", "name": "科技乱炖", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e4243cd418a84a0469573fb", "color": "#4ecdc4"},
-    {"key": "what's_next｜科技早知道_16", "name": "What's Next｜科技早知道", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e74b52c418a84a046ecaceb", "color": "#4ecdc4"},
-    {"key": "声东击西_17", "name": "声东击西", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e2831ed418a84a046231c00", "color": "#4ecdc4"},
-    {"key": "疯投圈_18", "name": "疯投圈", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e280faf418a84a0461fbd39", "color": "#4ecdc4"},
-    {"key": "商业就是这样_19", "name": "商业就是这样", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/6022a180ef5fdaddc30bb101", "color": "#4ecdc4"},
-    {"key": "枫言枫语_20", "name": "枫言枫语", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e2864f5418a84a04628e249", "color": "#4ecdc4"},
-    {"key": "保持偏见_21", "name": "保持偏见", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/663e3c95af1e22bb157dcee3", "color": "#4ecdc4"},
-    {"key": "三五环_22", "name": "三五环", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e280fab418a84a0461faa3c", "color": "#4ecdc4"},
-    {"key": "皮蛋漫游记_23", "name": "皮蛋漫游记", "cat": "podcast", "url": "http://rsshub.bestblogs.dev/xiaoyuzhou/podcast/6281264ad22bcf3950c80b56", "color": "#4ecdc4"},
-    {"key": "ai炼金术_24", "name": "AI炼金术", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/63e9ef4de99bdef7d39944c8", "color": "#4ecdc4"},
-    {"key": "十字路口crossing_25", "name": "十字路口Crossing", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/60502e253c92d4f62c2a9577", "color": "#4ecdc4"},
-    {"key": "信号与噪声_26", "name": "信号与噪声", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/6819d5a7e37664602a344e0e", "color": "#4ecdc4"},
-    {"key": "人民公园说ai_27", "name": "人民公园说AI", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/65257ff6e8ce9deaf70a65e9", "color": "#4ecdc4"},
-    {"key": "跨国串门儿计划_28", "name": "跨国串门儿计划", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/670f3da40d2f24f28978736f", "color": "#4ecdc4"},
-    {"key": "知行小酒馆_29", "name": "知行小酒馆", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/6013f9f58e2f7ee375cf4216", "color": "#4ecdc4"},
-    {"key": "搞钱女孩_30", "name": "搞钱女孩", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/63d945ece725b5378a158d29", "color": "#4ecdc4"},
-    {"key": "起朱楼宴宾客_31", "name": "起朱楼宴宾客", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/61dd99a47b29652ff572257b", "color": "#4ecdc4"},
-    {"key": "面基_32", "name": "面基", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/6388760f22567e8ea6ad070f", "color": "#4ecdc4"},
-    {"key": "第一财经_33", "name": "第一财经", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/64c75555e8176c3ff81de98c", "color": "#4ecdc4"},
-    {"key": "无人知晓_34", "name": "无人知晓", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/611719d3cb0b82e1df0ad29e", "color": "#4ecdc4"},
-    {"key": "纵横四海_35", "name": "纵横四海", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/62694abdb221dd5908417d1e", "color": "#4ecdc4"},
-    {"key": "自我进化论_36", "name": "自我进化论", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e5de5cb418a84a0467beb90", "color": "#4ecdc4"},
-    {"key": "自习室_study_room_37", "name": "自习室 STUDY ROOM", "cat": "podcast", "url": "http://rsshub.bestblogs.dev/xiaoyuzhou/podcast/65a5fb7540d4ef949c0140ac", "color": "#4ecdc4"},
-    {"key": "慢速生长_38", "name": "慢速生长", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/668d00c38fcadceb90158ac1", "color": "#4ecdc4"},
-    {"key": "诗梳风_39", "name": "诗梳风", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/696496f4db4738160d5fabde", "color": "#4ecdc4"},
-    {"key": "谭立人_40", "name": "谭立人", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/65a2d0f07242f9fc1c1df60a", "color": "#4ecdc4"},
-    {"key": "李诞_41", "name": "李诞", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/65bb55f6513a776b57dedb32", "color": "#4ecdc4"},
-    {"key": "岩中花述_42", "name": "岩中花述", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/625635587bfca4e73e990703", "color": "#4ecdc4"},
-    {"key": "蒋方舟·一寸_43", "name": "蒋方舟·一寸", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/67c7eeb07ac3e30992e75a2f", "color": "#4ecdc4"},
-    {"key": "游荡集_44", "name": "游荡集", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/6163ca67c8c1d14e83366b31", "color": "#4ecdc4"},
-    {"key": "一席_45", "name": "一席", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e285326418a84a04627343f", "color": "#4ecdc4"},
-    {"key": "独树不成林_46", "name": "独树不成林", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/64acd33c7a3d479103fbd32d", "color": "#4ecdc4"},
-    {"key": "文化有限_47", "name": "文化有限", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e4515bd418a84a046e2b11a", "color": "#4ecdc4"},
-    {"key": "忽左忽右_48", "name": "忽左忽右", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e4ee557418a84a0466737b7", "color": "#4ecdc4"},
-    {"key": "梁永安的播客_49", "name": "梁永安的播客", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/61bc1762e5fdeb81a8db115c", "color": "#4ecdc4"},
-    {"key": "看理想圆桌_50", "name": "看理想圆桌", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e4ff4c7418a84a046977618", "color": "#4ecdc4"},
-    {"key": "不合时宜_51", "name": "不合时宜", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e280fb8418a84a0461fd076", "color": "#4ecdc4"},
-    {"key": "天真不天真_52", "name": "天真不天真", "cat": "podcast", "url": "http://rsshub.bestblogs.dev/xiaoyuzhou/podcast/65cef9e3cace72dff8d98de3", "color": "#4ecdc4"},
-    {"key": "凹凸电波_53", "name": "凹凸电波", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e2839ca418a84a0462431b7", "color": "#4ecdc4"},
-    {"key": "随机波动stochasticvolatility_54", "name": "随机波动StochasticVolatility", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e7cc741418a84a046b0c2bd", "color": "#4ecdc4"},
-    {"key": "东腔西调_55", "name": "东腔西调", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5f72b66083c34e85dd14fde9", "color": "#4ecdc4"},
-    {"key": "东亚观察局_56", "name": "东亚观察局", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e9a4e25418a84a046bc6156", "color": "#4ecdc4"},
-    {"key": "肥话连篇_57", "name": "肥话连篇", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/61d50d72ee197a3aac3dac42", "color": "#4ecdc4"},
-    {"key": "捕蛇者说_58", "name": "捕蛇者说", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/5e2864f7418a84a04628f2da", "color": "#4ecdc4"},
-    {"key": "卫诗婕｜漫谈light_the_star_59", "name": "卫诗婕｜漫谈Light the Star", "cat": "podcast", "url": "https://rsshub.bestblogs.dev/xiaoyuzhou/podcast/6627fda4b56459544087d86a", "color": "#4ecdc4"},
-
-    # ── YouTube (124) ──
-    {"key": "ai_engineer_0", "name": "AI Engineer", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCLKPca3kwwd-B59HNr-_lvA", "color": "#4ecdc4"},
-    {"key": "ai_explained_1", "name": "AI Explained", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCNJ1Ymd5yFuUPtn21xtRbbw", "color": "#4ecdc4"},
-    {"key": "ai_master_2", "name": "AI Master", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC0yHbz4OxdQFwmVX2BBQqLg", "color": "#4ecdc4"},
-    {"key": "ai_search_3", "name": "AI Search", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCIgnGlGkVRhd4qNFcEwLL4A", "color": "#4ecdc4"},
-    {"key": "ai_video_school_4", "name": "AI Video School", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCUb7KwmlVSSCnPu5KEhym8A", "color": "#4ecdc4"},
-    {"key": "aicodeking_5", "name": "AICodeKing", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC0m81bQuthaQZmFbXEY9QSw", "color": "#4ecdc4"},
-    {"key": "andrej_karpathy_6", "name": "Andrej Karpathy", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCXUPKJO5MZQN11PqgIvyuvQ", "color": "#4ecdc4"},
-    {"key": "anthropic_7", "name": "Anthropic", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCrDwWp7EBBv4NwvScIpBDOA", "color": "#4ecdc4"},
-    {"key": "assemblyai_8", "name": "AssemblyAI", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCtatfZMf-8EkIwASXM4ts0A", "color": "#4ecdc4"},
-    {"key": "claude_9", "name": "Claude", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCV03SRZXJEz-hchIAogeJOg", "color": "#4ecdc4"},
-    {"key": "cognitive_revolution_10", "name": "Cognitive Revolution", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCjNRVMBVI30Sak_p6HRWhIA", "color": "#4ecdc4"},
-    {"key": "deeplearningai_11", "name": "DeepLearningAI", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCcIXc5mJsHVYTZR1maL5l9w", "color": "#4ecdc4"},
-    {"key": "every_12", "name": "Every", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCjIMtrzxYc0lblGhmOgC_CA", "color": "#4ecdc4"},
-    {"key": "futurepedia_13", "name": "Futurepedia", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC_RovKmk0OCbuZjA8f08opw", "color": "#4ecdc4"},
-    {"key": "google_deepmind_14", "name": "Google DeepMind", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCP7jMXSY2xbc3KCAE0MHQ-A", "color": "#4ecdc4"},
-    {"key": "how_i_ai_15", "name": "How I AI", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCRYY7IEbkHLH_ScJCu9eWDQ", "color": "#4ecdc4"},
-    {"key": "hung-yi_lee_16", "name": "Hung-yi Lee", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC2ggjtuuWvxrHHHiaDH1dlQ", "color": "#4ecdc4"},
-    {"key": "langchain_17", "name": "LangChain", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCC-lyoTfSrcJzA1ab3APAgw", "color": "#4ecdc4"},
-    {"key": "last_week_in_ai_18", "name": "Last Week in AI", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCKARTq-t5SPMzwtft8FWwnA", "color": "#4ecdc4"},
-    {"key": "liam_ottley_19", "name": "Liam Ottley", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCui4jxDaMb53Gdh-AZUTPAg", "color": "#4ecdc4"},
-    {"key": "machine_learning_street_talk_20", "name": "Machine Learning Street Talk", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCMLtBahI5DMrt0NPvDSoIRQ", "color": "#4ecdc4"},
-    {"key": "matt_wolfe_21", "name": "Matt Wolfe", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UChpleBmo18P08aKCIgti38g", "color": "#4ecdc4"},
-    {"key": "mattvidpro_ai_22", "name": "MattVidPro AI", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC5Wz4fFacYuON6IKbhSa7Zw", "color": "#4ecdc4"},
-    {"key": "matthew_berman_23", "name": "Matthew Berman", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCawZsQWqfGSbCI5yjkdVkTA", "color": "#4ecdc4"},
-    {"key": "networkchuck_24", "name": "NetworkChuck", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC9x0AN7BWHpCDHSm9NiJFJQ", "color": "#4ecdc4"},
-    {"key": "nick_saraev_25", "name": "Nick Saraev", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCbo-KbSjJDG6JWQ_MTZ_rNA", "color": "#4ecdc4"},
-    {"key": "no_priors_26", "name": "No Priors", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCSI7h9hydQ40K5MJHnCrQvw", "color": "#4ecdc4"},
-    {"key": "openai_27", "name": "OpenAI", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCXZCJLdBC09xxGZ6gcdrc6A", "color": "#4ecdc4"},
-    {"key": "pika_labs_28", "name": "Pika Labs", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC0SclYU4iiQRihtmDnak-gQ", "color": "#4ecdc4"},
-    {"key": "riley_brown_29", "name": "Riley Brown", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCMcoud_ZW7cfxeIugBflSBw", "color": "#4ecdc4"},
-    {"key": "runway_30", "name": "Runway", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCUBqu_z5uP0AZhYtuyFZB3g", "color": "#4ecdc4"},
-    {"key": "siraj_raval_31", "name": "Siraj Raval", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCWN3xxRkmTPmbKwht9FuE5A", "color": "#4ecdc4"},
-    {"key": "tao_prompts_32", "name": "Tao Prompts", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCc1qMq2UBJD9cSKbeBwGoZQ", "color": "#4ecdc4"},
-    {"key": "the_ai_advantage_33", "name": "The AI Advantage", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCHhYXsLBEVVnbvsq57n1MTQ", "color": "#4ecdc4"},
-    {"key": "tina_huang_34", "name": "Tina Huang", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC2UXDak6o7rBm23k3Vv5dww", "color": "#4ecdc4"},
-    {"key": "two_minute_papers_35", "name": "Two Minute Papers", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCbfYPyITQ-7l4upoX8nvctg", "color": "#4ecdc4"},
-    {"key": "unsupervised_learning:_redpoin_36", "name": "Unsupervised Learning: Redpoint's AI Podcast", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCUl-s_Vp-Kkk_XVyDylNwLA", "color": "#4ecdc4"},
-    {"key": "wes_roth_37", "name": "Wes Roth", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCqcbQf6yw5KzRoDDcZ_wBSw", "color": "#4ecdc4"},
-    {"key": "yannic_kilcher_38", "name": "Yannic Kilcher", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCZHmQk67mSJgfCCTn7xBfew", "color": "#4ecdc4"},
-    {"key": "leerob_39", "name": "leerob", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCZMli3czZnd1uoc1ShTouQw", "color": "#4ecdc4"},
-    {"key": "跟李沐学ai_40", "name": "跟李沐学AI", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC8WCW6C3BWLKSZ5cMzD8Gyw", "color": "#4ecdc4"},
-    {"key": "acquired_41", "name": "Acquired", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCyFqFYfTW2VoIQKylJ04Rtw", "color": "#4ecdc4"},
-    {"key": "alex_kantrowitz_42", "name": "Alex Kantrowitz", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCye1YedIypHffYb8k6Gp9wg", "color": "#4ecdc4"},
-    {"key": "all-in_podcast_43", "name": "All-In Podcast", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCESLZhusAkFfsNsApnjF_Cg", "color": "#4ecdc4"},
-    {"key": "better_ideas_44", "name": "Better Ideas", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCtUId5WFnN82GdDy7DgaQ7w", "color": "#4ecdc4"},
-    {"key": "branch_education_45", "name": "Branch Education", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCdp4_l1vPmpN-gDbUwhaRUQ", "color": "#4ecdc4"},
-    {"key": "business_insider_46", "name": "Business Insider", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCcyq283he07B7_KUX07mmtA", "color": "#4ecdc4"},
-    {"key": "coldfusion_47", "name": "ColdFusion", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC4QZ_LsYcvcq7qOsOhpAX4A", "color": "#4ecdc4"},
-    {"key": "core_memory_podcast_48", "name": "Core Memory Podcast", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC2ohDbbkpfngjaeV7TBHRcg", "color": "#4ecdc4"},
-    {"key": "crashcourse_49", "name": "CrashCourse", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCX6b17PVsYBQ0ip5gyeme-Q", "color": "#4ecdc4"},
-    {"key": "curious_refuge_50", "name": "Curious Refuge", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UClnFtyUEaxQOCd1s5NKYGFA", "color": "#4ecdc4"},
-    {"key": "dwarkesh_patel_51", "name": "Dwarkesh Patel", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCXl4i9dYBrFOabk0xGmbkRA", "color": "#4ecdc4"},
-    {"key": "eo_52", "name": "EO", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UClWTCPVi-AU9TeCN6FkGARg", "color": "#4ecdc4"},
-    {"key": "google_53", "name": "Google", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCK8sQmJBp8GCxrOtXWBpyEA", "color": "#4ecdc4"},
-    {"key": "greg_isenberg_54", "name": "Greg Isenberg", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCPjNBjflYl0-HQtUvOx0Ibw", "color": "#4ecdc4"},
-    {"key": "invest_like_the_best_55", "name": "Invest Like The Best", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCpQBb0fToph3jrDulwz1iUQ", "color": "#4ecdc4"},
-    {"key": "kurzgesagt_-_in_a_nutshell_56", "name": "Kurzgesagt - In a Nutshell", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCsXVk37bltHxD1rDPwtNM8Q", "color": "#4ecdc4"},
-    {"key": "lex_fridman_57", "name": "Lex Fridman", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCSHZKyawb77ixDdsGog4iWA", "color": "#4ecdc4"},
-    {"key": "luma_58", "name": "Luma", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC45T0I4p7A3dI0XvhivafZQ", "color": "#4ecdc4"},
-    {"key": "my_first_million_59", "name": "My First Million", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCyaN6mg5u8Cjy2ZI4ikWaug", "color": "#4ecdc4"},
-    {"key": "naval_60", "name": "Naval", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCh_dVD10YuSghle8g6yjePg", "color": "#4ecdc4"},
-    {"key": "nikhil_kamath_61", "name": "Nikhil Kamath", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCnC8SAZzQiBGYVSKZ_S3y4Q", "color": "#4ecdc4"},
-    {"key": "sabin_civil_engineering_62", "name": "Sabin Civil Engineering", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCqZQJ4600a9wIfMPbYc60OQ", "color": "#4ecdc4"},
-    {"key": "silicon_valley_girl_63", "name": "Silicon Valley Girl", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCiq1FIgtEK7LRAOB1JXTPig", "color": "#4ecdc4"},
-    {"key": "statquest_with_josh_starmer_64", "name": "StatQuest with Josh Starmer", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCtYLUTtgS3k1Fg4y5tAhLbw", "color": "#4ecdc4"},
-    {"key": "stripe_65", "name": "Stripe", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCM1guA1E-RHLO2OyfQPOkEQ", "color": "#4ecdc4"},
-    {"key": "the_diary_of_a_ceo_66", "name": "The Diary Of A CEO", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCGq-a57w-aPwyi3pW7XLiHw", "color": "#4ecdc4"},
-    {"key": "the_knowledge_project_podcast_67", "name": "The Knowledge Project Podcast", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCLtTf_uKt0Itd0NG7txrwXA", "color": "#4ecdc4"},
-    {"key": "the_primetime_68", "name": "The PrimeTime", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCUyeluBRhGPCW4rPe_UvBZQ", "color": "#4ecdc4"},
-    {"key": "theoretically_media_69", "name": "Theoretically Media", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC9Ryt3XOGYBoAJVsBHNGDzA", "color": "#4ecdc4"},
-    {"key": "this_week_in_startups_70", "name": "This Week in Startups", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCkkhmBWfS7pILYIk0izkc3A", "color": "#4ecdc4"},
-    {"key": "thomas_frank_71", "name": "Thomas Frank", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCG-KntY7aVnIGXYEBQvmBAQ", "color": "#4ecdc4"},
-    {"key": "y_combinator_72", "name": "Y Combinator", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCcefcZRL2oaA_uBNeo5UOWg", "color": "#4ecdc4"},
-    {"key": "a16z_73", "name": "a16z", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC9cn0TuPq4dnbTY-CBsm8XA", "color": "#4ecdc4"},
-    {"key": "companyman_74", "name": "companyman", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCb4xHi3i7upzKMaLrauVFtg", "color": "#4ecdc4"},
-    {"key": "mrblock_區塊先生_75", "name": "mrblock 區塊先生", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCN2hSM8fBcvZBa8OOKc24eg", "color": "#4ecdc4"},
-    {"key": "struthless_76", "name": "struthless", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCvcEBQ0K3UsQ8bzWKHKQmbw", "color": "#4ecdc4"},
-    {"key": "patrick_boyle_77", "name": "Patrick Boyle", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCASM0cgfkJxQ1ICmRilfHLw", "color": "#4ecdc4"},
-    {"key": "sequoia_capital_78", "name": "Sequoia Capital", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCWrF0oN6unbXrWsTN7RctTw", "color": "#4ecdc4"},
-    {"key": "andrew_huberman_79", "name": "Andrew Huberman", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC2D2CMWXMOVWx7giW1n3LIg", "color": "#4ecdc4"},
-    {"key": "chris_williamson_80", "name": "Chris Williamson", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCIaH-gZIVC432YRjNVvnyCA", "color": "#4ecdc4"},
-    {"key": "mrbeast_81", "name": "MrBeast", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCX6OQ3DkcsbYNE6H8uQQuVA", "color": "#4ecdc4"},
-    {"key": "national_geographic_82", "name": "National Geographic", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCpVm7bg6pXKo1Pr6k5kxG9A", "color": "#4ecdc4"},
-    {"key": "powerfuljre_83", "name": "PowerfulJRE", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCzQUP1qoWDoEbmsQxvdjxgQ", "color": "#4ecdc4"},
-    {"key": "smartereveryday_84", "name": "SmarterEveryDay", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC6107grRI4m0o2-emgoDnAA", "color": "#4ecdc4"},
-    {"key": "white_cube_youtube_85", "name": "White Cube YouTube", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC488ANgGUANDqqhlr_eF9JQ", "color": "#4ecdc4"},
-    {"key": "一席_86", "name": "一席", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCKFB_rVEFEF3l-onQGvGx1A", "color": "#4ecdc4"},
-    {"key": "一条_87", "name": "一条", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCulFhrW_YCwkq_BP16C82mA", "color": "#4ecdc4"},
-    {"key": "ted_88", "name": "TED", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCAuUUnT6oDeKwE6v1NGQxug", "color": "#4ecdc4"},
-    {"key": "aj&smart_89", "name": "AJ&Smart", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCeB_OpLspKJGiKv1CYkWFFw", "color": "#4ecdc4"},
-    {"key": "designcourse_90", "name": "DesignCourse", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCVyRiMvfUNMA1UPlDPzG5Ow", "color": "#4ecdc4"},
-    {"key": "designerup_91", "name": "DesignerUp", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCw2R8kz3aotYtV9utqf0uaw", "color": "#4ecdc4"},
-    {"key": "figma_92", "name": "Figma", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCQsVmhSa4X-G3lHlUtejzLA", "color": "#4ecdc4"},
-    {"key": "first_of_kind_93", "name": "First of Kind", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCSuJzNoyNb6ICi8punp3mCg", "color": "#4ecdc4"},
-    {"key": "flux_academy_94", "name": "Flux Academy", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCN7dywl5wDxTu1RM3eJ_h9Q", "color": "#4ecdc4"},
-    {"key": "lenny's_podcast_95", "name": "Lenny's Podcast", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC6t1O76G0jYXOAoYCm153dA", "color": "#4ecdc4"},
-    {"key": "mind_the_product_96", "name": "Mind the Product", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCiT1BmYvOBsEvU9iw0076Sw", "color": "#4ecdc4"},
-    {"key": "nngroup_97", "name": "NNgroup", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC2oCugzU6W8-h95W7eBTUEg", "color": "#4ecdc4"},
-    {"key": "product_school_98", "name": "Product School", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC6hlQ0x6kPbAGjYkoz53cvA", "color": "#4ecdc4"},
-    {"key": "the_futur_99", "name": "The Futur", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC-b3c7kxa5vU-bnmaROgvog", "color": "#4ecdc4"},
-    {"key": "yobi321_100", "name": "yobi321", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCB_DbqNN9w30tnyWJSrIwyA", "color": "#4ecdc4"},
-    {"key": "3blue1brown_101", "name": "3Blue1Brown", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCYO_jab_esuFRV4b17AJtAw", "color": "#4ecdc4"},
-    {"key": "ali_abdaal_102", "name": "Ali Abdaal", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCoOae5nYA7VqaXzerajD0lg", "color": "#4ecdc4"},
-    {"key": "anthony_vicino_103", "name": "Anthony Vicino", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCpTupIxGdmt3sTpOHjegwxQ", "color": "#4ecdc4"},
-    {"key": "justin_sung_104", "name": "Justin Sung", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC2Zs9v2hL2qZZ7vsAENsg4w", "color": "#4ecdc4"},
-    {"key": "matt_d'avella_105", "name": "Matt D'Avella", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCJ24N4O0bP7LGLBDvye7oCA", "color": "#4ecdc4"},
-    {"key": "minutephysics_106", "name": "minutephysics", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCUHW94eEFW7hkUMVaZz4eDg", "color": "#4ecdc4"},
-    {"key": "李永乐老师_107", "name": "李永乐老师", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCvNxfitQbWkmLuCd44UfrYQ", "color": "#4ecdc4"},
-    {"key": "amigoscode_108", "name": "Amigoscode", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC2KfmYEM4KCuA1ZurravgYw", "color": "#4ecdc4"},
-    {"key": "beyond_coding_109", "name": "Beyond Coding", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCdMz6KKEDW_1Qqas-ya7S6w", "color": "#4ecdc4"},
-    {"key": "bytebytego_110", "name": "ByteByteGo", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCZgt6AzoyjslHTC9dz0UoTw", "color": "#4ecdc4"},
-    {"key": "computerphile_111", "name": "Computerphile", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC9-y-6csu5WGm29I7JiwpnA", "color": "#4ecdc4"},
-    {"key": "fireship_112", "name": "Fireship", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCsBjURrPoezykLs9EqgamOA", "color": "#4ecdc4"},
-    {"key": "github_113", "name": "GitHub", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC7c3Kb6jYCRj4JOHHZTxKsQ", "color": "#4ecdc4"},
-    {"key": "hussein_nasser_114", "name": "Hussein Nasser", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC_ML5xP23TOWKUcc-oAE_Eg", "color": "#4ecdc4"},
-    {"key": "modern_software_engineering_115", "name": "Modern Software Engineering", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCCfqyGl3nq_V0bo64CjZh8g", "color": "#4ecdc4"},
-    {"key": "real_engineering_116", "name": "Real Engineering", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCR1IuLEqb6UEA_zQ81kwXfg", "color": "#4ecdc4"},
-    {"key": "ryan_peterman_117", "name": "Ryan Peterman", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCzB7YGrrxDC_POenf86H3_Q", "color": "#4ecdc4"},
-    {"key": "spring_i_o_118", "name": "Spring I/O", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCLMPXsvSrhNPN3i9h-u8PYg", "color": "#4ecdc4"},
-    {"key": "the_pragmatic_engineer_119", "name": "The Pragmatic Engineer", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCPbwhExawYrn9xxI21TFfyw", "color": "#4ecdc4"},
-    {"key": "theo_-_t3․gg_120", "name": "Theo - t3․gg", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCbRP3c757lWg9M-U7TyEkXA", "color": "#4ecdc4"},
-    {"key": "traversy_media_121", "name": "Traversy Media", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC29ju8bIPH5as8OGnQzwJyA", "color": "#4ecdc4"},
-    {"key": "web_dev_simplified_122", "name": "Web Dev Simplified", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCFbNIlppjAuEX4znoulh0Cw", "color": "#4ecdc4"},
-    {"key": "freecodecamp.org_123", "name": "freeCodeCamp.org", "cat": "youtube", "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UC8butISFwT-Wl7EV0hUK0BQ", "color": "#4ecdc4"},
-
-]
 
 # 分类标签
 CATEGORY_LABELS = {
@@ -1148,11 +1127,11 @@ CATEGORY_LABELS = {
     "dev":     "开发者",
     "news":    "综合新闻",
     "podcast": "播客",
-    "youtube": "YouTube",
+    "twitter": "Twitter/X",
 }
 
 # 分类排序（公众号置顶）
-CATEGORY_ORDER = ["wechat", "ai", "tech", "cn_tech", "dev", "news", "podcast", "youtube"]
+CATEGORY_ORDER = ["wechat", "ai", "tech", "cn_tech", "dev", "news", "twitter", "podcast"]
 
 # ── 公众号信源自动归类：wechat2rss URL → cat=wechat ──
 for _s in RSS_SOURCES:
@@ -1161,6 +1140,13 @@ for _s in RSS_SOURCES:
 
 ITEMS_PER_SOURCE = 30
 FETCH_TIMEOUT = 8
+# 单个 feed 的读取上限。曾经写死 5_000_000，把 4 个健康源（实测 10.5/7.8/7.4/5.5MB）
+# 切在 CDATA 中间 → ET 报 "unclosed CDATA" → 整源 0 条，看起来像上游 XML 坏了。
+# 12MB 覆盖已观测最大值(10.5MB)只留 14% 余量，但代价是悬崖式的：踩线即整源归零。
+# 内存由并发度决定而非源数：实测 12.2MB 的 feed 走完 read→decode→建树→抽字段
+# 峰值约 71MB（≈原文 5.8 倍），全局并发 12 同级 ≈ 850MB；再叠上下面那段 CDATA
+# 回退会复制全文并二次建树。要抬这个数，必须同时把回退改成不复制全文。
+MAX_FEED_BYTES = 12 * 1024 * 1024
 TRANSLATE_TIMEOUT = 3
 
 
@@ -1218,6 +1204,417 @@ def _pick_item_image(it, desc_raw, content_raw):
         return ""
 
 
+# ── 封面"必挂域名"判空表（③#1）───────────────────────────────
+# 证据：docs/排查记录.md 2026-10-01 逐源实测。只收录**浏览器(带系统代理)与 Node 直连
+# 两条通道都取不到**的域名 —— 只有代理侧挂、直连侧通的（pbs.twimg.com / cdn.hk01.com 等）
+# 不进这张表，否则会把能显示的封面一起清掉。按域名而非按 URL 是因为已明确不做构建期探活。
+_BAD_COVER_HOSTS = frozenset({
+    "ichef.bbci.co.uk",          # BBC 全系 305/305 挂：DNS 投毒 + schannel 握手失败
+    "i.guim.co.uk",              # 卫报 92 张 401，换 UA/Referer 四种组合同挂
+    "npr.brightspotcdn.com",     # NPR 54 张 403
+    "external-preview.redd.it",  # Reddit 预览图 24 张 ECONNRESET
+    "ops.xhyun.news.cn",         # 新华社内网 OSS，公网 NXDOMAIN
+})
+
+_bad_cover_hits = {}
+_bad_cover_lock = threading.Lock()
+
+
+def _cover_host(url):
+    """封面 URL 的 host（小写、去 userinfo 与端口）；非 http(s) 返回空串。"""
+    s = str(url or "").strip()
+    if s.partition("//")[0].lower() not in ("http:", "https:"):
+        return ""
+    netloc = (s.partition("//")[2].split("/")[0] or "").split("@")[-1].split(":")[0]
+    return netloc.lower()
+
+
+def _host_matched(host, table):
+    """host 命中表内某域名（精确或作为子域）；空 host 不命中，避免误伤相对路径。"""
+    if not host:
+        return False
+    for d in table:
+        if host == d or host.endswith("." + d):
+            return True
+    return False
+
+
+def _drop_unloadable_cover(url):
+    """必挂域名的封面出厂写空（卡片退化为纯文字紧凑卡），其余原样返回。
+
+    这里**不设**"带 Referer 才放行"的例外分支：那种域名（实测只有财富中文网）靠页面侧
+    `referrerpolicy` 就能出图，本表不该收它；一旦有人把它加进来，判空会静默吞掉 ③#2，
+    所以由判据 `test_referer_hosts_survive_the_bad_table` 直接红，而不是在运行时分优先级。
+    """
+    if not url:
+        return url
+    host = _cover_host(url)
+    if not _host_matched(host, _BAD_COVER_HOSTS):
+        return url
+    with _bad_cover_lock:
+        _bad_cover_hits[host] = _bad_cover_hits.get(host, 0) + 1
+    return ""
+
+
+def _purge_bad_covers_in_history(history):
+    """清掉历史缓存里必挂域名的封面，返回清理条数。
+
+    不清的话，未被再次抓取的旧条目每一场都会被重新判空一次，播报数字会钉在一个
+    与"本场新增坏封面"无关的常量上；缓存本身也白占体积。
+    """
+    n = 0
+    for _hit in history.values():
+        _cached = _hit.get("image") or ""
+        if _cached:
+            _new = _drop_unloadable_cover(_cached)
+            if _new != _cached:
+                _hit["image"] = _new
+                n += 1
+    return n
+
+
+# 历史摘要清扫的轮数护栏（不是语义）：`_clean_history_summary` 每轮都是"HN 刀 → 粘连刀"
+# 这个**唯一**顺序，收敛即返回；真数据实测一轮就收敛（见 `_renormalize_history_fulltext`
+# 的 docstring：18,037 条第二遍 0 改动）。
+_SUMMARY_SWEEP_MAX_ROUNDS = 4
+# 历史清扫的分账：与 `_LAST_HISTORY_ACCOUNT` 同一形态，只由主流程播报一次。
+# 必须可观测 —— 命中数掉到 0 要么上游换了形状、要么刀被摘了，两种都需要有人知道
+# （同 `_bad_cover_hits` 那条理由）。
+_LAST_HISTORY_SWEEP = {"entries": 0, "fulltext": 0, "body_delink": 0,
+                       "summary_hn": 0, "summary_glued": 0}
+# 出厂副本那一趟的分账（对抗审查 ②）。与上面那本同形但**另立**：历史侧播的是"存盘那份
+# 改了多少条"，这一本播的是"三个消费者真正读的那份改了多少条"—— 混成一本就答不出
+# 本条修复要观测的那个量（掉到 0 的两种解释同样都需要有人知道）。
+_LAST_OUTGOING_SWEEP = {"entries": 0, "fulltext": 0, "body_delink": 0,
+                        "summary_hn": 0, "summary_glued": 0}
+
+
+def _clean_history_summary(text, link, tally=None):
+    """历史里存的摘要过两把摘要刀：**先 HN 模板重写、再粘连裸链接**，滚到不动点。
+
+    顺序与构建期逐字一致（解析入口 `_truncate(_strip_glued_url(_rewrite_hn_summary(...)))`、
+    快照 `s` 出口、运行时 `api/rss.js` 的 `cleanSummary` 三处都是这个序），倒过来会先被
+    粘连刀改掉 HN 刀要看的行首形状 —— 两把互相吞。
+
+    为什么要**滚到不动点**而不是各过一遍：这两把刀会互相"让位"。粘连刀剥掉开头那条裸链接
+    之后，原先被 URL 前缀挡住的那一行才第一次长成模板行的形状
+    （`https://a/积分：3\n# 评论数：4\n正文` 过完一遍仍是脏的：第一轮 HN 刀只数到 1 行、
+    顶不住"至少两行"的门槛，粘连刀随后才把 `积分：3` 露出来）。历史清扫的契约是"扫完即出厂
+    形状"，一遍过完还不规范等于没扫；轮数上限是护栏不是语义 —— 真数据实测一遍就收敛
+    （18,037 条历史 / 1,762 个摘要字段，第二遍 0 改动）。
+    不做 `_truncate`：历史里存的已经是 `_truncate` 之后的形状，再过一次会按当前表长重切，
+    那是一条没被派工的行为变更。
+    `tally` 是可选的分账（`_LAST_HISTORY_SWEEP`）：**按每一轮真实开火计数**，而不是只看第一轮
+    —— 让位那一条的 HN 刀是在第二轮开的火，只数第一轮就把分账播少了。
+    """
+    cur = text
+    for _ in range(_SUMMARY_SWEEP_MAX_ROUNDS):
+        _before = cur
+        _hn = _rewrite_hn_summary(cur, link)
+        if _hn != cur:
+            if tally is not None:
+                tally["summary_hn"] = tally.get("summary_hn", 0) + 1
+            cur = _hn
+        _nxt = _strip_glued_url(cur)
+        if _nxt != cur:
+            if tally is not None:
+                tally["summary_glued"] = tally.get("summary_glued", 0) + 1
+            cur = _nxt
+        if cur == _before:
+            return cur
+    return cur
+
+
+def _renormalize_history_fulltext(history, tally=None):
+    """把历史里"按入库那一刻的规则出厂"的条目重扫成当前规则的形状，返回**改动条数**。
+
+    与 `_purge_bad_covers_in_history` 同一条理由、同一个调用点：72h 窗口内未被再次抓取的
+    旧条目不会被重新抓取，不重写的话它们就一直按入库那一刻的规则出厂。
+
+    扫三类值、四把刀（顺序与出厂链路一致）：
+      - `full_content`：`_normalize_body_html` → `_delink_nav_links`（规范化先把相对 URL
+        绝对化，脱链接才看得见 host 之后的第一个路径段；只认相对或只认绝对会漏一半）
+      - `summary` / `summary_zh`：`_clean_history_summary`（HN 模板刀 → 粘连裸链刀）
+      `summary_zh` 必须一起扫：它是 `translations.json` 里跨场复用的缓存，不会被重新解析，
+      快照 `s` 取的又是 `summary_zh or summary` —— 只扫 `summary` 的那半边是断链。
+
+    但**收益要按实测说，别按预期说**（2026-10-05 在同一份 `rss_history.json` 上跑的：
+    18,037 条、其中 5,405 条带正文；整表 0.73 s，第二遍 0 条改动）：
+      - 正文侧规范化改动 **62 条，全部是相对 URL 绝对化，图片一条都没捞回来**。原因是历史里
+        存的是 sanitize **之后**的正文 —— `_KEPT_ATTRS["img"]` 只留 src/alt，data-src 属性连同
+        "没有 src 的整枚 img"在出厂前就没了（同一份数据里 `data-src` 命中 0 条），规范化无从提升。
+      - 正文导航脱链 **36 条**（爱范儿_5×10、security_affairs_662×6、mit_tech_review_61×4、
+        flowingdata_673×4、nasa_674×4、theverge_8/arstechnica_60 各 2 …），外部正文链接一条没动。
+      - 摘要侧改动 **1,762 个字段**（`summary` 1,149、`summary_zh` 613）：HN 模板刀 1,750、
+        粘连刀 **12**（12 条全在 nodeseek_54，与 Task 11 入库时的读数一致）。
+        源分布 hn_newest_56×949、hn_ai_7×537、hn_show_58×113、hn_ask_57×99、hn_llm_8×47、
+        nodeseek_54×12、hackernews_6×5 —— 落点就是这两个族，没有误伤面。
+      - 三类并起来的净改动是 **1,244 条**（`_renormalize_history_fulltext` 的返回值口径是
+        "条"不是"字段"，一条命中里 summary 与 summary_zh 都改也只算一条）。
+    ⇒ 公众号那批正文图的"回来"发生在**解析入口**（`_fetch_rss` / `_parse_rss_item`），
+    条目被重新抓取后在 `_accumulate_history`（:760）整条覆盖历史；这条历史重写挡的是
+    "没被重抓、且形态仍可修"的那一类，并保证 `full_content` 与摘要出厂即规范这条**契约**成立
+    （Task 4/7 之后运行时通道写进来的正文不走 sanitize，那时它才真正吃到图）。
+    幂等实测：第二遍 0 条改动、分账全 0（判据
+    tests/rss_history/test_history_knife_sweep.py::test_history_sweep_is_idempotent_second_pass_changes_zero
+    与 ::test_sweep_reaches_a_fixed_point_when_knives_unmask_each_other 钉住）。
+    `tally` 传别的字典就把分账记到那里 —— `_renormalize_outgoing_fulltext` 就是靠这一个
+    参数复用同一批刀手（出厂副本那一格，对抗审查 ②）：**刀手清单全仓只有这一处**，
+    两处各写一遍就是本仓点名的"两份实现分叉"第 4 个来源。
+    """
+    n = 0
+    _t = _LAST_HISTORY_SWEEP if tally is None else tally
+    _t.update({"entries": 0, "fulltext": 0, "body_delink": 0,
+               "summary_hn": 0, "summary_glued": 0})
+    for _hit in history.values():
+        _link = _hit.get("link") or ""
+        changed = False
+        _fc = _hit.get("full_content") or ""
+        if _fc:
+            _norm = _normalize_body_html(_fc, _link)
+            if _norm != _fc:
+                _t["fulltext"] += 1
+            _new = _delink_nav_links(_norm)
+            if _new != _norm:
+                _t["body_delink"] += 1
+            if _new != _fc:
+                _hit["full_content"] = _new
+                changed = True
+        for _field in ("summary", "summary_zh"):
+            _old = _hit.get(_field) or ""
+            if not _old:
+                continue
+            _new = _clean_history_summary(_old, _link, _t)
+            if _new != _old:
+                _hit[_field] = _new
+                changed = True
+        if changed:
+            n += 1
+    _t["entries"] = n
+    return n
+
+
+def _renormalize_outgoing_fulltext(sources_with_items, tally=None):
+    """同一批刀也必须落在**真正出厂的那一份**上（对抗审查 ②）。
+
+    缺陷形状（2026-10-05 实测复现，判据
+    tests/rss_history/test_history_knife_sweep.py::test_outgoing_copies_are_swept_not_just_the_history_dict）：
+    `_accumulate_history` 在 :909 用 `entry = dict(item)` 给每条历史命中造**出厂副本**，
+    主流程的清扫（:9478）跑在那之后、且只改 `_rss_history` 里的那份字典 ⇒
+    三个消费者（`_save_api_snapshot` / `build_html` / `write_data_chunks`）读到的副本
+    仍是入库那一刻的形状：清扫后历史 `fc="<p>正文</p>Python"`、出厂 `fc` 仍是
+    `<a href="/tag/python">Python</a>`，`entry is hist=False`，出厂 `s` 也还是模板行。
+    同文件 :9461-9473 早就专门为 image 在副本上重跑了一遍 —— 那是本仓既有做法，照它修。
+
+    **刀手清单不重写**：这里把出厂副本按对象 id 组成一张临时表，喂给同一个
+    `_renormalize_history_fulltext`，两份对象共用一格实现 ⇒ 不存在"只改了一处"的分叉面
+    （本仓同类事故：`_needs_translation` 两份、封面判空两份）。
+    按 id 而不是按 link 建键：出厂列表里可能没有 link，也可能同 link 出现两次
+    （跨源重复），按 link 建键会把其中一条静默丢掉。
+
+    幂等：出厂副本里当次抓取的那批条目本来就过了同一批刀（解析入口），历史-derived 的
+    副本过了这一格之后，第二遍改动数为 0（判据 ::test_outgoing_sweep_is_idempotent_second_pass_changes_zero）。
+    分账另立一本（`_LAST_OUTGOING_SWEEP`），不与历史侧混：混在一格里就没法回答
+    "出厂那份到底改了多少条"这个问题，而那正是本条修复要观测的量。
+    """
+    _by_id = {str(id(_it)): _it
+              for _src in sources_with_items
+              for _it in (_src.get("items") or [])}
+    return _renormalize_history_fulltext(_by_id,
+                                         _LAST_OUTGOING_SWEEP if tally is None else tally)
+
+
+# ── XGO (Twitter/X) 信源内容清洗 ──────────────────────────────
+_XGO_TWEET_TEXT_RE = re.compile(
+    r"<div[^>]*\bwhite-space:\s*pre-wrap[^>]*>([\s\S]*?)</div>",
+    re.IGNORECASE,
+)
+_XGO_ENGAGEMENT_RE = re.compile(
+    r"💬|🔄|❤️|👀|📊|⚡\s*Powered\s+by\s+xgo\.ing|View\s+(?:Quoted\s+)?Tweet\s*🔗|🔗\s*View",
+    re.IGNORECASE,
+)
+
+
+def _is_xgo_content(text):
+    """检测是否为 xgo.ing Twitter/X 代理的推文 HTML"""
+    if not text:
+        return False
+    return ("xgo.ing" in text or "Powered by xgo" in text) and "white-space: pre-wrap" in text
+
+
+def _clean_xgo_content(text):
+    """清洗 xgo.ing 推文 HTML：仅保留推文正文与引用推文文本，移除互动数据/头像/页脚"""
+    if not text:
+        return ""
+    # 1. 提取所有推文文本块（white-space: pre-wrap 的 div）
+    blocks = _XGO_TWEET_TEXT_RE.findall(text)
+    if not blocks:
+        return ""
+    parts = []
+    for block in blocks:
+        # 移除 "View Quoted Tweet" / "View on Twitter" 链接
+        block = re.sub(
+            r"<a[^>]*>[^<]*View\s+(?:Quoted\s+)?Tweet[^<]*</a>",
+            "",
+            block,
+            flags=re.IGNORECASE,
+        )
+        # 移除剩余 HTML 标签
+        plain = re.sub(r"<[^>]+>", "", block)
+        plain = html_mod.unescape(plain).strip()
+        if plain:
+            parts.append(plain)
+    return "\n\n".join(parts)
+
+
+def _extract_tweet_media(text):
+    """从 xgo.ing 推文 HTML 中提取真实推文媒体图片（排除 profile_images 头像）"""
+    if not text:
+        return ""
+    for m in _IMG_SRC_RE.finditer(text):
+        src = html_mod.unescape(m.group(1)).strip()
+        if not re.match(r"^https?://", src, re.IGNORECASE):
+            continue
+        # 跳过 profile_images（用户头像），仅保留 /media/ 和 tweet_video_thumb
+        if "profile_images" in src:
+            continue
+        if "/media/" in src or "tweet_video_thumb" in src:
+            return src
+    return ""
+
+
+# ── 图片质量自动升级系统 ──────────────────────────────────────
+# 规则注册表：新增 CDN 只需在此追加一行
+# 格式: (域名子串, 匹配正则, 替换模板)
+_IMG_UPGRADE_RULES = [
+    # Phys.org CDN: /tmb/ 是 90×90 缩略图，/800/ 是 800px 高清图
+    ("scx1.b-cdn.net",     r"/tmb/",                              r"/800/"),
+    # Twitter/X 头像: _normal (48×48) → _400x400
+    ("pbs.twimg.com",      r"_normal\.(jpg|png|gif)$",             r"_400x400.\1"),
+]
+
+# 需要回调函数的特殊规则（简单字符串替换无法正确处理）
+def _query_width_upgrade(url):
+    """保留原始查询参数分隔符（? 或 &），避免产生双 ?"""
+    def _replace(m):
+        sep = m.group(1)  # 保留原始 ? 或 &
+        return f"{sep}width=640"
+    return re.sub(r"([?&])width=\d+", _replace, url)
+
+_IMG_UPGRADE_SPECIAL = [
+    # Reddit 预览图: width=N 查询参数升级（external-preview.redd.it 已被封面判空表清掉，
+    # 这里剩下的真实目标是 preview.redd.it）
+    ("redd.it",          _query_width_upgrade),
+]
+
+# 升级追踪（线程安全，供构建审计使用）
+_img_upgrade_log = []
+_img_upgrade_lock = threading.Lock()
+
+
+def _upgrade_img_url(url):
+    """必挂域名先判空，再把已知低分辨率图片 URL 升级到高清版本并记录事件"""
+    if not url:
+        return url
+    url = _drop_unloadable_cover(url)
+    if not url:
+        return ""
+    original = url
+    # 简单规则：正则替换
+    for domain_match, pattern, replacement in _IMG_UPGRADE_RULES:
+        if domain_match in url:
+            new_url = re.sub(pattern, replacement, url)
+            if new_url != url:
+                url = new_url
+    # 特殊规则：回调函数（保持宽高比/查询参数完整性）
+    for domain_match, func in _IMG_UPGRADE_SPECIAL:
+        if domain_match in url:
+            new_url = func(url)
+            if new_url != url:
+                url = new_url
+    if url != original:
+        with _img_upgrade_lock:
+            _img_upgrade_log.append({"from": original, "to": url})
+    return url
+
+
+# ── 通用缩略图检测器（发现未知 CDN 的低分辨率模式）──
+# 策略：仅检测高置信度模式（查询参数小尺寸 + 缩略图关键词），
+# 不做路径数字段匹配（日期 /15/、hash /25/ 等误报率极高）。
+# 新 CDN 的缩略图由构建审计发现后，手动加入 _IMG_UPGRADE_RULES 即可。
+_THUMB_QUERY_RE = re.compile(r"[?&](?:w|h|width|height|size)=(\d+)", re.IGNORECASE)
+_THUMB_KEYWORD_RE = re.compile(
+    r"/(?:thumb|thumbnail|tiny|mini|avatar)(?:[/.]|$)"
+    r"|_normal\.(?:jpg|png|gif)",
+    re.IGNORECASE,
+)
+# 排除误报：日期路径、商品图、emoji、大尺寸参数、/display/ 路径等
+_THUMB_EXCLUDE_RE = re.compile(
+    r"/(?:19|20)\d{2}/"       # 年份路径
+    r"|s\d{3,4}x\d{3,4}"     # 商品图 s1440x1440
+    r"|/emoji/"               # emoji 图标
+    r"|width=\d{4,}"          # 大尺寸参数 width=800+
+    r"|/display/",            # France24 等 /display/ 路径
+    re.IGNORECASE,
+)
+
+
+def _detect_lowres_img(url):
+    """通用检测：URL 是否疑似缩略图（用于审计告警，不修改 URL）"""
+    if not url:
+        return None
+    if _THUMB_EXCLUDE_RE.search(url):
+        return None
+    # 查询参数中的小尺寸（≤300）
+    m = _THUMB_QUERY_RE.search(url)
+    if m:
+        num = int(m.group(1))
+        if num <= 300:
+            return f"query ={num}"
+    # 缩略图关键词
+    if _THUMB_KEYWORD_RE.search(url):
+        return "thumb keyword"
+    return None
+
+
+def _audit_image_quality(sources_with_items):
+    """构建时图片质量审计：报告升级统计与未解决的疑似低分辨率图片"""
+    total_imgs = 0
+    upgraded_count = len(_img_upgrade_log)
+    # 按域名统计升级分布
+    upgrade_by_domain = collections.Counter()
+    for ev in _img_upgrade_log:
+        domain = ev["from"].split("/")[2] if ev["from"].startswith("http") else "unknown"
+        upgrade_by_domain[domain] += 1
+    # 扫描所有图片，检测未升级的疑似缩略图
+    suspect = []  # (source_name, url, reason)
+    suspect_by_source = collections.Counter()
+    for src in sources_with_items:
+        src_name = src.get("name", "")
+        for it in src.get("items", []):
+            img = it.get("image", "")
+            if not img:
+                continue
+            total_imgs += 1
+            reason = _detect_lowres_img(img)
+            if reason:
+                suspect.append((src_name, img, reason))
+                suspect_by_source[src_name] += 1
+    # 输出报告
+    print(f"[图片审计] 总计 {total_imgs} 张, 已升级 {upgraded_count} 张")
+    if upgrade_by_domain:
+        for domain, count in upgrade_by_domain.most_common(10):
+            print(f"  升级: {domain} ({count} 张)")
+    if suspect:
+        print(f"[图片审计] ⚠ {len(suspect)} 张疑似低分辨率（{len(suspect_by_source)} 个源）:")
+        for src_name, count in suspect_by_source.most_common(20):
+            sample = next(u for s, u, _ in suspect if s == src_name)
+            print(f"  {src_name}: {count} 张 — {sample[:90]}")
+    else:
+        print("[图片审计] ✓ 无残留低分辨率图片")
+    return {"total": total_imgs, "upgraded": upgraded_count, "suspect": len(suspect)}
+
+
 _SAFE_TAGS = re.compile(
     r"^(/?(p|br|img|a|b|i|em|strong|h[1-6]|ul|ol|li|blockquote|pre|code"
     r"|figure|figcaption|table|tr|td|th|thead|tbody|span|div|hr|sup|sub|dl|dt|dd"
@@ -1226,6 +1623,70 @@ _SAFE_TAGS = re.compile(
 )
 _EVT_ATTR = re.compile(r"^on[a-z]+$", re.IGNORECASE)
 _TAG_NAME = re.compile(r"^</?(\w[\w-]*)")
+# 正文出厂规范（Task 1/3 的唯一实现处；JS 端口在 lib/body_rules.js，对账判据
+# tests/site_nav/test_body_rules_parity.py —— 改这里必须同步改那边，否则对账红）。
+# 元组顺序**就是**优先级：_fix_img 按这个元组取第一个非空的值，与标签里属性的书写顺序无关。
+# JS 侧 _LAZY_SRC_ATTRS 必须与这个元组逐项同序（顺序不同 = 两侧挑到不同的镜像地址）。
+_LAZY_SRC_ATTRS = ("data-src", "data-original", "data-lazy-src", "data-croporisrc")
+_BODY_CAP = 50000
+_IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
+_IMG_OPEN_RE = re.compile(r"^<img\b", re.IGNORECASE)
+# 这里必须是 (?<![\w-]) 而不是 \b：`-` 不是词字符，`\bsrc` 会命中 data-src 里的那个 src，
+# 于是"只有 data-src 的 img"被误判为已有真图，提升整步静默失效（JS 的 \b 同病，
+# Task 3 端口照搬时两侧要一起带守卫，否则对账会绿而行为两边都错）。
+# 它同时是**唯一**的"src 属性"口径：读现值、判存在、改写都复用这一个已编译常量
+# （M3：旧版另写了 `\ssrc\s*=\s*"[^"]*"` 的 search + 同式 sub，三套正则一个概念）。
+_IMG_SRC_ATTR_RE = re.compile(r'(?<![\w-])src\s*=\s*"([^"]*)"', re.IGNORECASE)
+# (?<![\w-]) 是防 `data-src` 被当成 `src` 的关键，删掉它 = 凭空造出第二个 src。
+_URL_ATTR_RE = re.compile(r'(?<![\w-])(src|href|poster)\s*=\s*"([^"]*)"', re.IGNORECASE)
+# 属性名/值对：与 _sanitize_html 里的 ([\w-]+)\s*=\s*"([^"]*)" **逐字同形**（M3：懒加载
+# 属性解析不再另立带冒号的第四种写法，JS 端口也因此只有一套属性语法要对）。
+_ATTR_VALUE_RE = re.compile(r'([\w-]+)\s*=\s*"([^"]*)"')
+# 尾部**未闭合**的标签片段：模式里不能出现收尾的 `>`（写成 `<[^>]*>$` 只会命中完整标签，
+# `<img src="htt` 这种半截反而逃掉，与仓内 _strip_html/_sanitize_html 用的 `<[^>]*$` 也不一致）。
+# 写成 `>?$` 更糟：切点正好落在完整标签的 `>` 上时会把整枚标签一起吞掉（少留内容）。
+_DANGLING_TAG_RE = re.compile(r"<[^>]*$")
+# 允许 0 个后继字符：截断正好停在 `&` 上也是残缺实体（第一版写成 `&[A-Za-z#]…` 时，
+# 尾部裸 `&` 逃过剥离，而配套测试同样要求"至少一个字符"，于是判据与缺陷同形 —— 假绿）。
+# 反过来收窄成 `&$` 也不许：尾部挂 1~8 个实体名字符（`</p>&a`）同样是残缺。
+_DANGLING_ENTITY_RE = re.compile(r"&[#A-Za-z0-9]{0,8}$")
+# **只有"第一次动刀"能用上面那条**（它允许 `&名字`，额度只有一次）。第二刀起、以及刀一
+# 什么都没剥到的时候，只许剥这条"无歧义形态"：尾部裸 `&`、`&#` 加十进制、`&#x` 加十六进制。
+# 为什么必须分开：`&名字` 是**有歧义**的 —— `A&B`、`AT&T`、`R&D`、`Q&A` 全是合法文字。
+# NEW-1 的修法把"退尾部空白"放进了刀二的每一轮循环，却没同时收窄形态，于是回溯之后又拿
+# `&[#A-Za-z0-9]{0,8}$` 剥了一次，把合法文字吃了（实测 `cap("A&B &am ", 7)` → `'A'`，应为
+# `'A&B'`；`cap("a&&b&am", 6)` 级联三层 → `'a'`，应为 `'a&&b'`）。⇒ 实体名段一生至多剥 1 段。
+# 量词写成 ASCII 显式类而不是 `\d`：这条正位在 `_cap_body` 里由**右往左扫描**等价实现（见
+# `_unambiguous_entity_start`），扫描器只能按 ASCII 判；`\d` 在 str 模式下还认 Unicode 十进制
+# 数字，两边会分叉。收窄的方向是"少剥"，与 NEW-3 保内容的取向一致。
+_DANGLING_ENTITY_UNAMBIG_RE = re.compile(r"&(?:#[0-9]*|#x[0-9a-fA-F]*)?$")
+# 这两份字符集**只被扫描器**（`_unambiguous_entity_start`）引用；上面那条正则写的是内联
+# 字面类（`[0-9]` / `[0-9a-fA-F]`），并没有引用它们 ⇒ "同一份真相"并不成立，两边等价是
+# 由对账判据 `test_cap_unambiguous_scan_is_the_same_predicate_as_the_regex` 在**行为上**兜住的。
+# ⇒ 改这两个集合必须同时改正则，否则红在那条判据上、而不是红在编译期。
+_DIGIT_ENTITY_CHARS = frozenset("0123456789")
+_HEX_ENTITY_CHARS = frozenset("0123456789abcdefABCDEF")
+# 窗口宽度是**推**出来的不是拍的：`_DANGLING_ENTITY_RE = &[#A-Za-z0-9]{0,8}$` 的最长匹配
+# = 1 枚 `&` + 8 个实体名字符 = `_ENTITY_TAIL_WINDOW = 1 + 8 = 9`，且任何匹配都以串尾结束
+# ⇒ 起点一定落在最后 9 个字符内 ⇒ 只看这 9 个字符 = 看整串。改量词必须同时改这里，
+# 判据 `test_cap_entity_window_is_wide_enough_for_eight_name_chars` 直接从正则里读上界对账。
+# Task 3 的 JS 端口照**推导**抄（窗口 = 1 + 量词上界），别只抄字面 9 而把量词改窄。
+# 为什么要有窗口：旧版 while+re.sub 每轮重扫整串，`&`×50000 实测 14.24 s / 本机 18.77 s。
+_ENTITY_TAIL_WINDOW = 9
+# 占位 src 的文件名词干精确等于这几个词才算占位（I6 收窄；误判方向一律"保留原 src"）。
+_PLACEHOLDER_SRC_NAMES = ("blank", "lazy", "placeholder", "spacer")
+# 词干里含"被非字母数字包围"的 1x1/0x0 成分才算占位：`spacer_1x1` 命中，
+# mmbiz 的 base64 段 `…LlmTcx1x1h4q…`、目录段 `/0x0/` 不命中（IGNORECASE 下
+# `[^0-9a-z]` 同样排除大写，别把这条写成 [^0-9a-z] 大小写敏感的版本）。
+_PLACEHOLDER_DIM_RE = re.compile(r"(?:^|[^0-9a-z])(?:1x1|0x0)(?:$|[^0-9a-z])", re.IGNORECASE)
+# I8（上一轮复核移交）：正文以**转义态**到达的形态。wechat2rss 一类代理会把已经 HTML 化的
+# content:encoded 再转义一层，出厂时收到的是 `&lt;img data-src=&quot;…&quot;&gt;`。
+# 两条判据同时成立才动手解一层，见 `_unescape_escaped_body`：
+#   ① 有转义标签形态（`&lt;p&gt;` / `&lt;img …` / `&lt;/div&gt;`）；
+#   ② 整段里没有未转义的真标签 —— 这是"这串是正文，而不是带代码样例的正文"的证据。
+# 名字段后必须紧跟空白、`/` 或 `&gt;`：裸 `&lt;imgx` 这类不算标签起始。
+_ESCAPED_TAG_HINT_RE = re.compile(r"&lt;/?[a-z][a-z0-9-]*(?:[\s/]|&gt;)", re.IGNORECASE)
+_REAL_TAG_OPEN_RE = re.compile(r"<[a-zA-Z]")
 # 仅保留渲染正文结构必需的属性：WeChat 段落带巨型内联 style，全量保留会撑爆快照
 _KEPT_ATTRS = {
     "img": ("src", "alt"), "a": ("href",),
@@ -1328,14 +1789,299 @@ def _sanitize_html(text):
     return text.strip()
 
 
+def _is_placeholder_src(value):
+    """src 是不是"占位图"（I6 收窄）。判据一律朝**保留原 src**那一侧收：
+    把真图误判成占位 = 用懒加载镜像地址换掉能显示的图，比不修更糟。
+
+    旧版是 `re.search(r"(?:^data:|blank|lazy|placeholder|1x1|spacer)", 整条 URL)`，
+    在本仓真实数据上大面积误杀：img-proxy 链接尾的 `%26wx_lazy%3D1`（5600+ 条）、
+    `https://image.pseudoyu.com/images/lazy_cat_pic.png`、mmbiz base64 段里撞出来的
+    `1x1`/`0x0`、`https://image.hkhl.hk/f/1024p0/0x0/100/…/New_Project_76__0.jpg`
+    的缩放目录段。现在只认三种确定形态：
+      ① `data:` 前缀（微信的 1px 内联占位）；
+      ② 路径**最后一段**的文件名词干精确等于 `_PLACEHOLDER_SRC_NAMES` 之一；
+      ③ 同一个词干里含被非字母数字包围的 1x1/0x0 成分（`spacer_1x1` 命中、
+         `j7RlD5l5q1x1NoXsN` 不命中）。
+    查询串与片段先剥掉，所以 `?…wx_lazy%3D1` 不算；Task 3 的 JS 端口必须同口径。
+    """
+    v = (value or "").strip()
+    if not v:
+        return False
+    if v[:5].lower() == "data:":
+        return True
+    path = v.split("?", 1)[0].split("#", 1)[0]
+    stem = path.rsplit("/", 1)[-1].partition(".")[0].lower()
+    if not stem:
+        return False
+    return stem in _PLACEHOLDER_SRC_NAMES or bool(_PLACEHOLDER_DIM_RE.search(stem))
+
+
+def _unescape_escaped_body(text):
+    """I8：整段被转义的正文补解一层，好让 `_normalize_body_html` 看得见标签。
+
+    为什么必须有它：`_sanitize_html` 第一句就是 `html_mod.unescape(text)`（:1539），而规范化
+    按契约必须跑在 sanitize **之前** —— 于是双重转义的正文（`&lt;img data-src=&quot;…&quot;&gt;`）
+    在规范化眼里一个标签都没有，原样返回；sanitize 再解出 `<img data-src=…>`，因为 img 没有
+    src 被整枚丢弃（`_clean_tag` 末尾 `img and not any(src=…)` 那两行）。上一轮实测：
+    `normalize(escaped)` 不变、`sanitize(normalize(escaped))` = `''`；同一串未转义时能拿到
+    `<img src=…>`。⇒ 规范化必须建立在"已解一层"的文本之上。
+
+    为什么不是无条件 unescape：正文里合法写着 `&amp;lt;img&amp;gt;`（要展示代码的字面量）时，
+    多解一层会把它**激活**成真的 `<img>`，凭空多出一张文章里没有的图。判据
+    `test_literal_escaped_code_sample_is_not_treated_as_escaped_body` 钉的就是这一侧。
+
+    动手条件两条同时成立（见 `_ESCAPED_TAG_HINT_RE` / `_REAL_TAG_OPEN_RE`）：
+      ① 有转义标签形态；② 整段没有未转义的真标签 —— ② 是"这串是正文，而不是带代码样例的
+      正文"的证据。激活风险侧**零新增**：sanitize 本来就会无条件 unescape 一次，本函数只在
+      "根本没有真标签"的输入上把同一件事提前一步做掉。
+    """
+    if not text:
+        return text
+    if _REAL_TAG_OPEN_RE.search(text):
+        return text
+    if not _ESCAPED_TAG_HINT_RE.search(text):
+        return text
+    return html_mod.unescape(text)
+
+
+def _normalize_body_html(text, base_url):
+    """正文出厂前的规范化：① 懒加载图片的真地址提到 src；② 相对 URL 按条目链接绝对化。
+
+    必须在 _sanitize_html **之前**调用：那一步只认 src，data-src 不在 _KEPT_ATTRS 里，
+    而 img 一旦没有 src 会被整枚丢掉（_clean_tag 末尾 `img and not any(src=…)` 那两行）
+    —— 先洗后规范等于什么都没修。
+    """
+    if not text:
+        return ""
+    base = (base_url or "").strip()
+    # M4：base 里带裸 `"` 时，urljoin 的产物会把引号一起带进属性值
+    # （`src="https://e.com/d"q/b.html"`），下游 _sanitize_html 的属性提取 `"([^"]*)"`
+    # 在第一个引号处截断 → 出厂一条静默变形的坏 URL。按"没有 base"处理：
+    # 相对路径原样保留，宁可 404 也不要变形。
+    has_base = base.lower().startswith(("http://", "https://")) and '"' not in base
+
+    def _fix_img(m):
+        tag = m.group(0)
+        # I5：优先级按 _LAZY_SRC_ATTRS 的**元组顺序**取第一个非空值，与标签里属性的
+        # 书写顺序无关（旧版按出现顺序 break，元组顺序对行为零影响，注释就是假的）。
+        seen = {}
+        for name, val in _ATTR_VALUE_RE.findall(tag):
+            seen.setdefault(name.lower(), val.strip())
+        lazy = ""
+        for name in _LAZY_SRC_ATTRS:
+            v = seen.get(name, "")
+            if v:
+                lazy = v
+                break
+        if not lazy:
+            return tag
+        cur = _IMG_SRC_ATTR_RE.search(tag)
+        cur_v = cur.group(1).strip() if cur else ""
+        if cur_v and not _is_placeholder_src(cur_v):
+            return tag          # 真图已在 src，懒加载属性只是镜像，不动
+        # C1：lazy 来自 feed，是**不可信数据**。旧版把它拼进 re.sub 的 replacement 模板，
+        # 于是 `\u0026` 抛 bad escape \u、`\1` 抛 invalid group reference（无 src 分支更坏：
+        # 静默把捕获到的 `<img` 注进属性值）。回调式替换返回拼好的字符串，不过模板解析。
+        if cur:
+            return _IMG_SRC_ATTR_RE.sub(lambda _m: 'src="%s"' % lazy, tag, count=1)
+        return _IMG_OPEN_RE.sub(lambda _m: _m.group(0) + ' src="%s"' % lazy, tag, count=1)
+
+    def _fix_url(m):
+        name, val = m.group(1), m.group(2)
+        v = val.strip()
+        if not v or not has_base:
+            return m.group(0)
+        if v[0] == "#" or v.lower().startswith(("http:", "https:", "mailto:", "tel:", "data:", "//")):
+            return m.group(0)
+        joined = urllib.parse.urljoin(base, v)
+        if not joined.lower().startswith(("http://", "https://")):
+            return m.group(0)
+        return '%s="%s"' % (name, joined)
+
+    text = _IMG_TAG_RE.sub(_fix_img, text)
+    return _URL_ATTR_RE.sub(_fix_url, text)
+
+
+def _unambiguous_entity_start(s, end):
+    r"""返回 `s[:end]` 上"无歧义残缺实体"匹配的**最左起点**；没有匹配返回 None。
+
+    与 `_DANGLING_ENTITY_UNAMBIG_RE.search(s[:end])` 逐字等价（判据
+    `test_cap_unambiguous_scan_is_the_same_predicate_as_the_regex` 对小字母表做穷举对账，
+    差分自证又在 12000 条随机截断上把"整串定点参考"拿来比过，不等价 0），但刻意写成
+    **右往左扫描**：正则版每轮整串重扫，对 `&`×50000 这类退化输入是二次方（M1，旧实测
+    18.77 s）；扫描版每轮只吃切点左边那一段数字/十六进制，而各轮扫过的区间互不相交
+    ⇒ 刀二+ 整体仍是 O(n)。
+    三条形态与常量旁的注释同源（字符集共用 `_DIGIT_ENTITY_CHARS` / `_HEX_ENTITY_CHARS`）：
+      `&$` 裸 &  /  `&#` + 十进制*  /  `&#x` + 十六进制*
+    十进制与十六进制各至多一个合法起点（`&` 之后必须全在对应字符集里，而 `#` 与 `#x`
+    互斥），所以"先试十进制、再试十六进制"就等于正则的最左匹配。
+    """
+    if end <= 0:
+        return None
+    last = s[end - 1]
+    if last == "&":
+        return end - 1
+    if last == "#":
+        return end - 2 if end >= 2 and s[end - 2] == "&" else None
+    if last == "x":
+        return end - 3 if end >= 3 and s[end - 2] == "#" and s[end - 3] == "&" else None
+    if last in _DIGIT_ENTITY_CHARS:
+        d = end - 1
+        while d > 0 and s[d - 1] in _DIGIT_ENTITY_CHARS:
+            d -= 1
+        if d >= 2 and s[d - 1] == "#" and s[d - 2] == "&":
+            return d - 2
+    if last in _HEX_ENTITY_CHARS:
+        h = end - 1
+        while h > 0 and s[h - 1] in _HEX_ENTITY_CHARS:
+            h -= 1
+        if h >= 3 and s[h - 1] == "x" and s[h - 2] == "#" and s[h - 3] == "&":
+            return h - 3
+    return None
+
+
+def _cap_body(text, limit=_BODY_CAP):
+    """按**码点**截断，并且**只在真的截断了**才抹尾部的半个标签/半个实体。
+
+    口径逐条如下，两边（Python / lib/body_rules.js）必须逐条对齐：
+      1. `len(text) <= limit` → 原样返回（I7）。没截断就没有"半个"可言，旧版无条件收口：
+         `Tom&Jerry`→`Tom`、`ends with <span`→`ends with`、尾部空白被顺手 rstrip。
+      2. 按码点计数：Python 的 len 与切片本来就是码点，`text[:limit]` 与 JS 端口
+         `Array.from(s).slice(0, limit).join("")` 同口径（JS 直接 String.slice 会把 emoji
+         的 UTF-16 代理对劈成两半），不许再写 `"".join(list(text)[:limit])`（M2）。
+      3. 两刀的顺序与判据不变：刀一 `_DANGLING_TAG_RE`、刀二（实体刀）见第 5 条。
+         刀一只可能命中一次（切点之后不会再有残缺标签），实体刀可以连着命中（`&&` 连排），
+         但每步只在**尾部 `_ENTITY_TAIL_WINDOW` 字符的窗口**里定位、只移动切点，
+         既不重扫整串也不逐轮复制字符串 —— 旧版 `while True` + 整串 `re.sub` 对
+         `&`×50000 是二次方（实测 18.77 s，复核机器 14.24 s），一条畸形 feed 就能拖住构建。
+         窗口视野只对"名段那一刀"成立（它最长 9 个字符）；无歧义那一刀走
+         `_unambiguous_entity_start` 的右往左扫描，与整串正则等价且同样 O(n)。
+      4. 刀二每一轮都**先把切点上的尾部空白退掉再取窗口**（`str.isspace()`，与 `rstrip()`
+         同口径），否则 `$` 锚定的实体正则在"空白结尾"的窗口上永远匹配不到，切点停在空白上，
+         出口 rstrip 一退空白就把残缺实体重新暴露。**靠这一退才不漏的形态**（实测出口）：`& &m`→`''`、`x&  &ab`→`'x'`、
+         `& &m `→`''`；把退空白那两行删掉，同样本变成 `'&'`、`'x&'`、`'& &m'` —— 全是漏剥。
+         **反过来不靠这一退也留在尾上、已知未修的形态**（取向是"少剥"，宁残不误剥）：`&\xa0&nbsp`
+         以及它前面还挂着正文的变体 —— NBSP 不在实体名字符类里，两条 `$` 锚定的
+         正则都够不着那个 `&`；宁可留一条看着像残缺实体的尾巴，也不去剥 `&` 后面可能合法的
+         文字。**旧稿在这里登记的是 `Tom &am `、`A&B &am `**：现实现下它们分别出口 `Tom`、
+         `A&B`，**两条都不漏** —— 属于文档与实现不符，已按实测换成上面这一组。
+         刀与刀之间的空白照旧要剥（`&am <b` 这种被标签片段隔开的形态要看得见），
+         但剥完仍要保证内容守恒：切点落在**完整**标签的 `>` 上时一个字都不许多剥。
+      5. 退完空白之后守 NEW-3：**实体名段至多剥 1 段**，而**无歧义形态一律剥净**：
+           · `&名字`（`_DANGLING_ENTITY_RE`，允许 1~8 个名符）只许当**第一次实体刀**，
+             错过就没有下一次 —— 即"名段至多剥 1 段"；
+           · 裸 `&` / `&#`+十进制 / `&#x`+十六进制（`_DANGLING_ENTITY_UNAMBIG_RE` 的正位，
+             实现是 `_unambiguous_entity_start`）每一轮都查、不耗额度，连名段那一刀
+             什么都没剥到时也查 —— 不变量①a 要的就是"截断过的出口绝不挂这三条尾巴"。
+         否则 `cap("A&B &am ", 7)` 会把合法文字 `A&B` 吃成 `A`、`cap("a&&b&am", 6)`
+         级联三层吃成 `a`、`cap("x&xab&am", 7)` 把 `&xab` 当成 `&#x…` 吃掉（NEW-1 的修法
+         自己引入的回归）。**第一次实体刀的既有契约不变**：`Tom&Jerryzz`/7 修复前后同为
+         `'Tom'` —— `&X` 被吃这件事本来就在，本轮只收"第二段 `&名字`"这一条权限。
+      6. 出口的 `out[:cut].rstrip()` 是"刀二停稳后唯一还在退空白的一刀"，不许省。
+    """
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    out = text[:limit]
+    m = _DANGLING_TAG_RE.search(out)
+    cut = len(out) if m is None else m.start()
+    # NEW-3：`&名字` 只许当**第一次实体刀**（契约第 1 条"第一刀不变"的字面含义）；
+    # 无歧义形态（裸 `&` / `&#`数字 / `&#x`十六进制）则**每一轮都查**、不耗额度 ——
+    # 不变量①a 要的是"截断过的出口绝不挂着这三条尾巴"，所以那一刀不许缺席。
+    first_entity_knife = True
+    while cut > 0:
+        # 刀二定位前必须先把切点上的尾部空白退掉。`_DANGLING_ENTITY_RE` 是 `$` 锚定的，
+        # 窗口末字符是空白时它必然匹配不到 → break → 出口那记 rstrip 再把空白剥掉 →
+        # 残缺实体（实测靠这一退才不漏的是 `& &m`、`x&  &ab`、`& &m `；`&\xa0&nbsp` 是契约第 4 条点名的"已知未修"（NBSP 挡的是名字字符类，与这行退空白无关）；
+        # 旧稿在这里还登记了 `Tom &am `、`A&B &am `，现实现下分别出口 `Tom`、`A&B`，
+        # 两条都不漏 —— 文档与实现不符，已按实测划掉）重新挂回尾巴。
+        # 退空白的口径必须和出口的 `str.rstrip()` 一致，所以用 str.isspace()：
+        # 写成 `out[i] <= ' '` 会放过 `\xa0`/`\u2028`（NBSP 在中文正文里到处都是）= 同一条回归。
+        # 摊还是 O(n)：每轮退的区间 (tail, cut] 互不相交，而 cut 每轮严格左移 ≥1。
+        tail = cut
+        while tail > 0 and out[tail - 1].isspace():
+            tail -= 1
+        # 第一次实体刀：允许 `&名字`（`_DANGLING_ENTITY_RE`，窗口内最左匹配 = 整串最左匹配，
+        # 因为它的任何匹配都 ≤ `_ENTITY_TAIL_WINDOW` 个字符且必然结束在 tail 上）。
+        m = None
+        if first_entity_knife:
+            window = out[max(0, tail - _ENTITY_TAIL_WINDOW):tail]
+            m = _DANGLING_ENTITY_RE.search(window)
+            first_entity_knife = False     # 名段额度只有这一次，剥没剥到都不回来
+        if m is not None:
+            # 匹配必然以窗口末尾结束 ⇒ 绝对切点 = 窗口起点 + 匹配起点
+            cut = tail - (len(window) - m.start())
+            continue
+        # 之后（以及第一刀什么都没剥到时）只查无歧义形态，且**每一轮都查**：不变量①a 要求
+        # "截断过的正文出口绝不挂裸 & / &#数字 / &#x十六进制 的尾巴"，而这三条后面不可能再接
+        # 合法文字 ⇒ 剥它们零风险。`a&#000000000`（数字尾巴 >9 字符、名段那一刀看不见）就是
+        # 靠这一查兜住的 —— 把它做成"只在名段剥过之后才查"会漏，见差分自证的 token 生成器。
+        nxt = _unambiguous_entity_start(out, tail)
+        if nxt is None:
+            break
+        cut = nxt
+    # 这记 rstrip 是"刀二停稳后唯一还在退空白的地方"（V13 的靶）：上面 break 时 cut 可能
+    # 正停在一串空白上（那串空白之后没有实体，所以循环没动它），出口必须把它退掉。
+    return out[:cut].rstrip()
+
+
+# ── 站内导航链接去链接（Task 10 的规则 2.5；R43 抽成模块级以便与 JS 端口逐条对账）──
+# 正文里的 "Kubernetes" 这类词常被包成 /tag/ 链接，整枚删除等于删正文 —— 判据
+# test_internal_nav_link_loses_href_but_keeps_text / test_nav_delink_keeps_surrounding_prose_verbatim
+# 钉住这条边界，防下一个人图省事改成"删掉所有 <a>"（外部正文链接那条反例判据会当场红）。
+# 判定只看 **host 之后的第一个路径段**，不做整串子串匹配：
+#   `https://about.fb.com/news/…`（about 在 host 上）、
+#   `https://lists.gnu.org/archive/html/…`、`…/blob/main/docs/author/x.md`（导航词在路径中段）
+# 都不是站内导航。brief 原样的 `href="[^"]*(?:/about|/archive…)[^"]*"` 会把这三种一起吃掉，
+# 真数据实测（那份快照 3140 条出厂正文、2159 条外部 href）带走 142 条外链 —— 违反
+# "外部正文链接不许被动"这条红线。两条反例判据
+# test_host_named_after_a_nav_word_is_not_delinked /
+# test_nav_word_outside_first_path_segment_is_not_delinked 在收紧前红、收紧后绿；
+# 反向守卫 test_nav_first_segment_still_delinked_with_deeper_path_and_query 挡住
+# "收成整段精确等于 /tag"那种过度收窄。
+# 相对形状 `/tag/x` 也要认：`_normalize_body_html` 在真实链路上已把它绝对化成
+# `https://blog.example/tag/x`，只认相对或只认绝对都会漏一半。
+# `categor`/`author`/`tag` 单复数并列不是冗余：brief 写的 `categories?` 只能匹
+# "categorie(s)"，**匹不到单数 `category`**（-y→-ies 不是加 s），
+# 照抄会让判据 test_author_and_category_links_too 永久红。
+#
+# 词表在运行时那一侧的同名导出是 `lib/body_rules.js` 的 `NAV_LINK_SEGMENTS`，
+# 两侧同值由 tests/site_nav/test_body_rules_parity.py 钉住（改一边必须改另一边）。
+_NAV_LINK_SEGMENTS = ("tag", "tags", "category", "categories", "author", "authors",
+                      "about", "subscribe", "donate", "archive")
+
+
+def _delink_nav_links(text):
+    """把站内导航链接脱成纯文字，外部正文链接一条不动，链接里的内层标签原样保留。"""
+    def _delink_nav_link(m):
+        path = re.sub(r"^(?:[a-z][a-z0-9+.-]*:)?//[^/]*", "", m.group("href"), flags=re.IGNORECASE)
+        if not path.startswith("/"):
+            return m.group(0)      # 纯相对（"tag/x"）、mailto:、空值：一律不动，宁可少剥
+        return (m.group("text") if re.split(r"[/?#]", path[1:], 1)[0].lower() in _NAV_LINK_SEGMENTS
+                else m.group(0))
+    return re.sub(
+        r'<a\b[^>]*?href="(?P<href>[^"]*)"[^>]*>(?P<text>[\s\S]*?)</a>',
+        _delink_nav_link, text, flags=re.IGNORECASE)
+
+
 def _deep_clean_html(text):
     """深度清洗 RSS 正文：移除广告、推广、引导关注等噪音，保留正文结构"""
     if not text:
         return ""
-    # 1. 移除广告/推广/订阅/评论相关 class 或 id 的整个元素
-    text = re.sub(
-        r'<(\w+)[^>]*\b(?:class|id)\s*=\s*"[^"]*\b(?:ads?[_-]?|advert|banner|sponsor|promo|newsletter|subscribe|social-share|share-buttons?|related-posts|recommend|widget|comments?|disqus|pagination|footer-links|follow-us|qrcode|qr-code)[^"]*"[^>]*>[\s\S]*?</\1>',
-        '', text, flags=re.IGNORECASE)
+    # 1. 【已删除】按 class/id 整枚删除推荐块/署名块的规则（原词表 ads?|advert|banner|…|
+    #    related-posts|recommend|read-next|article-tags|author-box|byline|toc-|meta-info…）。
+    #    删除理由（2026-10-05 裁定，R42）：这条在本函数的**两个生产调用点**上都开不了火。
+    #    唯一入口链是 `_deep_clean_html(_sanitize_html(_normalize_body_html(...)))`，
+    #    而 `_sanitize_html` 的属性白名单 `_KEPT_ATTRS` 不保留 class/id —— 等本函数拿到
+    #    `text` 时 `<div class="related-posts">` 早就是 `<div>`，任何按 class/id 匹配的规则
+    #    命中恒为 0。留它就是"看着有防线、实际为 0"的假绿形状（本仓点名的自欺形状之一）。
+    #    真在起作用的是下面 2.5/2.6 两条**按 href 判**的规则（实测：这份历史语料上脱掉
+    #    36 条导航 href、清掉 1 个推广块）。
+    #    闸：tests/rss_history/test_no_inert_deep_clean_rules.py —— 每条 re.sub 规则都必须
+    #    在"生产顺序 + 仓库真语料"上至少真的改写过一条样本，否则当场红；
+    #    口径事实另由 test_sanitize_drops_class_so_rule1_is_inert_on_the_entry_chain 钉住
+    #    （哪天给 `_KEPT_ATTRS` 加上 class，那条会红，届时才允许重新考虑容器名这一刀）。
     # 1.5 移除 wechat2rss / link-proxy 跳转链接（"跳转微信打开"等）
     text = re.sub(
         r'<a[^>]*href="[^"]*(?:link-proxy|wechat2rss|mp\.weixin\.qq\.com)[^"]*"[^>]*>[^<]*</a>',
@@ -1363,6 +2109,18 @@ def _deep_clean_html(text):
         plain = re.sub(r'<[^>]+>', '', block)
         return '' if _promo_re.search(plain) else block
     text = re.sub(r'<(p|div)\b[^>]*>[\s\S]*?</\1>', _strip_and_check, text, flags=re.IGNORECASE)
+    # 2.5 站内导航链接：**去链接留文字**（Task 10）。R43 起这条刀抽成模块级
+    #     `_delink_nav_links`：运行时通道 `api/rss.js` 要有它的 JS 端口
+    #     （`lib/body_rules.js` 的 `delinkNavLinks`），而"逐条比输出"的对账判据需要一个
+    #     能与 JS 端口一一对应的 Python 函数 —— 长在 `_deep_clean_html` 里面没法单独喂样本。
+    #     抽取**没有**改变清洗顺序（还是 2.5 这一格）、没有改判定，完整理由见它的 docstring。
+    text = _delink_nav_links(text)
+    # 2.6 空锚点 / 站点根链接（"阅读更多""返回首页"那类壳）整枚去掉。
+    #     只吃 `href="#"` 与 `href="/"` 两种**精确**形状：`href="#sec-2"` 是有内容的页内锚点，
+    #     放宽成 `href="#[^"]*"` 会把正文里的"见下节"一起删掉（判据
+    #     test_in_page_fragment_link_is_not_dropped）。放在规则 3 之前 —— 这两把刀删空的
+    #     `<p><a href="#">…</a></p>` 壳要由规则 3 收尾。
+    text = re.sub(r'<a\b[^>]*href="(?:#|/)"[^>]*>[\s\S]*?</a>', '', text, flags=re.IGNORECASE)
     # 3. 移除清洗后残留的空块元素
     text = re.sub(
         r'<(?:p|div|span)\b[^>]*>\s*(?:<br\s*/?>\s*)*</(?:p|div|span)>',
@@ -1370,6 +2128,165 @@ def _deep_clean_html(text):
     # 4. 压缩连续空行（保留段落间距）
     text = re.sub(r'(?:\s*\n){3,}', '\n\n', text)
     return text.strip()
+
+
+# ── hnrss 模板摘要重写（Task 8）─────────────────────────────────────
+# hnrss 的 <description> 不是摘要，是四行投稿元数据：
+#     Article URL: …\nComments URL: …\nPoints: 254\n# Comments: 162
+# 运行时翻译后还有中文变体（文章网址/评论网址/积分/评论数）。整段进阅读器就是用户报的
+# "全是链接"。判据按**形状**而非 source_key：源改名、`hn_newest_56` 那类新增镜像、
+# 翻译版都要命中；按 key 判等于把"HN 这个源"写死进清洗层。
+# 四条正则都整行锚定（^…$）：正文里的 "reports Points: 254 as the best score" 不是模板行。
+# 冒号两可：半角 ':' 与全角 '\uFF1A'（中文变体用的是后者）。这里**必须**写码位转义而不是
+# 直接贴字形 —— 全角冒号在编辑器里与半角看不出区别，brief 那行抄进文件时就悄悄变成了两个
+# 半角冒号，中文版模板从此永不命中（判据 test_zh_translated_variant_also_matched 是当场抓到的）。
+# 数字段写 `[0-9]` 而不是 `\\d`（R43 对账口径）：Python 的 `\\d` 在 str 模式里是 **Unicode**
+# 十进制数字（`Points: ２５４` 全角数字也算命中），而 JS 端口按裁定只用 ASCII；
+# 两侧统一成 ASCII 才对得上（对账语料里有全角数字那一条，用它钉住这个口径）。
+#
+# ── R45：词表来自真语料清点，不是凭想象 ────────────────────────────────
+# 原来每个槽位只收了一个中文词（`评论数`），而运行时翻译层对同一槽位会给出一族同义词，
+# 实测最大缺口就是 `# 评论: 0`（半角冒号、词是"评论"不是"评论数"，18,037 条里 551 行）。
+# 下面四张词表是把 `rss_history.json` 的 `summary`/`summary_zh` **逐行按行首形态聚合**数出来的，
+# 收词只有两条依据：
+#   ① 该词在 HN 条目的模板槽位上真实出现 ≥1 次（没有词是凭空加的）；
+#   ② 该词在全部 18,037 条的**非 HN 条目**上命中数为 0（判据
+#      test_hn_word_list_has_no_non_hn_surface 拿真语料复核这条，防的是"得分/热度"
+#      这类通用词把游戏评测正文的 `得分：9` 当成模板行）。
+# 长词排在前只为了读起来顺，判决靠整行锚定与回溯，不靠顺序。
+# 两条**刻意没收**的形态（收它们要动的不是词表而是值段语义，属于"为多剥而放宽"）：
+#   `评论数：1条`（数量词后缀，实测 2 行）；被 `_truncate` 截断成单行的模板块（实测 21 行，
+#   门槛"至少两行"本就该放它过去 —— 判据 test_truncated_single_line_block_is_left_alone 钉住）。
+_HN_ART_WORDS = (u"article url", u"文章网址", u"文章链接", u"文章URL", u"文章地址")
+_HN_CMT_WORDS = (u"comments url", u"评论网址", u"评论区链接", u"评论区网址", u"评论链接",
+                 u"评论URL", u"评论地址", u"评论页面", u"讨论区链接", u"讨论链接")
+_HN_PTS_WORDS = (u"points", u"积分", u"当前得分", u"得分", u"评分", u"点赞数",
+                 u"热度值", u"热度", u"分数", u"点数", u"分值", u"关注度")
+_HN_CMTS_WORDS = (u"comments", u"评论数量", u"评论数", u"评论")
+
+
+def _hn_alt(words):
+    """词表 → 非捕获交替式。每个词都过 `re.escape`：词表是从不可信的翻译产物里清出来的，
+    哪天混进 `.`/`+`/`(` 也不该把整条行的锚定炸掉（那会把"锚定"这件事静默降级成 search）。"""
+    return u"|".join(re.escape(w) for w in words)
+
+
+_HN_ART_URL = re.compile(r"^(?:%s)\s*[:\uFF1A]\s*(\S+)\s*$" % _hn_alt(_HN_ART_WORDS), re.IGNORECASE)
+_HN_CMT_URL = re.compile(r"^(?:%s)\s*[:\uFF1A]\s*(\S+)\s*$" % _hn_alt(_HN_CMT_WORDS), re.IGNORECASE)
+_HN_POINTS = re.compile(r"^(?:%s)\s*[:\uFF1A]\s*([0-9]+)\s*$" % _hn_alt(_HN_PTS_WORDS), re.IGNORECASE)
+_HN_COMMENTS = re.compile(r"^#?\s*(?:%s)\s*[:\uFF1A]\s*([0-9]+)\s*$" % _hn_alt(_HN_CMTS_WORDS), re.IGNORECASE)
+# R47：上游翻译层会把 `Article URL:` / `Comments URL:` 的**标签整个丢掉**，于是进来的正文
+# 就是 `https://… + https://… + 积分：2 + # 评论：0` 这一形：四槽刀照旧开火（积分与评论两行
+# 就够门槛），那两行 URL 却以正文行的身份留在摘要里 —— 用户报的原症状「HN 里全是链接」到这一
+# 步只清了一半（实测 rss_history.json 18,037 条：HN 形状出口仍剩 5 行裸 URL、涉及 4 个字段；
+# 实时 `?source=` 通道每场都会把它们重新长出来）。
+# **只在已判定为 HN 形状的那条分支里动手**（门槛已过、pts 或 cmt 必有一格），判据是「整行就是
+# 一个 `http(s)://…`」。值段限 **ASCII 可打印** `[\x21-\x7e]` 而不是 `\S`，与 `_GLUED_URL_RE`
+# 同一个口径：`\S` 会把 `https://ex.com/a看了大佬的文章` 这种 **URL 与正文粘连**的行也算成
+# 「整行裸 URL」一口吃掉 —— 本刀派工初版就踩过这一格，是
+# test_order_matters_when_meta_lines_come_before_the_glued_line 当场抓成回归的。URL 里带 CJK
+# 的少数形态宁可少剥一条，不少剥错一行。
+# 通用摘要一条都不许剥：很多源的正常摘要就是单独一行链接，真语料里「刀没开火」的字段整整放着
+# 38 行这一形（值段改用 `\S` 去数是 52 行）—— 做成通用剥离就是在吃这些正文，反例判据
+# test_bare_url_line_from_an_ordinary_summary_is_kept 钉住这条边界。
+_HN_BARE_URL_LINE = re.compile(r"^https?://[\x21-\x7e]+$", re.IGNORECASE)
+
+
+def _rewrite_hn_summary(desc, link):
+    """把 hnrss 的模板元数据压成一行，正文文字一个字不动、裸链接一条不留。
+
+    门槛是"**至少命中两行**、且必须含 Points 或 Comments URL"：单行 `Points: 3` 不足以
+    判定，否则任何英文文章的评分句都会被当成模板吃掉（判据
+    test_one_meta_line_alone_is_not_enough / test_prose_mentioning_points_is_not_eaten）。
+    R47 补的第二件事也挂在这条分支里：标签被翻译层丢掉时，那两行 URL 是以正文身份进来
+    的，门槛过后一并剥掉（`_HN_BARE_URL_LINE`）；门槛没过者一个字都不动。
+    Points 与评论数的**数字保留**，Article/Comments URL 两行删掉不丢信息 —— 条目本身的
+    `link` 就是 Article URL（讨论页入口由前端 a.u 承担，见 Task 9 的 `_isHnDiscussion`）。
+    正文按行原样保留（含段落空行），元数据行追加在最后。
+    幂等：重写结果里不再有模板行，过第二把刀返回原值 —— 快照出口对 `summary` 与
+    `summary_zh` 两条链路都会调，不幂等就会把"254 分"再吃一遍。
+    """
+    if not desc:
+        return desc
+    art = cmt = pts = cmts = ""
+    keep = []
+    for ln in desc.replace("\r\n", "\n").split("\n"):
+        ln = ln.strip()
+        if not ln:
+            if keep:
+                keep.append(ln)
+            continue
+        m = _HN_ART_URL.match(ln)
+        if m:
+            art = m.group(1)
+            continue
+        m = _HN_CMT_URL.match(ln)
+        if m:
+            cmt = m.group(1)
+            continue
+        m = _HN_POINTS.match(ln)
+        if m:
+            pts = m.group(1)
+            continue
+        m = _HN_COMMENTS.match(ln)
+        if m:
+            cmts = m.group(1)
+            continue
+        keep.append(ln)
+    while keep and not keep[-1]:
+        keep.pop()
+    hits = (1 if art else 0) + (1 if cmt else 0) + (1 if pts else 0) + (1 if cmts else 0)
+    if hits < 2:
+        return desc
+    if not (pts or cmt):
+        return desc
+    # R47：走到这里就是"已判定为 HN 形状"，此时才剥整行裸 URL；门槛没过的那条分支在上面就
+    # return 了，通用摘要因此一条都碰不到。剥完再退一次尾部空行（正文后面跟一个空行再跟
+    # 一条裸 URL 那种形状留下的空洞），否则每次构建对同一字段重写都会多/少一个空行，
+    # 幂等口径（快照出口每场重跑）就破了。
+    keep = [ln for ln in keep if not _HN_BARE_URL_LINE.match(ln)]
+    while keep and not keep[-1]:
+        keep.pop()
+    meta = []
+    if pts:
+        meta.append("%s 分" % pts)
+    if cmts:
+        meta.append("%s 评论" % cmts)
+    meta.append("Hacker News")
+    meta_line = " · ".join(meta)
+    return "\n".join(keep + [meta_line]) if keep else meta_line
+
+
+# "链接+正文"粘连：URL 后**紧跟**汉字/假名（无空白分隔）。NodeSeek 这类 feed 的 description 形状
+# （实测 nodeseek_54：`https://www.nodeseek.com/post-957723-1看了大佬的IX文章…`）。
+# URL 字符类用 `[\x21-\x7e]`（可打印 ASCII、无空白）而不是 brief 原样的 `\S`：
+# `\S` 会把紧跟在 URL 后面的全角逗号/句号也当 URL 字符吃掉（`…com/a，这是正文` 会连标点一起剥），
+# 而汉字/全角标点本来就不是这条 URL 的组成部分 —— 判据
+# test_url_followed_by_fullwidth_punctuation_is_not_glued / test_url_followed_by_newline_is_not_glued 钉住。
+# 先行断言是**唯一**动手条件：有空白/换行分隔、整条就是 URL、链接出现在句中，一律原样返回。
+_GLUED_URL_RE = re.compile(r"^\s*https?://[\x21-\x7e]+?(?=[\u4e00-\u9fff\u3040-\u30ff])")
+
+
+def _strip_glued_url(text):
+    """剥掉摘要开头与正文粘连的裸链接。
+
+    只在"URL 后紧跟汉字"这一种形状上动手：有空白分隔、整条就是 URL、
+    或链接出现在句中，都原样返回（判据里三条反例就是为了挡住过度匹配）。
+
+    幂等（剥完的串以汉字开头，再过一次返回原值）—— 这不是洁癖：本刀接在**解析入口**
+    （`summary` 出厂即规范）与**快照 `s` 出口**（`summary_zh` 是上一场翻译的缓存、跨场复用、
+    不会被重新解析）两处，同一条链路会过两遍，与 Task 8 的 `_rewrite_hn_summary` 同形。
+    `link` 参数不参与判决：粘连与否只看 `text` 自己的形状，与条目链接是否同源无关。
+    """
+    if not text:
+        return text
+    m = _GLUED_URL_RE.match(text)
+    if not m:
+        return text
+    # 不写 brief 里那句 `.lstrip()`：匹配终点按构造就是**汉字**，剥完的串第一个字符必是汉字，
+    # 永远没有前导空白可退 —— 那是条任何判据都打不到的死分支（本批变异 ④d 实测它存活），
+    # 留着只会让下一批以为"退空白"这件事有判据在守。
+    return text[m.end():]
 
 
 def _truncate(s, maxlen=500):
@@ -1403,59 +2320,321 @@ def _parse_iso(s):
 _RSS_MONTHS = {"Jan":1,"Feb":2,"Mar":3,"Apr":4,"May":5,"Jun":6,
                "Jul":7,"Aug":8,"Sep":9,"Oct":10,"Nov":11,"Dec":12}
 
+# RFC 822 字母时区（小时偏移）。注意 CST 在 RFC 822 中定义为 -0600（美国中部）；
+# 中国的 CST(+0800) 在真实 feed 里一律写作 +0800 / GMT+0800，不靠裸 "CST" 表达。
+_RSS_TZ_NAMED = {"UT":0,"UTC":0,"GMT":0,"Z":0,
+                 "EST":-5,"EDT":-4,"CST":-6,"CDT":-5,
+                 "MST":-7,"MDT":-6,"PST":-8,"PDT":-7}
+
+# 覆盖真实世界出现过的 RSS pubDate 写法（2026-09-14 实测样本见 tests/rss_date/）：
+#   "Fri Oct 27 2023 15:13:00 GMT+0800 (China Standard Time)"   ← JS Date.toString()，月在前
+#   "13 Sep 2026 07:28:00 EST"                                  ← 日在前 + 字母时区，无星期前缀
+#   "Mon, 18 May 2020"                                          ← 仅日期
+#   "Mon, 14 Sep 2026 01:18:00 GMT"                             ← 标准 RFC 822
+_RSS_DATE_RE = re.compile(
+    r"^(?:\w{3,9},?\s+)?"                                       # 可选星期前缀（Mon, / Monday ）
+    r"(?:"
+    r"(?P<d1>\d{1,2})\s+(?P<m1>[A-Za-z]{3,9})"                  # 词序 A：日 月
+    r"|"
+    r"(?P<m2>[A-Za-z]{3,9})\.?\s+(?P<d2>\d{1,2}),?"             # 词序 B：月 日（可带点/逗号）
+    r")"
+    r"\s+(?P<y>\d{4})"                                          # 年
+    r"(?:\s+(?P<H>\d{1,2}):(?P<M>\d{2})(?::(?P<S>\d{2}))?)?"    # 可选时间（秒可省略）
+    # 时区：四位偏移(+0800/+08:00)、**裸两位偏移(+08/-05，plink.anyfeeder 就这么写)**、
+    # 或字母时区(GMT/CST/UT)。少了两位那一支会让整串匹配失败 —— 日期明明是真实存在的，
+    # 却被判成"上游没给日期"，进而降级去靠 first_seen 撑龄期（2026-09-21 超能网 68/68 的真相）。
+    r"(?:\s*(?:GMT|UTC|UT)?\s*(?P<tz>[+-]\d{1,2}(?::?\d{2})?|[A-Za-z]{2,4}))?"
+    r"(?:\s*\(.*\))?$"                                          # 忽略 "(China Standard Time)"
+)
+
+
+def _rss_tz_offset(tz):
+    """把时区串变成 timedelta。无法识别时保守返回 UTC（宁可靠近而非丢弃）。"""
+    if not tz:
+        return datetime.timedelta(0)
+    if tz[0] in "+-":
+        sign = 1 if tz[0] == "+" else -1
+        digits = tz[1:].replace(":", "")
+        try:
+            hh = int(digits[:2])
+            mm = int(digits[2:4]) if len(digits) >= 4 else 0
+        except ValueError:
+            return datetime.timedelta(0)
+        return datetime.timedelta(hours=sign * hh, minutes=sign * mm)
+    hours = _RSS_TZ_NAMED.get(tz.upper())
+    if hours is None:
+        return datetime.timedelta(0)
+    return datetime.timedelta(hours=hours)
+
+
 def _parse_rss_date(s):
     s = (s or "").strip()
     if not s:
         return None
-    m = re.match(r"\w+,\s+(\d{1,2})\s+(\w+)\s+(\d{4})\s+(\d{2}:\d{2}:\d{2})\s*([+-]\d{4})?", s)
+    m = _RSS_DATE_RE.match(s)
     if m:
-        day, mon, year, timestr, tz = int(m.group(1)), _RSS_MONTHS.get(m.group(2), 1), int(m.group(3)), m.group(4), m.group(5) or "+0000"
-        h, mi, sec = map(int, timestr.split(":"))
-        tz_sign = 1 if tz[0] == "+" else -1
-        tz_h, tz_m = int(tz[1:3]), int(tz[3:5])
-        tz_offset = datetime.timedelta(hours=tz_sign * tz_h, minutes=tz_sign * tz_m)
-        try:
-            return datetime.datetime(year, mon, day, h, mi, sec, tzinfo=datetime.timezone(tz_offset))
-        except ValueError:
-            return None
+        mon = _RSS_MONTHS.get((m.group("m1") or m.group("m2"))[:3].title())
+        if mon:
+            h, mi, sec = int(m.group("H") or 0), int(m.group("M") or 0), int(m.group("S") or 0)
+            try:
+                return datetime.datetime(int(m.group("y")), mon, int(m.group("d1") or m.group("d2")),
+                                         h, mi, sec, tzinfo=datetime.timezone(_rss_tz_offset(m.group("tz"))))
+            except ValueError:
+                return None
     return _parse_iso(s)
 
 
-def _fmt_rel_time(dt):
-    if dt is None:
-        return ""
-    # 缓存命中时 pub_date 已是 ISO 字符串（主流程会将其序列化），先反序列化
-    if isinstance(dt, str):
+_BJ_TZ = datetime.timezone(datetime.timedelta(hours=8))
+
+
+def _detect_uniform_dates(items, min_items=5, threshold=0.8):
+    """检测同日期伪造（bad_date 模式 C）。
+
+    同一源 ≥min_items 条条目中，超过 threshold 比例共享完全相同的 pub_date 字符串
+    → 判定为日期伪造，返回该源 key 集合。
+
+    典型场景：知乎日报 anyfeeder feed 无 pubDate，_fallback_date_iso 用 first_seen
+    填充 → 同批次所有条目获得完全相同的时间戳。
+    """
+    from collections import Counter, defaultdict
+    src_dates = defaultdict(list)
+    for item in items:
+        sk = item.get("source_key", "")
+        pd = item.get("pub_date", "")
+        if sk and pd:
+            src_dates[sk].append(pd)
+
+    flagged = set()
+    for sk, dates in src_dates.items():
+        if len(dates) < min_items:
+            continue
+        cnt = Counter(dates)
+        most_common_date, most_common_count = cnt.most_common(1)[0]
+        ratio = most_common_count / len(dates)
+        if ratio >= threshold:
+            flagged.add(sk)
+    return flagged
+
+
+def _parse_hist_dt(s):
+    """历史/输出里的时间串 → 北京时间 aware datetime（裸值按北京时间理解）。
+
+    历史文件里 pub_date 可能是 aware（+08:00 / Z）也可能是裸值，
+    历史上各处各写一份解析逻辑（至少 4 处），口径容易漂移 —— 统一到这里。
+    """
+    s = (s or "").strip()
+    if not s:
+        return None
+    try:
+        d = datetime.datetime.fromisoformat(s)
+    except (ValueError, TypeError):
+        return None
+    return d.replace(tzinfo=_BJ_TZ) if d.tzinfo is None else d.astimezone(_BJ_TZ)
+
+
+def _first_seen_iso(entry):
+    """first_seen（我方首次收录该链接的时刻）的 ISO 形式，解析失败返回空串。"""
+    d = _parse_hist_dt(entry.get("first_seen"))
+    return d.isoformat() if d else ""
+
+
+def _fill_undated_from_capture(item):
+    """出厂副本缺 pub_date 时改用我方收录时刻并打降级标记，返回是否改动。
+
+    为什么需要这一句：历史条目的降级在合并循环里做（entry["pub_date"] = _fb），
+    但同一个链接**当次又抓到**时走的是 `continue` —— 出厂的是抓取字典那份，
+    它从没被兜过底。生产实测这样有 9 条卡片 pub_date 与 time_str 双空，
+    连续两场是同一批链接（不是"本轮新增、下场自愈"）。
+
+    只改出厂副本、绝不写回历史的 pub_date：_retention_ref_dt 的推导前提是
+    「历史里没有 pub_date 就等于出口那份是降级键」，写回去等于让收录时刻去套
+    源级时区偏移（二次校正），那正是 P1-3 实测过 68h → 76h 的形态。
+    """
+    if item.get("pub_date"):
+        return False
+    iso = _first_seen_iso(_rss_history.get(item.get("link", "")) or {})
+    if not iso:
+        return False
+    item["pub_date"] = iso
+    item["date_fallback"] = True
+    return True
+
+
+def _load_pub_date_offsets(sources=None):
+    """读取源配置里**声明**的 pub_date 时区校正量（单位：分钟；负值 = 把 pub_date 往前挪）。
+
+    为什么是声明式而非自动推断：物理约束（我们不可能在文章发布前抓到它）只能给出
+    偏移的**下界** `need = max(first_seen - pub_date)`，而满足下界的合法时区偏移往往不止一个。
+    实测超能网 need = 444.7min 时，480 / 525 / 570min 全都物理可行 —— 统计上无法唯一确定。
+    按「最小候选」猜会静默改写日期，属于数据污染风险，故改由配置显式声明；
+    自动检测降级为**发现器**（见 _detect_pub_date_anomalies），只报告不落库。
+    """
+    out = {}
+    for s in (sources if sources is not None else RSS_SOURCES):
+        if not isinstance(s, dict):
+            continue
         try:
-            dt = datetime.datetime.fromisoformat(dt)
-        except ValueError:
-            return ""
-    # Convert to Beijing time, handling both aware and naive datetimes
-    if dt.tzinfo:
-        bj = dt.astimezone(datetime.timezone(datetime.timedelta(hours=8)))
-        bj_naive = bj.replace(tzinfo=None)
-    else:
-        bj_naive = dt
-    now = _now_bj().replace(tzinfo=None)
-    diff = now - bj_naive
-    seconds = int(diff.total_seconds())
-    if seconds < 0:
-        return bj_naive.strftime("%m-%d %H:%M")
-    if seconds < 60:
-        return "%d秒前" % seconds
-    minutes = seconds // 60
-    if minutes < 60:
-        return "%d分钟前" % minutes
-    hours = minutes // 60
-    if hours < 24:
-        return "%d小时前" % hours
-    days = hours // 24
-    if days < 30:
-        return "%d天前" % days
-    return bj_naive.strftime("%Y-%m-%d")
+            v = int(s.get("pub_date_offset_min") or 0)
+        except (TypeError, ValueError):
+            continue
+        if v:
+            out[s.get("key")] = v
+    return out
 
 
-# ──────────────────────────── 翻译 ────────────────────────────
+def _shift_iso_minutes(iso_str, minutes):
+    """把 ISO 时间串按分钟平移（负值 = 往前）。解析失败原样返回（不制造新数据）。"""
+    d = _parse_hist_dt(iso_str)
+    if d is None:
+        return iso_str
+    return (d + datetime.timedelta(minutes=minutes)).isoformat()
+
+
+def _effective_pub_dt(item, offsets=None):
+    """条目**校正后**的发布时间（北京时间 aware）。声明了偏移的源按偏移平移。
+
+    合并 / 72h 裁剪 / 审计 / 输出四处都必须用本函数，否则会出现多套口径
+    （2026-09-14：构建期切块曾用字符串比较、审计用时区安全比较，导致选片错位）。
+    """
+    d = _parse_hist_dt(item.get("pub_date"))
+    if d is None:
+        return None
+    off = (offsets if offsets is not None else _load_pub_date_offsets()).get(item.get("source_key"))
+    if off:
+        d = d + datetime.timedelta(minutes=off)
+    return d
+
+
+# pub_date 晚于 first_seen 超过该阈值 → 判为「已被证伪」。
+# 容忍 1 小时两端时钟漂移；超过即说明我们「在文章发布之前抓到了它」，物理上不可能。
+FUTURE_DATE_TOLERANCE_MIN = 60
+
+
+def _pub_date_falsified(entry, offsets=None):
+    """pub_date 是否已被物理事实证伪（晚于 first_seen 超过容忍阈值）。
+
+    注意与「无 pub_date」区分：那是缺失，走既有降级路径；
+    这里是**有一个明确错误的值**，不能拿来排序（否则条目「出生于未来」，
+    前端钳制会把多条折叠成同一时刻 → 整块钉在首屏顶部）。
+    """
+    fs = _parse_hist_dt(entry.get("first_seen"))
+    pd = _effective_pub_dt(entry, offsets)
+    if fs is None or pd is None:
+        return False
+    return (pd - fs) > datetime.timedelta(minutes=FUTURE_DATE_TOLERANCE_MIN)
+
+
+def _plan_falsify_shifts(history, offsets=None, src_keys=None):
+    """为「将被证伪、须改用收录时刻」的条目规划保序回拉位移量（分钟，<=0），返回 {link: shift}。
+
+    为什么不能统统写成同一个 first_seen：
+      first_seen 是我方**按抓取批次**打的时间戳 —— 实测全量历史 8411 条只有 122 个取值，
+      最大一个批次覆盖 1857 条。把一批被判伪的条目统统赋成同一个 first_seen，
+      这一批就退化成「同一时刻」；前端按时间降序排完就是一大块同源同刻卡片，
+      与 2026-09-14 用户报告的「同刻扎堆」是同一形态（只是源从超能网换成了 arxiv/product_hunt）。
+      实测：60min 阈值下 101 条判伪里有 68 条落在「同批次多条」上，最大单组 27 条
+      （arxiv_ai_4）、次大 24 条（product_hunt_797）——即一次修好、一次又造出来。
+
+    对策（与前端 L3 钳制同一语义：**保序回拉**，不是折叠）：
+      保留 feed 自身的相对先后（若干条目间的声称时间差是有信息的），整批后移，
+      使**最新的一条**恰好落在 first_seen，其余按其原间隔往前排开。
+    边界：
+      · 只处理「有 pub_date 且被证伪」的条目；本来就无日期者没有相对信息，保持原行为；
+      · 任何一条都不得早于 cutoff —— 72h 窗口是用户可见契约，不允许被位移越界。
+    """
+    groups = {}
+    for link, item in history.items():
+        sk = item.get("source_key")
+        if src_keys is not None and sk not in src_keys:
+            continue
+        if not item.get("pub_date"):
+            continue
+        fs = _parse_hist_dt(item.get("first_seen"))
+        if fs is None or not _pub_date_falsified(item, offsets):
+            continue
+        pd = _effective_pub_dt(item, offsets)
+        groups.setdefault((sk, item.get("first_seen") or ""), []).append(
+            (link, (pd - fs).total_seconds() / 60.0))
+
+    shifts = {}
+    for arr in groups.values():
+        newest_adv = max(a for _l, a in arr)   # 组内最「未来」的那条 → 锚到 first_seen
+        for link, adv in arr:
+            shifts[link] = -int(round(newest_adv - adv))
+    return shifts
+
+
+def _detect_pub_date_anomalies(history, offsets=None):
+    """发现器：找出「pub_date 系统性晚于 first_seen」的源，只报告不修改数据。
+
+    返回 [{key, n, inverted_ratio, min_delta_min, median_delta_min, need_min, kind, suggest_min}]：
+      kind='tz'    → 物理可行的最小前移量落在真实时区范围内 ⇒ 可能是时区标注错误，
+                     suggest_min 给出最小的合法候选（供人工确认后写进源配置）
+      kind='other' → 需要前移几十小时，远超任何真实时区 ⇒ 不是时区问题
+                     （典型是播客/Newsletter 的「预约发布」，或源侧日期本身错乱），不给建议
+
+    为什么只报告不落库：见 _load_pub_date_offsets 的说明（物理约束只给下界，可能多解）。
+    """
+    buckets = {}
+    for item in history.values():
+        sk = item.get("source_key")
+        pd = _effective_pub_dt(item, offsets)
+        fs = _parse_hist_dt(item.get("first_seen"))
+        if not sk or pd is None or fs is None:
+            continue
+        buckets.setdefault(sk, []).append((fs - pd).total_seconds() / 60.0)
+
+    out = []
+    for sk, deltas in buckets.items():
+        if sk in (offsets or {}) or len(deltas) < TZ_ANOMALY_MIN_ITEMS:
+            continue
+        inverted = sum(1 for d in deltas if d < -10)
+        ratio = inverted / float(len(deltas))
+        if ratio < TZ_ANOMALY_INVERT_RATIO:
+            continue
+        srt = sorted(deltas)
+        need = -srt[0]
+        kind, suggest = "other", None
+        if need <= TZ_MAX_OFFSET_MIN:
+            cands = [c for c in _TZ_LEGAL_OFFSETS_MIN if c >= need - 1e-9]
+            if cands:
+                kind, suggest = "tz", -cands[0]
+        out.append({
+            "key": sk, "n": len(deltas), "inverted_ratio": ratio,
+            "min_delta_min": srt[0], "median_delta_min": srt[len(srt) // 2],
+            "need_min": need, "kind": kind, "suggest_min": suggest,
+        })
+    out.sort(key=lambda x: -x["n"])
+    return out
+
+
+TZ_ANOMALY_MIN_ITEMS = 8       # 少于此条数不足以判断「系统性」
+TZ_ANOMALY_INVERT_RATIO = 0.9  # 倒挂率门槛（arxiv 51.7% / product_hunt 80% 均被排除）
+TZ_MAX_OFFSET_MIN = 840        # +14:00 是现实中最大的 UTC 偏移；超过即不可能是时区标注错误
+# 现实在用的 UTC 偏移（分钟）。不能只取「任何 0.5h 倍数」：+7:30 已无地区使用，
+# 若把它列进候选，「最小候选」规则会把 超能网 的 8h 误判成 7.5h。
+_TZ_LEGAL_OFFSETS_MIN = tuple(sorted(set(
+    [h * 60 for h in range(-12, 15)] + [330, 345, 390, 525, 570, 630, 765, -210, -570])))
+
+
+def _fallback_date_iso(entry):
+    """条目拿不到 pub_date 时的降级排序键 = first_seen（我方首次收录该链接的真实时刻）。
+
+    为什么必须给一个键：空 pub_date 会让条目在默认排序里沉底 → 用户永远看不到
+    （2026-09-14 实测：201 条因此不可见）。降级键只负责「让它按时间参与排序」，
+    语义上不等于发布时间，因此调用方需用 date_fallback 标记，前端据此外显区分。
+    """
+    if entry.get("pub_date"):
+        return ""
+    return _first_seen_iso(entry)
+
+
+# 相对时间标签的唯一口径已移到 lib/rel_time.js（构建期不再烘 time_str）。
+# 参照快照见 tests/rss_history/goldens/rel_time_labels.json；
+# 页面与快照的对等判据见 tests/rss_history/test_time_label_parity.py。
+
+# 这里刻意不留 Python 版实现：两条口径并存迟早只被改到一条。
+
 
 def _detect_lang(text):
     """检测文本主要语言，返回 MyMemory langpair 代码。"""
@@ -1481,6 +2660,11 @@ def _detect_lang(text):
 
 def _agnes_translate(text, timeout=20):
     """Agnes AI 翻译（OpenAI 兼容接口，agnes-2.5-flash）。失败返回 None。"""
+    global _AGNES_BLOCK_UNTIL, _AGNES_OFFENSES, _AGNES_EMPTY_STREAK, _AGNES_KEY_IDX, _AGNES_429_STREAK
+    # 罚期闸放在入口：以前只有调用方 _translate_to_zh 记得查，函数自己照发请求
+    # ⇒ 任何新调用点都会绕过退避。停手必须是函数的默认行为，不是调用者的自觉。
+    if _AGNES_BLOCK_UNTIL > time.time():
+        return None
     payload = json.dumps({
         "model": "agnes-2.5-flash",
         "messages": [
@@ -1497,30 +2681,205 @@ def _agnes_translate(text, timeout=20):
         data=payload,
         headers={
             "Content-Type": "application/json",
-            "Authorization": "Bearer " + _AGNES_KEY,
+            "Authorization": "Bearer " + _AGNES_KEYS[_AGNES_KEY_IDX],
             "User-Agent": "starhub-auto-update",
         },
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = json.loads(r.read().decode("utf-8"))
-        return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip() or None
+        out = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip() or None
+        with _TRANS_LOCK:
+            if out:
+                _AGNES_OFFENSES = 0
+                _AGNES_EMPTY_STREAK = 0
+                _AGNES_429_STREAK = 0      # 任一 key 成功就不该把早先的 429 攒成退避
+            else:
+                # 200 但空 content（模型对特定输入的拒绝/截断）：连续 3 次视为端点异常入罚期
+                _AGNES_EMPTY_STREAK += 1
+                empty_hit = _AGNES_EMPTY_STREAK >= _AGNES_EMPTY_LIMIT
+                if empty_hit and _AGNES_BLOCK_UNTIL <= time.time():
+                    block_s = min(300 * (2 ** _AGNES_OFFENSES), 3600)
+                    _AGNES_BLOCK_UNTIL = time.time() + block_s
+                    _AGNES_OFFENSES += 1
+                    _AGNES_EMPTY_STREAK = 0
+                    print("[翻译] Agnes 连续 %d 次空响应，暂停直连 %d 分钟" % (_AGNES_EMPTY_LIMIT, block_s // 60), file=sys.stderr)
+        return out
+    except urllib.error.HTTPError as e:
+        # 429 限流：先轮转到下一个 key；**轮完一整圈仍全 429** 才记一次罚期
+        # （旧写法只轮转、从不记账 ⇒ 所有 key 一起被限流时，每条待翻文本都再撞一圈墙）
+        if e.code == 429 and len(_AGNES_KEYS) > 1:
+            with _TRANS_LOCK:
+                _AGNES_KEY_IDX = (_AGNES_KEY_IDX + 1) % len(_AGNES_KEYS)
+                _AGNES_429_STREAK += 1
+                cycled = _AGNES_429_STREAK >= len(_AGNES_KEYS)
+                if cycled:
+                    _AGNES_429_STREAK = 0
+                    if _AGNES_BLOCK_UNTIL <= time.time():
+                        block_s = min(300 * (2 ** _AGNES_OFFENSES), 3600)
+                        _AGNES_BLOCK_UNTIL = time.time() + block_s
+                        _AGNES_OFFENSES += 1
+                        print("[翻译] Agnes %d 个 key 全限流，暂停直连 %d 分钟"
+                              % (len(_AGNES_KEYS), block_s // 60), file=sys.stderr)
+            if not cycled:
+                print("[翻译] Agnes 429，轮转到 key[%d]" % _AGNES_KEY_IDX, file=sys.stderr)
+            return None
+        # 其他 HTTP 错误 / 全部 key 已轮转完：入账本罚期
+        with _TRANS_LOCK:
+            if _AGNES_BLOCK_UNTIL > time.time():
+                return None
+            block_s = min(300 * (2 ** _AGNES_OFFENSES), 3600)
+            _AGNES_BLOCK_UNTIL = time.time() + block_s
+            _AGNES_OFFENSES += 1
+            print("[翻译] Agnes HTTP %d，暂停直连 %d 分钟" % (e.code, block_s // 60), file=sys.stderr)
+        return None
     except Exception:
         return None
 
 
+def _zen_call_model(text, model, timeout, auth):
+    """单模型单鉴权调用。返回 (译文|None, 是否自封该模型, 是否鉴权类失败 401/403)。"""
+    payload = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "你是翻译引擎。把用户输入翻译成简体中文，只输出译文，不要解释。"},
+            {"role": "user", "content": text[:1500]},
+        ],
+        "max_tokens": 400,
+        "temperature": 0.2,
+    }).encode("utf-8")
+    req = urllib.request.Request(_ZEN_URL, data=payload, headers={
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + auth,
+        # 免费档要求 OpenCode 客户端身份，session/request 为每次调用生成的唯一 ID
+        "User-Agent": "opencode/1.15.0 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.13",
+        "x-opencode-client": "cli",
+        "x-opencode-project": "global",
+        "x-opencode-request": "msg_" + uuid.uuid4().hex,
+        "x-opencode-session": "ses_" + uuid.uuid4().hex,
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        out = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip() or None
+        if out:
+            with _TRANS_LOCK:
+                _ZEN_TIMEOUT_STREAK[model] = 0
+                _ZEN_MODEL_OFFENSES[model] = 0
+            return out, False, False
+        # HTTP 200 但空 content：与超时同账本，连续 2 次自封（防恒空模型零成本占用全池轮询）
+        with _TRANS_LOCK:
+            _ZEN_TIMEOUT_STREAK[model] = _ZEN_TIMEOUT_STREAK.get(model, 0) + 1
+            streak = _ZEN_TIMEOUT_STREAK[model]
+        return None, streak >= 2, False
+    except urllib.error.HTTPError as e:
+        # 任何 HTTP 错误都自封该模型（401/403=key 不被接受，429=限流，5xx=故障），避免逐文本反复撞墙
+        return None, True, e.code in (401, 403)
+    except Exception:
+        # 超时/网络故障不计 HTTP 错误，但连续挂起同样拖死管线：连续 2 次自封该模型
+        with _TRANS_LOCK:
+            _ZEN_TIMEOUT_STREAK[model] = _ZEN_TIMEOUT_STREAK.get(model, 0) + 1
+            streak = _ZEN_TIMEOUT_STREAK[model]
+        return None, streak >= 2, False
+
+
+def _zen_translate(text, timeout=25):
+    """OpenCode Zen 免费模型轮询翻译：游标挑一个未自封的模型，HTTP 错误/连续超时自封该模型
+    （指数退避 5→10→20→40 分钟封顶 1h，成功清零）并切换下一个；个人 key 撞 401/403 时
+    当场回退 Bearer public 并粘性记住。全部自封返回 None。"""
+    global _ZEN_MODEL_IDX, _ZEN_AUTH_STICKY
+    with _TRANS_LOCK:
+        auth = _ZEN_AUTH_STICKY
+    fallback_auth = None
+    if not auth:
+        auth = _ZEN_KEY or "public"
+        fallback_auth = "public" if auth != "public" else None
+    for _attempt in range(len(_ZEN_MODELS)):
+        model = None
+        with _TRANS_LOCK:
+            for _k in range(len(_ZEN_MODELS)):
+                cand = _ZEN_MODELS[_ZEN_MODEL_IDX % len(_ZEN_MODELS)]
+                _ZEN_MODEL_IDX += 1
+                if _ZEN_MODEL_BLOCK.get(cand, 0) <= time.time():
+                    model = cand
+                    break
+        if model is None:
+            return None
+        out, to_block, auth_fail = _zen_call_model(text, model, timeout, auth)
+        if auth_fail and fallback_auth and not out:
+            out, to_block, auth_fail = _zen_call_model(text, model, timeout, fallback_auth)
+            if out:
+                with _TRANS_LOCK:
+                    _ZEN_AUTH_STICKY = fallback_auth
+                print("[翻译] Zen key 被拒，粘性回退 Bearer public", file=sys.stderr)
+        if out:
+            return out
+        if to_block:
+            with _TRANS_LOCK:
+                if _ZEN_MODEL_BLOCK.get(model, 0) > time.time():
+                    pass  # 已在罚期内：同波并发失败只记一次违规（P1 竞态修复）
+                else:
+                    offenses = _ZEN_MODEL_OFFENSES.get(model, 0)
+                    block_s = min(300 * (2 ** offenses), 3600)
+                    _ZEN_MODEL_BLOCK[model] = time.time() + block_s
+                    _ZEN_TIMEOUT_STREAK[model] = 0
+                    _ZEN_MODEL_OFFENSES[model] = offenses + 1
+                    print("[翻译] Zen %s 限流/故障，自封 %d 分钟并切换下一模型" % (model, block_s // 60), file=sys.stderr)
+    return None
+
+
+_ANSI_RE = re.compile(r"\u001b?\[[0-9;]{1,4}[A-Za-z]")
+_URL_RE = re.compile(r"https?://\S+", re.I)
+_META_STUB_RE = re.compile(
+    r"^(article url|comments url|points|submitted by|# comments|permalink|story link)\b", re.I)
+_CJK_RANGES = ((0x4E00, 0x9FFF), (0x3400, 0x4DBF))
+_KANA_RANGES = ((0x3040, 0x309F), (0x30A0, 0x30FF))
+
+
+def _in_ranges(ch, ranges):
+    o = ord(ch)
+    return any(a <= o <= b for a, b in ranges)
+
+
+def _needs_translation(text):
+    """这条文本该不该送去翻译（构建期口径，与运行时 JS 的 _needsTranslation 同规则）。
+
+    旧口径 `cn_chars > len(text) * 0.3` 的分母是**整串长度**，所以中文里夹一串 `+` 或 ANSI
+    残片（`[1m`、`[36m`）会把中文占比稀释到阈值以下 ⇒ 当成"需要翻译"真发请求；
+    2026-10-01 探针实测：中文垃圾串、纯 URL 都各占用了一次外呼。
+    现在先剥 ANSI/URL/CJK，再要求**存在非中文的字母**且中文不占多数，并跳过 HN 元数据样板。
+    门槛刻意不是"有没有拉丁词"：谚文/西里尔/阿拉伯文一个拉丁字母都没有，用拉丁词做门槛会把它们
+    一起跳过（我第一版就是这样，被 test_korean_still_sent 当场打死）。
+    含平假名/片假名的日文一律要翻 —— 那是既有规则（原来用 has_kana 排除误跳），不能改坏。
+    """
+    if any(_in_ranges(c, _KANA_RANGES) for c in text):
+        return True
+    clean = _URL_RE.sub(" ", _ANSI_RE.sub(" ", text))
+    clean = "".join(c for c in clean if not _in_ranges(c, _CJK_RANGES))
+    other_letters = sum(1 for c in clean if c.isalpha())
+    if not other_letters:
+        return False                                  # 除中文外没有任何文字：数字/标点/纯符号/纯 URL
+    cjk = sum(1 for c in text if _in_ranges(c, _CJK_RANGES))
+    if cjk >= other_letters:
+        return False                                  # 中文已占多数
+    lines = [l for l in text.splitlines() if l.strip()]
+    if len(lines) >= 3:
+        stubs = sum(1 for l in lines if _META_STUB_RE.match(l.strip()))
+        if stubs * 2 >= len(lines):
+            return False                              # 六成以上是 URL/点数样板，翻出来只有链接
+    return True
+
+
 def _translate_to_zh(text, timeout=TRANSLATE_TIMEOUT):
-    """翻译降级链：Agnes AI（首选，无 IP 封锁）→ Google → MyMemory → Google dict-chrome（带缓存）。"""
+    """翻译降级链：Agnes → Google gtx → Zen 免费模型轮询 → MyMemory → dict-chrome（带缓存+熔断）。"""
     if not text:
         return ""
     # 先清理 HTML 标签
     text = _strip_html(text)
     if not text:
         return ""
-    # 如果已经是中文为主，跳过（但需排除日文：含平假名/片假名的文本是日文而非中文）
-    has_kana = any('\u3040' <= c <= '\u309f' or '\u30a0' <= c <= '\u30ff' for c in text)
-    cn_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
-    if not has_kana and cn_chars > len(text) * 0.3:
+    # 已经是中文为主 / 纯 URL / 元数据样板 → 跳过（日文除外：见 _needs_translation 里的 kana 规则）
+    if not _needs_translation(text):
         _TRANS_STATS["skip"] += 1
         return text
 
@@ -1528,6 +2887,7 @@ def _translate_to_zh(text, timeout=TRANSLATE_TIMEOUT):
     text_hash = hashlib.md5(text.encode("utf-8", errors="replace")).hexdigest()
     if text_hash in _trans_cache:
         _TRANS_STATS["cache_hit"] += 1
+        _trans_touch(text_hash)   # 命中要记账给 LRU，否则高频译文会先被裁掉
         return _trans_cache[text_hash]
 
     # 熔断：连续多次全端点失败后暂停请求，期间未命中缓存的文本直接返回原文
@@ -1538,8 +2898,8 @@ def _translate_to_zh(text, timeout=TRANSLATE_TIMEOUT):
 
     encoded = urllib.parse.quote(text[:500])
 
-    # 0) Agnes AI（首选：GA 免费端点全被封，付费接口无 IP 限制）
-    if _AGNES_KEY:
+    # 0) Agnes AI（首选，免费但限流：429 后暂停直连，期间直接走后续端点）
+    if _AGNES_KEYS and time.time() >= _AGNES_BLOCK_UNTIL:
         try:
             cand = _agnes_translate(text, timeout=timeout)
             if cand and len(cand) > len(text) * 0.2:
@@ -1563,6 +2923,17 @@ def _translate_to_zh(text, timeout=TRANSLATE_TIMEOUT):
                 _TRANS_FAIL_STREAK = 0
                 _trans_cache[text_hash] = result  # 写入缓存
                 return result
+    except Exception:
+        pass
+
+    # 1.5) OpenCode Zen 免费模型轮询（gtx 限流时的接力；单模型 429/5xx 自封 5 分钟并自动切换）
+    try:
+        cand = _zen_translate(text, timeout=25)
+        if cand and len(cand) > len(text) * 0.2:
+            _TRANS_STATS["zen"] += 1
+            _TRANS_FAIL_STREAK = 0
+            _trans_cache[text_hash] = cand  # 写入缓存
+            return cand
     except Exception:
         pass
 
@@ -1599,25 +2970,179 @@ def _translate_to_zh(text, timeout=TRANSLATE_TIMEOUT):
         pass
 
     _TRANS_STATS["fail"] += 1
-    _TRANS_FAIL_STREAK += 1
-    if _TRANS_FAIL_STREAK >= 5:
-        _TRANS_BLOCK_UNTIL = time.time() + 300
-        print("[翻译熔断] 连续 %d 次全端点失败，暂停翻译请求 5 分钟" % _TRANS_FAIL_STREAK, file=sys.stderr)
+    with _TRANS_LOCK:
+        _TRANS_FAIL_STREAK += 1
+        if _TRANS_FAIL_STREAK >= 5:
+            _TRANS_BLOCK_UNTIL = time.time() + 300
+            print("[翻译熔断] 连续 %d 次全端点失败，暂停翻译请求 5 分钟" % _TRANS_FAIL_STREAK, file=sys.stderr)
     return text  # 翻译失败保留原文
+
+
+def _translate_source_items(items):
+    """翻译单个源的全部条目（在翻译线程池中执行）：仅翻译标题，摘要保留原文。附 ISO 日期。"""
+    for it in items:
+        it["title_zh"] = _translate_to_zh(it["title"]) if it["title"] else it["title"]
+        # 摘要不再构建时翻译，前端按需走浏览器 GTX
+        # 相对时间不再烘进条目（ITEM_DERIVED_FIELDS）：页面按 pub_date + BUILD_TS 现算
+        # 保留 pub_date 用于前端时间线排序（转为 ISO 字符串）
+        pd = it.get("pub_date")
+        if pd and hasattr(pd, "isoformat"):
+            it["pub_date"] = pd.isoformat()
 
 
 # ──────────────────────────── RSS 抓取 ────────────────────────────
 
-def _fetch_url(url, timeout=FETCH_TIMEOUT, accept=None):
+def _dedup_pub_dt(v):
+    """把条目的 pub_date 归一成可比对的 aware datetime；取不到可靠时间返回 None。
+
+    条目里的 pub_date 有三种形态：_parse_rss_date/_parse_iso 产出的 datetime、
+    上游原样字符串、以及没有日期时的空串。按字符串统一处理会在 datetime 对象上
+    调 .replace("Z", ...) —— datetime.replace 把它当位置参数，抛 TypeError。
+    """
+    if isinstance(v, datetime.datetime):
+        d = v
+    elif isinstance(v, str) and v.strip():
+        d = _parse_iso(v) or _parse_rss_date(v)
+    else:
+        d = None
+    if d is not None and d.tzinfo is None:
+        d = d.replace(tzinfo=datetime.timezone.utc)
+    return d
+
+
+def _dedup_source_items(items, source_key):
+    """单源内去重：URL 归一化 + 内容重复检测。
+
+    处理三类重复：
+    1. V2EX #replyN 锚点（同一帖子多回复）
+    2. 微信公众号重复群发（同 __biz + 标题 + 摘要，不同 mid/sn）
+    3. 通用 URL 变体（tracking 参数、fragment）
+
+    微信公众号策略：标题+摘要都相同才视为重复（避免误删每日专栏）。
+    其他源策略：标题归一化去重（48h 窗口保护每日专栏）。
+    """
+    if len(items) < 2:
+        return items
+
+    orig_count = len(items)
+
+    # ── Pass 1: URL 归一化 ──
+    for it in items:
+        link = it.get("link", "")
+        # V2EX: 剥离 #replyN
+        if "v2ex" in source_key:
+            link = re.sub(r"#reply\d+$", "", link)
+        # 通用: 剥离尾部 fragment 和常见 tracking 参数
+        link = re.sub(r"#(?!reply\d+$)[^#]*$", "", link)
+        link = re.sub(r"[?&](utm_source|utm_medium|utm_campaign|utm_content|at_medium|at_campaign)=[^&]*", "", link)
+        link = re.sub(r"[?&]$", "", link)
+        it["link"] = link
+
+    # ── Pass 2: 完全相同 URL 去重（保留首条）──
+    seen_urls = {}
+    url_deduped = []
+    for it in items:
+        link = it.get("link", "")
+        if link and link in seen_urls:
+            continue
+        if link:
+            seen_urls[link] = True
+        url_deduped.append(it)
+    items = url_deduped
+
+    # ── Pass 3: 内容去重 ──
+    # 检测是否微信源
+    is_wechat = any("mp.weixin.qq.com" in (it.get("link", "") or "") for it in items[:5])
+
+    def _norm_text(t):
+        """归一化文本：去空白、小写、去标点"""
+        t = re.sub(r"\s+", "", t).lower()
+        t = re.sub(r"[^\w\u4e00-\u9fff]", "", t)
+        return t[:80]
+
+    def _wechat_biz(link):
+        m = re.search(r"__biz=([A-Za-z0-9=]+)", link)
+        return m.group(1) if m else ""
+
+    if is_wechat:
+        # 微信策略：标题+摘要都相同才视为重复
+        seen_content = {}  # key → True
+        content_deduped = []
+        for it in items:
+            title = (it.get("title") or "").strip()
+            summary = (it.get("summary") or "").strip()
+            link = it.get("link", "")
+
+            if not title:
+                content_deduped.append(it)
+                continue
+
+            # 去重键：__biz + 归一化标题 + 归一化摘要
+            dedup_key = _wechat_biz(link) + "|" + _norm_text(title) + "|" + _norm_text(summary)
+
+            if dedup_key in seen_content:
+                continue  # 标题+摘要都相同，真重复
+
+            seen_content[dedup_key] = True
+            content_deduped.append(it)
+        items = content_deduped
+    else:
+        # 其他源：标题归一化去重（48h 窗口保护）
+        def _norm_title(t):
+            t = re.sub(r"\s+", "", t).lower()
+            t = re.sub(r"[^\w\u4e00-\u9fff]", "", t)
+            return t[:50]
+
+        seen_titles = {}  # 归一化标题 → 已保留的同名条目列表
+        title_deduped = []
+        for it in items:
+            title = (it.get("title") or "").strip()
+            if not title:
+                title_deduped.append(it)
+                continue
+
+            dedup_key = _norm_title(title)
+            kept = seen_titles.setdefault(dedup_key, [])
+            cur_dt = _dedup_pub_dt(it.get("pub_date", ""))
+            if cur_dt is not None:
+                # 与任一已保留的同名条目相差 48h 以内即视为重复；超出则当作另一篇
+                if any(abs((cur_dt - d).total_seconds()) <= 48 * 3600
+                       for d in (_dedup_pub_dt(k.get("pub_date", "")) for k in kept)
+                       if d is not None):
+                    continue
+            else:
+                # 时间取不到时退回「标题 + 摘要都相同」才算重复群发：与微信源同一口径。
+                # 一律保留会让重复条目挤占 ITEMS_PER_SOURCE 名额、把真条目挡在外面；
+                # 一律折叠又会并掉每日专栏（标题同、内容不同）。
+                _sum = _norm_text(it.get("summary") or "")
+                if any(_norm_text(k.get("summary") or "") == _sum for k in kept):
+                    continue
+            kept.append(it)
+            title_deduped.append(it)
+        items = title_deduped
+
+    removed = orig_count - len(items)
+    if removed > 0:
+        print("[去重] %s: %d → %d 条（移除 %d 条重复）"
+              % (source_key, orig_count, len(items), removed))
+
+    return items
+
+
+def _fetch_url(url, timeout=FETCH_TIMEOUT, accept=None, ua=None):
     headers = dict(UA)
+    if ua:
+        # 少数站点按 UA 拦（Engadget 的 CloudFront 对 Chrome 串稳定 403、对 curl 串 200），
+        # 这类源在 rss_sources.json 里带一个 ua 字段单独覆盖，不动全局默认。
+        headers["User-Agent"] = ua
     if accept:
         headers["Accept"] = accept
     req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read(5000000).decode("utf-8", errors="replace")
+        return r.read(MAX_FEED_BYTES).decode("utf-8", errors="replace")
 
 
-def _fetch_rss(source):
+def _fetch_rss(source, timeout=None):
     name = source["name"]
     url = source["url"]
     key = source["key"]
@@ -1631,10 +3156,15 @@ def _fetch_rss(source):
             return cached.get("items", [])
 
     try:
-        raw = _fetch_url(url, timeout=FETCH_TIMEOUT, accept="application/rss+xml, application/xml, text/xml, application/atom+xml")
+        raw = _fetch_url(url, timeout=timeout or FETCH_TIMEOUT, accept="application/rss+xml, application/xml, text/xml, application/atom+xml",
+                         ua=source.get("ua"))
     except Exception as ex:
+        # 429 原样抛出：它不是"这个源坏了"，是"这个域被限速了"，
+        # 一律折成 None 会让它和断连/403 在状态层同形，进而被域熔断连坐（台账 §21）。
+        if getattr(ex, "code", None) == 429:
+            raise
         print("[RSS聚合] %s 拉取失败: %s" % (name, ex), file=sys.stderr)
-        return []
+        return None  # 上游侧失败：与「成功但 0 条」区分开，前者才可计入域名熔断
 
     root = None
     raw_str = None
@@ -1653,10 +3183,10 @@ def _fetch_rss(source):
                 pass  # 回退也失败，使用原始错误
         if root is None:
             print("[RSS聚合] %s 解析失败: %s" % (name, orig_err), file=sys.stderr)
-            return []
+            return None
     except Exception as ex:
         print("[RSS聚合] %s 异常: %s" % (name, ex), file=sys.stderr)
-        return []
+        return None
 
     items = []
     ns = "{http://www.w3.org/2005/Atom}"
@@ -1669,15 +3199,22 @@ def _fetch_rss(source):
             summary_raw = e.findtext(ns + "summary") or ""
             desc = _strip_html(summary_raw)
             content_raw = e.findtext(ns + "content") or ""
-            atom_content = _deep_clean_html(_sanitize_html(content_raw))
+            # 出厂规范链路（顺序即契约，逐条不许换）：
+            #   _unescape_escaped_body 把双重转义的正文解一层（I8）→ _normalize_body_html
+            #   提懒加载 src / 绝对化相对 URL（必须在 sanitize 之前，sanitize 只认 src）
+            #   → _sanitize_html 白名单 → _deep_clean_html 去推广噪音。
+            atom_content = _deep_clean_html(_sanitize_html(_normalize_body_html(
+                _unescape_escaped_body(content_raw), link)))
             full_content = atom_content if len(atom_content) > len(desc) else ""
             pub = e.findtext(ns + "updated") or e.findtext(ns + "published") or ""
             if not title or not link:
                 continue
             media_url, media_type = _pick_item_media(e)
+            # 与 RSS 入口同一套刀序（`_rewrite_hn_summary` 在内、`_strip_glued_url` 在外、
+            # 最外层 `_truncate`）；两段代码各自写 summary，漏一个另一半照旧露粘连。
             items.append({
-                "title": title, "link": link, "summary": _truncate(desc),
-                "full_content": full_content, "image": _pick_item_image(e, summary_raw, content_raw),
+                "title": title, "link": link, "summary": _truncate(_strip_glued_url(_rewrite_hn_summary(desc, link))),
+                "full_content": full_content, "image": _upgrade_img_url(_pick_item_image(e, summary_raw, content_raw)),
                 "pub_date": _parse_iso(pub), "source": name, "source_key": source["key"],
                 "cat": source["cat"],
                 "media_url": media_url, "media_type": media_type,
@@ -1696,6 +3233,9 @@ def _fetch_rss(source):
             for it in root.findall(".//" + rdf_ns + "item"):
                 _parse_rss_item(it, name, source["key"], source["cat"], items)
 
+    # ── 通用去重阶段 ──
+    items = _dedup_source_items(items, source["key"])
+
     # 写入缓存
     _rss_cache[key] = {
         "items": items[:ITEMS_PER_SOURCE],
@@ -1705,28 +3245,82 @@ def _fetch_rss(source):
     return items[:ITEMS_PER_SOURCE]
 
 
+# W3C 规范 URI 里日期段是斜杠（…/1999/02/22-rdf-syntax-ns#），肉眼分不清 - 与 /，
+# 改动这两行请用码点核对而不是看渲染结果。
+_RDF_ABOUT = "{http://www.w3.org/1999/02/22-rdf-syntax-ns#}about"
+_RDF_RESOURCE = "{http://www.w3.org/1999/02/22-rdf-syntax-ns#}resource"
+
+
+def _rss_text(it, tag):
+    """取子元素文本，兼容带默认命名空间的 feed（RSS 1.0/RDF 等）。
+
+    RDF 文档常用 xmlns="http://purl.org/rss/1.0/" 声明默认命名空间，此时 <title>
+    的真实标签是 {…}title，不带前缀的 findtext 取不到 → title 为空被 `if not title`
+    丢掉每一条，于是 DW/Nature/Science 这类上游有 37~137 条的源在我方解析出 0 条。
+    用 {*} 而非写死 rss1.0，是为了覆盖 RSS 0.9x 之类同样带默认命名空间的变体。
+    """
+    v = it.findtext(tag)
+    if v is None:
+        v = it.findtext("{*}" + tag)
+    return v or ""
+
+
 def _parse_rss_item(it, source_name, source_key, cat, items):
-    title = _strip_html(it.findtext("title") or "")
-    link = (it.findtext("link") or "").strip()
-    # RSS 1.0 RDF: link is in rdf:about attribute
+    title = _strip_html(_rss_text(it, "title"))
+    link = (_rss_text(it, "link") or "").strip()
     if not link:
-        link = (it.get("{http://www.w3.org/1999/02/22-rdf-syntax-ns#}about") or "").strip()
-    desc_raw = it.findtext("description") or ""
-    desc = _strip_html(desc_raw)
-    pub = (it.findtext("pubDate") or "").strip()
+        _le = it.find("link")
+        if _le is None:
+            _le = it.find("{*}link")
+        if _le is not None:
+            link = (_le.get(_RDF_RESOURCE) or "").strip()
+    if not link:
+        link = (it.get(_RDF_ABOUT) or "").strip()
+    if not link:
+        # 有些 feed 把永久链接只写在 <guid> 里（安全客 api.anquanke.com/data/v1/rss 就是：
+        # raw 有 20 个 item、我方解析 0 条，日志记成 empty，看着像"上游没内容"）。
+        # 只接受 http(s) 且未被显式声明 isPermaLink="false" 的 guid —— 否则宁可为空：
+        # 一个看起来能点、点开 404 的链接比空链接更坏。
+        _ge = it.find("guid")
+        if _ge is not None:
+            _gv = (_ge.text or "").strip()
+            if _gv.lower().startswith(("http://", "https://")) and \
+                    (_ge.get("isPermaLink") or "").strip().lower() != "false":
+                link = _gv
+    desc_raw = _rss_text(it, "description")
+    pub = (_rss_text(it, "pubDate") or "").strip()
     # RSS 1.0 RDF: date is in dc:date
     if not pub:
         pub = (it.findtext("{http://purl.org/dc/elements/1.1/}date") or "").strip()
     dc_content = "{http://purl.org/rss/1.0/modules/content/}"
     content_raw = it.findtext(dc_content + "encoded") or ""
-    content_encoded = _deep_clean_html(_sanitize_html(content_raw))
-    full_content = content_encoded if len(content_encoded) > len(desc) else ""
     if not title or not link:
         return
     media_url, media_type = _pick_item_media(it)
+    # ── XGO (Twitter/X) 信源专门清洗 ──
+    # xgo.ing 代理的 description 包含完整 HTML 卡片（推文正文 + 引用推文 +
+    # 头像 + 互动数据 + 页脚），直接 _strip_html 会把所有噪音混入摘要。
+    if _is_xgo_content(desc_raw):
+        cleaned = _clean_xgo_content(desc_raw)
+        desc = cleaned or _strip_html(desc_raw)
+        full_content = ""  # 推文正文已在 desc 中，无需全文加载
+        # 不套封面判空：_extract_tweet_media 只认 /media/ 与 tweet_video_thumb 两种形态，
+        # 产出的 host 恒为 pbs.twimg.com（不在必挂表里，且它只在"无代理直连"口径下挂）。
+        img = _extract_tweet_media(desc_raw)
+    else:
+        desc = _strip_html(desc_raw)
+        # 出厂规范链路：与 Atom 入口同一套顺序与理由（见 `_fetch_rss` 里那条注释）。
+        content_encoded = _deep_clean_html(_sanitize_html(_normalize_body_html(
+            _unescape_escaped_body(content_raw), link)))
+        full_content = content_encoded if len(content_encoded) > len(desc) else ""
+        img = _upgrade_img_url(_pick_item_image(it, desc_raw, content_raw))
+    # summary 出口的两把刀**顺序是契约**：先 `_rewrite_hn_summary`（hnrss 模板压成一行）、
+    # 再 `_strip_glued_url`（剥与正文粘连的裸链接）。倒过来会先改掉 HN 重写要看的行首形状，
+    # 两条互相吞（判据 test_order_matters_when_meta_lines_come_before_the_glued_line 给的是行为证据，
+    # test_rss_parse_entry_wraps_glued_strip_in_the_right_order 给的是链形）。
     items.append({
-        "title": title, "link": link, "summary": _truncate(desc),
-        "full_content": full_content, "image": _pick_item_image(it, desc_raw, content_raw),
+        "title": title, "link": link, "summary": _truncate(_strip_glued_url(_rewrite_hn_summary(desc, link))),
+        "full_content": full_content, "image": img,
         "pub_date": _parse_rss_date(pub) or _parse_iso(pub), "source": source_name, "source_key": source_key,
         "cat": cat,
         "media_url": media_url, "media_type": media_type,
@@ -1822,6 +3416,9 @@ body.ai-open .back-top{opacity:0;pointer-events:none;}
 .r2-bm.on svg{fill:currentColor;}
 .chip.bm-chip{color:var(--muted);border-color:var(--line);}
 .chip.bm-chip.on{background:var(--brand-weak);border-color:var(--brand-line);color:var(--brand-strong);}
+.chip.disc-chip{border-style:dashed;color:#0891b2;border-color:#0891b2;}
+.chip.disc-chip.on{background:#ecfeff;border-color:#0891b2;color:#0e7490;}
+@media(prefers-color-scheme:dark){.chip.disc-chip{color:#22d3ee;border-color:#22d3ee;}.chip.disc-chip.on{background:#164e63;border-color:#22d3ee;color:#67e8f9;}}
 .chip .n { font-family:var(--mono); font-size:10px; opacity:.75; margin-left:3px; }
 /* A2 修复：模态焦点可见环 */
 [role="dialog"] :focus-visible,.share-modal :focus-visible{outline:2px solid var(--brand);outline-offset:2px;}
@@ -1867,6 +3464,8 @@ button:focus-visible, .chip:focus-visible, .card:focus-visible, a:focus-visible 
 .card-title { font-family:var(--display); font-size:15.5px; font-weight:700; line-height:1.45; margin-bottom:7px; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; color:var(--unread); transition:color .15s; }
 .card:hover .card-title { color:var(--brand-strong); }
 .card-summary { font-size:12.5px; color:var(--muted); line-height:1.7; display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden; }
+.card-tags { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+.ctag { font-size:10px; color:var(--brand); background:color-mix(in srgb, var(--brand) 10%, transparent); border-radius:4px; padding:1px 6px; line-height:1.6; white-space:nowrap; }
 .card-foot { display:flex; align-items:center; gap:6px; margin-top:11px; padding-top:9px; border-top:1px solid var(--line); font-size:11px; color:var(--faint); }
 .src-dot { width:8px; height:8px; border-radius:999px; flex:none; background:var(--sc); }
 [data-theme="dark"] .src-dot { filter:brightness(1.7) saturate(.85); }
@@ -2024,10 +3623,10 @@ body.reading .reader2 { transform:translate(-50%,-50%) scale(1); opacity:1; poin
 }
 @media (max-width:700px) {
   .hd .nav-links a { padding:5px 9px; font-size:12px; }
-  .chips { overflow-x:auto; flex-wrap:nowrap; max-width:100%; padding-bottom:4px; -webkit-mask-image:linear-gradient(to right,#000 90%,transparent 100%); mask-image:linear-gradient(to right,#000 90%,transparent 100%); }
-  .chip { white-space:nowrap; flex:none; }
+  .chips { overflow-x:auto; flex-wrap:nowrap; max-width:100%; padding-bottom:4px; scroll-snap-type:x proximity; -webkit-mask-image:linear-gradient(to right,#000 90%,transparent 100%); mask-image:linear-gradient(to right,#000 90%,transparent 100%); }
+  .chip { white-space:nowrap; flex:none; scroll-snap-align:start; }
   .search-row { flex-wrap:wrap; }
-  .sort-select { flex:1; min-width:0; }
+  .sort-select { flex:0 0 auto; min-width:0; padding:6px 22px 6px 8px; font-size:12px; background-position:right 6px center; }
   .wall { columns:1 minmax(0,1fr); }
   .reader2 { width:96vw; max-height:92vh; border-radius:12px; }
   .r2-top { padding:8px 10px; gap:8px; }
@@ -2186,15 +3785,34 @@ body.af-tab-hot .af-sub,body.af-tab-hot .af-filter,body.af-tab-hot .af-body,body
 .hot-btn:hover{background:#f59e0b;color:#fff;}
 .hot-btn.on{background:#f59e0b;color:#fff;}
 .hot-btn svg{width:13px;height:13px;}
+.tb-divider{width:1px;height:16px;background:var(--line-strong);margin:0 4px;flex:none;}
 
-/* ── 热榜内容区：平台子 Tab + 卡片列表（条目色彩区分靠圆点/选中实底，文字始终用高对比色） ── */
-/* 子 Tab 换行显示（不横向滚动）：窄屏最多两行，任何平台按钮完整可见，杜绝截断/溢出 */
-.hp-tabs{flex:none;display:flex;flex-wrap:wrap;gap:5px;padding:8px 12px 2px;}
-.hp-tab{flex:none;height:24px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--muted);font-size:11.5px;font-weight:600;font-family:inherit;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;}
-.hp-tab:hover{border-color:var(--line-strong);color:var(--ink);}
-.hp-tab .dot{width:7px;height:7px;border-radius:50%;flex:none;}
-/* 选中态实底色由 JS 注入加深品牌色（白字对比 ≥4.4:1），文字固定 #fff；未选中态文字用 --muted 保证明暗主题可读 */
-.hp-tab.on{color:#fff;border-color:transparent;}
+/* ── 热榜内容区：维度分层（分类 + 平台）+ 卡片列表（WS-A） ── */
+/* 维度行：行首标签 + 内容区 */
+.dim-row{display:flex;align-items:flex-start;gap:8px;padding:10px 12px 0;}
+.dim-label{flex:none;width:28px;font-size:10px;font-weight:700;color:var(--faint);letter-spacing:1px;padding-top:5px;user-select:none;}
+.dim-body{flex:1;min-width:0;}
+.dim-sep{border:none;border-top:1px solid var(--line);margin:10px 12px 0;}
+/* 分类：分段控件（WS-A2） */
+.hp-seg{display:inline-flex;flex-wrap:nowrap;overflow-x:auto;max-width:100%;background:var(--hover);border-radius:8px;padding:2px;gap:2px;scrollbar-width:none;}
+.hp-seg::-webkit-scrollbar{display:none;}
+.hp-seg-btn{flex:none;height:22px;padding:0 11px;border:none;border-radius:6px;background:transparent;color:var(--muted);font-size:11px;font-weight:600;transition:all .15s;white-space:nowrap;font-family:inherit;cursor:pointer;}
+.hp-seg-btn:hover{color:var(--ink);}
+.hp-seg-btn.on{background:var(--brand);color:#fff;box-shadow:0 1px 3px rgba(0,0,0,.15);}
+/* 平台行：彩点 chips（WS-A3） */
+.plat-wrap{display:flex;align-items:center;gap:6px;min-width:0;}
+.plat-row{display:flex;flex-wrap:wrap;gap:5px;min-width:0;flex:1;}
+.plat-chip{flex:none;height:24px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:var(--hover);color:var(--muted);font-size:11.5px;font-weight:600;display:inline-flex;align-items:center;gap:5px;transition:all .15s;white-space:nowrap;font-family:inherit;cursor:pointer;}
+.plat-chip:hover{border-color:var(--line-strong);color:var(--ink);}
+.plat-chip .dot{width:7px;height:7px;border-radius:50%;flex:none;}
+.plat-chip.on{color:#fff;border-color:transparent;}
+.plat-more{flex:none;height:24px;padding:0 10px;border:1px dashed var(--line-strong);border-radius:999px;background:transparent;color:var(--faint);font-size:11px;font-weight:600;display:none;align-items:center;gap:3px;white-space:nowrap;font-family:inherit;cursor:pointer;}
+.plat-more:hover{color:var(--ink);border-color:var(--faint);}
+.plat-more svg{width:10px;height:10px;transition:transform .2s;}
+.plat-more.open svg{transform:rotate(180deg);}
+/* 分类切换淡入动画（WS-A5） */
+.hp-swap{animation:hpFade .18s ease;}
+@keyframes hpFade{from{opacity:.2}to{opacity:1;}}
 .hp-body{flex:1;overflow-y:auto;padding:8px 12px 16px;-webkit-overflow-scrolling:touch;}
 .hp-item{display:flex;align-items:flex-start;gap:8px;padding:9px 10px;margin-bottom:6px;border:1px solid var(--line);border-radius:var(--radius);background:var(--bg);cursor:pointer;transition:all .12s;text-decoration:none;color:inherit;}
 .hp-item:hover{border-color:var(--line-strong);background:var(--hover);}
@@ -2203,41 +3821,88 @@ body.af-tab-hot .af-sub,body.af-tab-hot .af-filter,body.af-tab-hot .af-body,body
 .hp-title{flex:1;font-size:13px;line-height:1.5;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word;}
 .hp-hot{flex:none;font-size:11px;color:var(--faint);font-family:var(--mono);margin-top:3px;}
 .hp-empty{padding:40px 16px;text-align:center;color:var(--faint);font-size:13px;}
+@media (max-width:900px){
+  .plat-row.collapsed{flex-wrap:nowrap;overflow-x:auto;scroll-snap-type:x proximity;max-width:100%;-webkit-mask-image:linear-gradient(to right,#000 88%,transparent);mask-image:linear-gradient(to right,#000 88%,transparent);scrollbar-width:none;}
+  .plat-row.collapsed::-webkit-scrollbar{display:none;}
+  .plat-row.collapsed .plat-chip{scroll-snap-align:start;}
+  .plat-wrap .plat-more{display:inline-flex;}
+}
 @media (max-width:700px) {
-  .hp-tabs{padding:8px 10px 2px;gap:4px;}
+  .plat-row{padding:8px 0 2px;}
   .hp-body{padding:6px 10px 14px;}
+  .dim-label{width:24px;}
 }
 
-/* ── Insight Bar（每日洞察面板） ── */
+/* ── Insight Panel（每日洞察面板 · WS-B 容器化） ── */
 .insight-btn{display:inline-flex;align-items:center;gap:5px;padding:4px 13px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid #6366f133;background:#6366f114;color:#4338ca;transition:all .15s;cursor:pointer;}
 .insight-btn:hover{background:#6366f1;color:#fff;}
 .insight-btn.on{background:#6366f1;color:#fff;}
 .insight-btn svg{width:13px;height:13px;}
-.insight-bar{display:none;margin:0 16px 8px;border:1px solid var(--line);border-radius:var(--radius);background:var(--card);overflow:hidden;animation:insightSlide .25s ease;}
-.insight-bar.open{display:block;}
-@keyframes insightSlide{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
-.ib-head{display:flex;align-items:center;justify-content:space-between;padding:10px 16px 6px;border-bottom:1px solid var(--line);}
-.ib-head h3{margin:0;font-size:14px;font-weight:700;display:flex;align-items:center;gap:6px;}
-.ib-head h3 svg{width:16px;height:16px;color:var(--brand);}
-.ib-close{background:none;border:none;cursor:pointer;padding:4px;border-radius:6px;color:var(--faint);transition:all .15s;}
-.ib-close:hover{background:var(--hover);color:var(--ink);}
-.ib-close svg{width:16px;height:16px;}
-.ib-body{padding:12px 16px 16px;}
-.ib-section{margin-bottom:14px;}
-.ib-section:last-child{margin-bottom:0;}
-.ib-label{font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;}
+/* 洞察面板：PC 右抽屉 / 移动底部 Sheet（同一组件） */
+.insight-panel{position:fixed;z-index:70;background:var(--card);display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.14);visibility:hidden;}
+@media (min-width:900px){
+  .insight-panel{top:0;right:0;bottom:0;width:min(520px,92vw);border-left:1px solid var(--line);transform:translateX(100%);transition:transform .25s ease,visibility .25s;}
+  .insight-panel.open{transform:none;visibility:visible;}
+}
+@media (max-width:899px){
+  .insight-panel{left:0;right:0;bottom:0;max-height:88vh;border-radius:16px 16px 0 0;border-top:1px solid var(--line);transform:translateY(100%);transition:transform .25s ease,visibility .25s;}
+  .insight-panel.open{transform:none;visibility:visible;}
+}
+.ip-head{display:flex;align-items:center;gap:8px;padding:14px 18px 10px;border-bottom:1px solid var(--line);flex:none;}
+.ip-head h2{margin:0;font-size:15px;font-weight:800;display:flex;align-items:center;gap:7px;}
+.ip-head h2 svg{width:16px;height:16px;color:var(--brand);}
+.ip-gen{font-size:10.5px;color:var(--faint);font-family:var(--mono);}
+.ip-close{margin-left:auto;background:none;border:none;color:var(--faint);padding:6px;border-radius:8px;cursor:pointer;transition:all .15s;}
+.ip-close:hover{background:var(--hover);color:var(--ink);}
+.ip-close svg{width:17px;height:17px;}
+/* 锚点导航条（吸顶） */
+.ip-nav{display:flex;gap:4px;padding:8px 18px;border-bottom:1px solid var(--line);overflow-x:auto;flex:none;background:var(--card);scrollbar-width:none;position:sticky;top:0;z-index:2;}
+.ip-nav::-webkit-scrollbar{display:none;}
+.ip-nav button{flex:none;height:24px;padding:0 11px;border:none;border-radius:999px;background:transparent;color:var(--muted);font-size:11.5px;font-weight:600;font-family:inherit;cursor:pointer;}
+.ip-nav button.on{background:var(--brand-weak);color:var(--brand-strong);}
+.ip-body{flex:1;overflow-y:auto;padding:14px 18px 24px;-webkit-overflow-scrolling:touch;}
+.ip-sec{margin-bottom:22px;scroll-margin-top:44px;}
+.ip-label{font-size:11px;font-weight:800;color:var(--brand-strong);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:6px;}
+.ip-label svg{width:13px;height:13px;}
+/* 统计行 */
+.ip-stats{display:flex;gap:18px;flex-wrap:wrap;padding:2px 0 0;}
+.ip-stats span{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;}
+.ip-stats svg{width:13px;height:13px;color:var(--faint);}
+/* 核心态势摘要 */
+.ip-lede{font-size:13.5px;line-height:1.8;color:var(--ink);padding:10px 14px;background:var(--brand-weak);border-radius:8px;border-left:3px solid var(--brand);}
+/* 情报子网格 */
+.ip-sub-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.ip-sub{padding:10px 13px;border-radius:8px;border-left:3px solid var(--brand);background:color-mix(in srgb,var(--brand) 4%,transparent);font-size:12.5px;line-height:1.7;}
+.ip-sub.full{grid-column:1/-1;}
+.ip-sub b{display:block;font-size:10.5px;font-weight:800;letter-spacing:.5px;color:var(--brand-strong);margin-bottom:4px;}
+/* 因果链 */
+.ip-chain{padding:9px 13px;border-radius:8px;background:var(--bg);border:1px solid var(--line);font-size:12.5px;line-height:1.7;margin-bottom:8px;}
+.ip-chain .arrow{color:var(--brand);font-weight:700;padding:0 2px;}
+/* 信号看板 */
+.ip-sig{padding:9px 13px;border-radius:8px;background:#f59e0b0a;border:1px solid #f59e0b30;margin-bottom:8px;}
+.ip-sig-top{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+.ip-sig-txt{flex:1;font-size:12.5px;font-weight:600;color:#b45309;}
+.ip-sig-conf{flex:none;font-size:10.5px;font-family:var(--mono);color:var(--faint);font-variant-numeric:tabular-nums;}
+.ip-sig-bar{height:3px;border-radius:2px;background:#f59e0b2e;overflow:hidden;}
+.ip-sig-bar i{display:block;height:100%;border-radius:2px;background:#f59e0b;}
+/* 关键词 */
+.ip-kw-list{display:flex;flex-wrap:wrap;gap:6px;}
+.ip-kw{padding:3px 11px;border-radius:999px;font-size:12px;border:1px solid var(--line);background:var(--bg);color:var(--muted);}
+.ip-kw.rising{border-color:#f59e0b55;background:#f59e0b0e;color:#b45309;font-weight:600;}
+.ip-kw.rising::after{content:"\u2191";margin-left:3px;font-size:10px;font-weight:800;}
+/* 去重提示 */
+.ip-dedup{margin-top:4px;padding:8px 12px;border-radius:8px;background:var(--hover);font-size:11px;color:var(--faint);display:flex;align-items:center;gap:6px;}
+.ip-dedup svg{width:12px;height:12px;flex:none;color:#059669;}
+.ip-empty{padding:24px;text-align:center;color:var(--faint);font-size:12.5px;}
+/* 保留旧 ib-* 样式（话题聚类/关键词/趋势等仍由 renderInsight 使用） */
 .ib-summary{font-size:13.5px;line-height:1.7;color:var(--ink);padding:8px 12px;background:var(--brand-weak);border-radius:8px;border-left:3px solid var(--brand);}
 .ib-sub-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
-.ib-sub-section{padding:8px 12px;border-radius:8px;border-left:3px solid;font-size:13px;line-height:1.65;}
-.ib-sub-section.sub-core{background:#6366f10a;border-color:#6366f1;}
-.ib-sub-section.sub-signal{background:#f59e0b0a;border-color:#f59e0b;}
-.ib-sub-section.sub-rss{background:#10b9810a;border-color:#10b981;}
-.ib-sub-section.sub-outlook{background:#ef44440a;border-color:#ef4444;}
-.ib-sub-label{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;opacity:.7;}
-.ib-sub-section.sub-core .ib-sub-label{color:#6366f1;}
-.ib-sub-section.sub-signal .ib-sub-label{color:#b45309;}
-.ib-sub-section.sub-rss .ib-sub-label{color:#059669;}
-.ib-sub-section.sub-outlook .ib-sub-label{color:#dc2626;}
+.ib-sub-section{padding:8px 12px;border-radius:8px;border-left:3px solid var(--brand);font-size:13px;line-height:1.65;}
+.ib-sub-section.sub-core{background:#6366f10a;}
+.ib-sub-section.sub-signal{background:#f59e0b0a;}
+.ib-sub-section.sub-rss{background:#10b9810a;}
+.ib-sub-section.sub-outlook{background:#ef44440a;}
+.ib-sub-label{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;opacity:.7;color:var(--brand-strong);}
 .ib-narrative{padding:10px 14px;border-radius:10px;background:linear-gradient(135deg,#6366f10a,#8b5cf60a);border-left:3px solid #7c3aed;font-size:13px;line-height:1.7;color:var(--ink);margin-bottom:10px;}
 .ib-chain-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;margin-bottom:10px;}
 .ib-chain-card{padding:8px 12px;border-radius:8px;background:var(--card);border:1px solid var(--line);font-size:12px;line-height:1.6;}
@@ -2259,7 +3924,7 @@ body.af-tab-hot .af-sub,body.af-tab-hot .af-filter,body.af-tab-hot .af-body,body
 .ib-kw{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:500;border:1px solid var(--line);background:var(--bg);color:var(--muted);cursor:pointer;transition:all .12s;}
 .ib-kw:hover{border-color:var(--brand);color:var(--brand);background:var(--brand-weak);}
 .ib-kw.rising{border-color:#f59e0b55;background:#f59e0b0e;color:#b45309;}
-.ib-kw.rising::after{content:"↑";margin-left:3px;font-size:10px;font-weight:700;}
+.ib-kw.rising::after{content:"\u2191";margin-left:3px;font-size:10px;font-weight:700;}
 .ib-topic-list{display:flex;flex-direction:column;gap:6px;}
 .ib-topic{display:flex;align-items:center;gap:8px;padding:7px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);cursor:pointer;transition:all .12s;}
 .ib-topic:hover{border-color:var(--brand);background:var(--brand-weak);}
@@ -2270,12 +3935,16 @@ body.af-tab-hot .af-sub,body.af-tab-hot .af-filter,body.af-tab-hot .af-body,body
 .ib-stats{display:flex;gap:16px;padding:6px 0;font-size:12px;color:var(--faint);font-family:var(--mono);}
 .ib-stats span{display:flex;align-items:center;gap:4px;}
 .ib-no-data{padding:20px;text-align:center;color:var(--faint);font-size:13px;}
+.ib-section{margin-bottom:14px;}
+.ib-section:last-child{margin-bottom:0;}
+.ib-label{font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;}
+@media (max-width:899px){
+  .ip-sub-grid{grid-template-columns:1fr;}
+}
 @media (max-width:700px) {
-  .insight-bar{margin:0 8px 6px;}
-  .ib-body{padding:10px 12px 14px;}
-  .ib-kw-list{gap:4px;}
-  .ib-kw{padding:2px 8px;font-size:11px;}
-  .ib-sub-grid{grid-template-columns:1fr;}
+  .ip-body{padding:10px 12px 14px;}
+  .ip-kw-list{gap:4px;}
+  .ip-kw{padding:2px 8px;font-size:11px;}
 }
 
 /* ── Source Quality Badge（信源质量指示器） ── */
@@ -2356,9 +4025,25 @@ def _build_header():
 """
 
 
-def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
+def _inline_json(text):
+    """内联进 <script> 的 JSON 必须走这一道：与数据分块的 `_dump` 同一口径。
+
+    为什么必须有：`ANALYSIS_DATA` 里混着**上游文章标题**（关键词、topic_clusters.items），
+    原样拼接时任一格子里出现 `</script><img src=x onerror=...>` 就会被浏览器当成真标签，
+    下一场构建起对每个访问者执行。现网产物实测该段已含裸 `<` 28 个（还没凑出 `</script>`，
+    但门是开的）。
+    只转 `<` 与 `_dump` 一致：`</script>` 的触发字符是 `<`，裸 `>` 开不了标签边界。
+    本函数不动 JSON 语义 —— `\u003c` 在 JS 字符串字面量里解回 `<`，读回的对象逐字节相同。
+    其余注入点逐个核过：BUILD_TS/DIVERSE_WINDOW 是 int、CAT_LABELS/CAT_ORDER 来自静态常量、
+    qr_lib 是第三方库原文，均不含上游可控文本。
+    """
+    return str(text).replace("<", "\\u003c")
+
+
+def _build_js(sources_with_items, build_ts_ms=0, analysis_json='', diverse_window_minutes=120):
     """Generate core JS for card wall + drawer reader."""
     cat_labels_json = json.dumps(CATEGORY_LABELS, ensure_ascii=False)
+    rel_time_js = _read_rel_time_js()
     # 内嵌 QR 生成库：国内移动端 jsdelivr/unpkg 常不可达且请求会长时间挂起，
     # 导致分享模态框数十秒不出现甚至永远无反应。构建时直接内嵌 vendor 库。
     qr_lib = ''
@@ -2373,17 +4058,26 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
 """ + qr_lib + """
 ;(function(){
   var BUILD_TS = """ + str(int(build_ts_ms)) + """;
+""" + rel_time_js + """
+  var DIVERSE_WINDOW = """ + str(int(diverse_window_minutes)) + """;
   var SOURCES = [];
   var CAT_LABELS = """ + cat_labels_json + """;
-  var ANALYSIS_DATA = """ + (analysis_json if analysis_json else 'null') + """;
+  var ANALYSIS_DATA = """ + (_inline_json(analysis_json) if analysis_json else 'null') + """;
 
   /* ── Data ── */
   var CAT_ORDER = """ + json.dumps(CATEGORY_ORDER, ensure_ascii=False) + """;
   var ART = [];
   var now=new Date().toISOString();
   /* 全量数据按日期降序后由构建脚本切成 rss-data-0.js（首屏）与
-     rss-data-1.js（后台合并）两块，页面不再内嵌数据（31MB→约0.15MB）。
+     rss-data-1.js…rss-data-N.js（后台合并，按 MAX_CHUNK_BYTES 分片，不固定块数），
+     页面不再内嵌数据（31MB→约0.15MB）。前端按索引逐块加载、遇到 404 停止，所以块数可以变。
      首屏严格时间排序；chunk1 合并后或刷新时应用 tier 交织。 */
+  /* tags 归一化（issue M5）：只接受「非空数组」，其余（undefined / null / [] / 脏值）
+     一律归一为 null。两条通道（构建期 chunk、刷新通道）共用同一函数，
+     避免只修一条导致同一篇文章在不同通道下形状不一致。 */
+  function _tagsOf(x){
+    return (x && Object.prototype.toString.call(x.tags) === '[object Array]' && x.tags.length) ? x.tags : null;
+  }
   function buildArt(){
     /* 渲染前全局去重：以 源key|链接 为唯一键，防止任何合并路径（chunk/快照/远程刷新）
        造成的同源同链文章重复渲染 */
@@ -2396,40 +4090,308 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
         ART.push({t:it.title_zh||it.title, s:it.summary_zh||it.summary||'',
           src:s.name, sk:s.key, c:s.cat, sc:s.color, ti:s.tier||3,
           /* fc 兼容两条通道：chunk 通道字段名为 full_content，远程刷新通道为 fc */
-          time:it.time_str, date:it.pub_date, u:it.link||'#', fc:it.fc||it.full_content||'',
+          /* a.time 现算，口径唯一（lib/rel_time.js）。
+             注意卡片显示走 _dynTime(a)，a.time 只是它的兜底分支（pub_date 缺失/非法/坏日期）
+             外加书签快照与分享文案的消费者 —— 所以这里基准取 BUILD_TS 而不是访客时钟：
+             它与改造前烘进产物的那一串逐字相等，兜底位才不会漂。 */
+          time:STARHUB_REL_TIME.fmtRelTime(it.pub_date, BUILD_TS/1000), date:it.pub_date, u:it.link||'#', fc:it.fc||it.full_content||'',
           img:it.image||it.img||'', mu:it.mu||'', mt:it.mt||'',
-          bad_date:!!it.bad_date, bb:!!s.bb});
+          bad_date:!!it.bad_date, bb:!!s.bb, dfb:!!it.date_fallback, tags:_tagsOf(it)});
       });
     });
-    var nowIso=new Date().toISOString();
-    ART.forEach(function(a){ if(a.date&&a.date>nowIso) a.date=nowIso; });
+    /* 时区安全钳制（根因修复：旧实现用字符串比较判断未来日期，对 +08:00/Z 混合格式
+       误判时区，把早间公众号文章改写成打开页面的时刻——09-14 08:15 事件）
+       2026-09-14 二次修复：旧实现把**每一条**未来日期都改写成 now，N 条因此获得
+       完全相同的时刻；默认降序排序下同刻并列，整块钉在首屏顶部
+       （实测：超能网 6 条占据前 7 位中的 6 位）。
+       改为「保序回拉」：最新的一条落到 now，其余按原始间距排在它之前 ——
+       既不越界，也不制造人为并列；残留顺序信息一点不丢。
+       注：构建期已对源级时区误标与「晚于 first_seen 的未来日期」做处置，
+       本钳制是刷新通道（tier-1 由服务端 JS 重解析）的最后一道网。 */
+    var nowMs=Date.now(), _fut=[];
+    ART.forEach(function(a){
+      if(!a.date) return;
+      var _t=new Date(a.date).getTime();
+      if(!isNaN(_t)&&_t>nowMs) _fut.push(a);
+    });
+    if(_fut.length){
+      var _fmax=0;
+      _fut.forEach(function(a){ var _t=new Date(a.date).getTime(); if(_t>_fmax) _fmax=_t; });
+      _fut.forEach(function(a){
+        a.date=new Date(nowMs-(_fmax-new Date(a.date).getTime())).toISOString();
+      });
+    }
     applySort();
     window.ART = ART;
   }
   /* ── Sort ── */
-  var sortMode = localStorage.getItem('rss_sort_mode') || 'newest';
+  /* sortMode 白名单：localStorage 里的脏值（旧版本写入 / 手工篡改）必须在此规范化。
+     没有这一步，非法值会被默认分支一路吃下去，与 #sortSelect 的显示不一致，
+     且未来新增的 else-if 分支可能被脏值意外命中。 */
+  var SORT_MODES = ['newest','oldest','active','quality','diverse'];
+  function _normSortMode(v){
+    return (v && SORT_MODES.indexOf(v) >= 0) ? v : 'diverse';
+  }
+  var sortMode = _normSortMode(localStorage.getItem('rss_sort_mode'));
+  /* 时区安全日期比较【仅用于升序】（D3 修复：+08:00/Z 混合格式的字符串比较是时区盲的）；
+     无日期沉底，两个无日期视为相等。
+     注意：本函数的 NaN 分支是为升序写的，降序调用会反转语义（无日期置顶）。
+     任何降序排序一律使用 _dateCmpDesc，不要反向调用本函数。 */
+  function _dateCmp(x,y){
+    var tx=x?new Date(x).getTime():NaN, ty=y?new Date(y).getTime():NaN;
+    if(isNaN(tx)&&isNaN(ty)) return 0;
+    if(isNaN(tx)) return 1;
+    if(isNaN(ty)) return -1;
+    return tx-ty;
+  }
+  /* 时区安全日期比较【仅用于降序】：无日期一律沉底，语义与调用方向无关。
+     修复前 newest/active 反向调用 _dateCmp，导致 201 条无日期条目被顶到首屏。 */
+  function _dateCmpDesc(x,y){
+    var tx=x?new Date(x).getTime():NaN, ty=y?new Date(y).getTime():NaN;
+    if(isNaN(tx)&&isNaN(ty)) return 0;
+    if(isNaN(tx)) return 1;      /* x 无日期 → x 靠后 */
+    if(isNaN(ty)) return -1;
+    if(tx===ty) return 0;
+    return tx<ty?1:-1;           /* 新的在前 */
+  }
   /* F1 修复：'active' 按信源最近更新时间排序 */
   function applySort(){
-    if(sortMode==='oldest') ART.sort(function(a,b){ return (a.date||'').localeCompare(b.date||''); });
+    if(sortMode==='oldest') ART.sort(function(a,b){ return _dateCmp(a.date,b.date); });
     else if(sortMode==='active'){
       var srcLatest={};
-      ART.forEach(function(a){ if(a.date){ var cur=srcLatest[a.sk]; if(!cur||a.date>cur) srcLatest[a.sk]=a.date; }});
+      ART.forEach(function(a){ if(a.date){ var cur=srcLatest[a.sk]; if(!cur||_dateCmp(a.date,cur)>0) srcLatest[a.sk]=a.date; }});
       ART.sort(function(a,b){
         var sa=srcLatest[a.sk]||'', sb=srcLatest[b.sk]||'';
-        if(sa!==sb) return sb.localeCompare(sa);
-        return (b.date||'').localeCompare(a.date||'');
+        /* _dateCmpDesc 自身即为降序语义，参数不可再反转（反转会使无日期源置顶） */
+        if(sa!==sb) return _dateCmpDesc(sa,sb);
+        return _dateCmpDesc(a.date,b.date);
       });
+      _applyRunCap(ART, 3, SOURCE_FAMILIES);
     }
-    else ART.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
-    if(sortMode==='quality' && ANALYSIS_DATA && ANALYSIS_DATA.quality){
+    /* 集成契约（对齐 docs/superpowers/plans/2026-09-14-composite-sort-spec.md Phase 5）：
+       - sortMode 单值 → diverse 与 topic 天然互斥，不可能同时触发
+       - diverse 只重排窗口内次序；tierInterleave() 由合并/刷新路径在其之后调用，不受影响
+       - topic 分支（由主题聚类方案实现）不得调用 weightedShuffle，主题视图自带分桶逻辑 */
+    else if(sortMode==='diverse'){
+      var _qMap = (ANALYSIS_DATA && ANALYSIS_DATA.quality) ? ANALYSIS_DATA.quality : {};
+      var _win = (typeof DIVERSE_WINDOW !== 'undefined') ? DIVERSE_WINDOW : 120;
+      /* 原地替换而非重新绑定 ART：window.ART / 各闭包持有的是同一个数组引用，
+         若在此处整体替换引用，后续重排对持有旧引用的调用方不可见。 */
+      var _sh = weightedShuffle(ART, _win, _qMap);
+      ART.length = 0;
+      for(var _i=0;_i<_sh.length;_i++) ART.push(_sh[_i]);
+    }
+    else if(sortMode==='quality' && ANALYSIS_DATA && ANALYSIS_DATA.quality){
       var qm=ANALYSIS_DATA.quality;
       ART.sort(function(a,b){ return (qm[b.sk]||0)-(qm[a.sk]||0); });
+      _applyRunCap(ART, 5, SOURCE_FAMILIES);
+    }
+    else {
+      ART.sort(function(a,b){ return _dateCmpDesc(a.date,b.date); });
+      _applyRunCap(ART, 3, SOURCE_FAMILIES);
     }
   }
   var _sortEl = document.getElementById('sortSelect');
-  if(_sortEl){ _sortEl.value=sortMode; _sortEl.addEventListener('change',function(){ sortMode=this.value; localStorage.setItem('rss_sort_mode',sortMode); applySort(); wallLimit=WALL_STEP; curArt=null; renderWall(); }); }
+  if(_sortEl){ _sortEl.value=sortMode; _sortEl.addEventListener('change',function(){ sortMode=_normSortMode(this.value); localStorage.setItem('rss_sort_mode',sortMode); applySort(); wallLimit=WALL_STEP; curArt=null; renderWall(); }); }
   /* A6 修复：中文阅读速度约 400 字/分钟 */
   function estRead(a){ var mins=Math.max(1,Math.round((a.s||'').length/400)); return mins+' min'; }
+
+  /* ── 信誉打散：时间窗口内加权采样 + 同源抑制，避免单源霸屏 ── */
+  /* 同源抑制间隔（issue C1）：同一源在最近 SRC_GAP 位内出现过的，本轮不再选。
+     缺陷背景：旧实现只有「窗口内按权重重排」，没有任何抑制同源相邻的项 ——
+     「打散」（避免单源霸屏）等于没做。
+
+     可证的界（精确表述，不要读成「最长连续恒 ≤ 2」）：
+       · 池非空 ⇒ 同一源在最近 SRC_GAP 位内不会被再次选中 ⇒ 相邻必异源。
+       · 池为空（组内剩余条目的源都恰好落在最近 SRC_GAP 位里）⇒ 退化为
+         「最久未出现优先」；若此时只剩单一源，连出长度 = 该源剩余条目数，不可避。
+     实测（2026-09-14 快照，9092 条 / 509 源）：
+       前 200 位同源最长连续 9（纯时间降序）→ 1；前 20 位单源最多 13 → 4；
+       前 200 位覆盖源数 36；平均时间位移与旧实现持平（103.1 vs 103.1）。
+       残留：全长最长连出 11（人民网，第 7480 位 / 82% 深处），落在 g28 组内
+       （该组 140 条 / 57 源 / 人民网 46 条，构成**可行**：46 ≤ floor(142/3)=47），
+       根因是贪心消耗不均衡使组尾塌成单源，不是数据所迫。
+       已实测的替代规则（池内改为「剩余量优先」）能把全程 maxRun 压到 1，
+       但前 200 位单源占比 12%→25%、覆盖源数 36→13、前 20 位源质量均值 82.45→78.08，
+       牺牲首屏多样性换深层不可见指标，净亏，故不改，如实记录为已知限制。
+
+     报告建议的 seeded PRNG 解决不了它：随机化不提供「不相邻」的任何保证，
+     而且按 quality 加权采样会把首屏推向纯降序（前轮读数：首屏均值 99.26 vs
+     时间序 82.20，本轮未复测），与「保持时间可读性」冲突。
+     只有位置约束能给出可证的界。 */
+
+  /* 源族群定义：同族源共享打散配额，防止 V2EX 4 子源交替出现霸屏。
+     key = source_key, value = family_key。未列出的源不参与族群 cap。 */
+  var SOURCE_FAMILIES = {
+    'v2ex_all_50': 'v2ex', 'v2ex技术_44': 'v2ex',
+    'nodeseek_54': 'nodeseek'
+  };
+  /* 族群级 cap：family_key → 最大连续条数。未列出的族用单源 cap 值。 */
+  var FAMILY_CAPS = { 'v2ex': 6, 'nodeseek': 4 };
+
+  /* 同源连续抑制（run cap）：扫描已排序数组，将同源连续超过 cap 的
+     多余条目与后续最近的异源条目交换。O(n) 典型 / O(n²) 最坏（3-pass 有界），
+     不改变数组长度或元素集合。
+     Level 1: 单源 cap（原有逻辑，用 _gk 替代直接 sk 比较）
+     Level 2: 族群 cap（families[sk] 存在时，用 FAMILY_CAPS[gk] 作为上限）
+     用于 active / newest / quality 模式，作为 weightedShuffle SRC_GAP
+     之外的轻量补充（diverse 模式不需要，已有 SRC_GAP=2）。 */
+  function _applyRunCap(arr, cap, families) {
+    if (!arr || arr.length <= cap) return;
+    families = families || {};
+    var _gk = function(sk) { return families[sk] || sk; };
+    var n = arr.length;
+    for (var pass = 0; pass < 3; pass++) {
+      var improved = false;
+      for (var i = cap; i < n; i++) {
+        var sk = arr[i].sk;
+        var gk = _gk(sk);
+
+        // ── Level 1: 单源 cap ──
+        if (arr[i].sk === arr[i-1].sk) {
+          var runStart = i - 1;
+          while (runStart > 0 && arr[runStart-1].sk === sk) runStart--;
+          var runLen = i - runStart + 1;
+          if (runLen > cap) {
+            var swapped = false;
+            for (var j = i + 1; j < Math.min(i + 15, n); j++) {
+              if (_gk(arr[j].sk) !== gk && (j === 0 || _gk(arr[j].sk) !== _gk(arr[j-1].sk))) {
+                var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+                swapped = true; improved = true; break;
+              }
+            }
+            if (!swapped) {
+              for (var j = i - 1; j >= 0; j--) {
+                if (_gk(arr[j].sk) !== gk) {
+                  var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+                  improved = true; break;
+                }
+              }
+            }
+            continue;
+          }
+        }
+
+        // ── Level 2: 族群 cap ──
+        if (families[sk]) {
+          var famCap = (typeof FAMILY_CAPS !== 'undefined' && FAMILY_CAPS[gk]) || cap;
+          if (_gk(arr[i-1].sk) === gk) {
+            var fStart = i - 1;
+            while (fStart > 0 && _gk(arr[fStart-1].sk) === gk) fStart--;
+            var fLen = i - fStart + 1;
+            if (fLen > famCap) {
+              var fSwapped = false;
+              for (var j = i + 1; j < Math.min(i + 20, n); j++) {
+                if (_gk(arr[j].sk) !== gk) {
+                  var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+                  fSwapped = true; improved = true; break;
+                }
+              }
+              if (!fSwapped) {
+                for (var j = i - 1; j >= 0; j--) {
+                  if (_gk(arr[j].sk) !== gk) {
+                    var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+                    improved = true; break;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      if (!improved) break;
+    }
+  }
+
+  var SRC_GAP = 2;
+
+  /* 距末尾最近一次出现的距离；从未出现返回大值（恒可用）。
+     用 lastAt 映射做到 O(1)，避免每次重扫输出数组。 */
+  function _srcGap(lastAt, len, sk) {
+    var at = lastAt[sk];
+    return (at === undefined) ? 1e9 : (len - at);
+  }
+
+  var TIER_MULT = { 1: 1.5, 2: 1.2 };
+  function _srcWeight(x, qm) {
+    var q = (qm[x.sk] !== undefined && qm[x.sk] > 0) ? qm[x.sk] : 50;
+    var tm = TIER_MULT[x.ti] || 1.0;
+    return q * tm;
+  }
+
+  function weightedShuffle(articles, windowMinutes, qualityMap) {
+    if (!articles || articles.length <= 1) return articles ? articles.slice() : [];
+    if (!windowMinutes || windowMinutes <= 0) {
+      // 窗口=0 → 纯时间降序（退化为现有行为）
+      return articles.slice().sort(function(a,b){ return _dateCmpDesc(a.date, b.date); });
+    }
+    var qm = qualityMap || {};
+    // 1. 先按时间降序排列（拷贝，不改原数组）
+    var sorted = articles.slice().sort(function(a,b){ return _dateCmpDesc(a.date, b.date); });
+    // 2. 锚定分段：组内每一条与组锚点（组内第一篇）的时间差 ≤ 窗口
+    var groups = [], cur = [sorted[0]];
+    for (var i = 1; i < sorted.length; i++) {
+      var tBase = new Date(cur[0].date).getTime();
+      var tCur  = new Date(sorted[i].date).getTime();
+      if (!isNaN(tBase) && !isNaN(tCur) && (tBase - tCur) <= windowMinutes * 60000) {
+        cur.push(sorted[i]);
+      } else {
+        groups.push(cur);
+        cur = [sorted[i]];
+      }
+    }
+    groups.push(cur);
+    // 3. 窗口内加权采样（确定性 + 同源抑制）
+    var result = [];
+    var lastAt = {};   // sk → 上一次进入 result 的下标（跨组保留，防跨组边界处连出）
+    for (var g = 0; g < groups.length; g++) {
+      var remaining = groups[g].slice();
+      while (remaining.length > 0) {
+        // 3a 先取「最近 SRC_GAP 位内未出现」的条目作为可选池
+        var pool = [], k, gk;
+        for (k = 0; k < remaining.length; k++) {
+          if (_srcGap(lastAt, result.length, remaining[k].sk) > SRC_GAP) pool.push(remaining[k]);
+        }
+        if (!pool.length) {
+          // 3b 可选池为空：该源在本窗口占绝对多数，异源条目已用尽。
+          //     退而取「最久未出现」的源（而不是接着选刚用过的源），
+          //     否则会用 fallback 把刚压下去的连续段重新接起来。
+          var maxGap = -1;
+          for (k = 0; k < remaining.length; k++) {
+            gk = _srcGap(lastAt, result.length, remaining[k].sk);
+            if (gk > maxGap) maxGap = gk;
+          }
+          for (k = 0; k < remaining.length; k++) {
+            if (_srcGap(lastAt, result.length, remaining[k].sk) === maxGap) pool.push(remaining[k]);
+          }
+        }
+        // 3c 池内确定性加权选取
+        var totalW = 0;
+        for (k = 0; k < pool.length; k++) totalW += _srcWeight(pool[k], qm);
+        var chosen;
+        if (totalW <= 0) {
+          chosen = pool[0];       // 所有权重为 0 → 按输入顺序取
+        } else {
+          /* 取「累计权重跨过总量一半」的那一个（池内顺序上的权重中位点）。
+             注意这是确定性算法，不是随机采样：同一输入必然产出同一排列（D8 守卫）。
+             本注释修正自旧的「使用确定性伪随机」—— 旧实现里没有任何 PRNG，注释与实现不符。 */
+          var threshold = totalW * 0.5, cumW = 0, picked = -1;
+          for (k = 0; k < pool.length; k++) {
+            cumW += _srcWeight(pool[k], qm);
+            if (cumW >= threshold && picked < 0) picked = k;
+          }
+          chosen = pool[picked < 0 ? 0 : picked];
+        }
+        result.push(chosen);
+        lastAt[chosen.sk] = result.length - 1;
+        for (k = 0; k < remaining.length; k++) {
+          if (remaining[k] === chosen) { remaining.splice(k, 1); break; }
+        }
+      }
+    }
+    return result;
+  }
+  /* ── weightedShuffle end ── */
 
   /* ── 分层交织：每 4 篇高频文章穿插 1 篇低频文章 ─ */
   function tierInterleave(){
@@ -2475,11 +4437,24 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
       var label=CAT_LABELS[c]||c, on=filter.type==='cat'&&filter.cats[c];
       h+='<button class="chip'+(on?' on':'')+'" data-c="'+c+'">'+label+' <span class="n">'+counts[c]+'</span></button>';
     });
+    /* ── 发现：长尾高质量源 ── */
+    var _discKeys=_discoverKeys();
+    var discCnt=0; ART.forEach(function(a){if(_discKeys[a.sk])discCnt++;});
+    if(discCnt>0){
+      var discOn=filter.type==='discover';
+      h+='<button class="chip disc-chip'+(discOn?' on':'')+'" data-c="__disc">\U0001f50d \u53d1\u73b0 <span class="n">'+discCnt+'</span></button>';
+    }
     document.getElementById('chips').innerHTML=h;
     document.querySelectorAll('.chip').forEach(function(el){
       if(!el.dataset.c) return; /* \u65e0 data-c \u7684\u82af\u7247\uff08\u5982\u6536\u85cf\uff09\u4fdd\u7559\u5185\u8054 onclick\uff0c\u907f\u514d\u8986\u76d6\u6210 c=undefined */
       el.onclick=function(){
         var c=this.dataset.c, uo=filter.unreadOnly, bm=filter.filterBm;
+        /* 发现 chip：切换 discover 模式 */
+        if(c==='__disc'){
+          filter=filter.type==='discover'?{type:'all',cats:{},unreadOnly:uo,filterBm:bm}:{type:'discover',unreadOnly:uo,filterBm:bm};
+          curArt=null; wallLimit=WALL_STEP; renderChips(); renderWall(); renderPanel(); window.scrollTo({top:0}); updateTitle(); updateHash(); updateUnreadBtn(); updateBmChip();
+          return;
+        }
         var cats=filter.type==='cat'?Object.assign({},filter.cats):{};
         if(cats[c]) delete cats[c]; else cats[c]=true;
         var keys=Object.keys(cats);
@@ -2502,6 +4477,7 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     if(!h1)return;
     if(filter.type==='cat'){var labels=Object.keys(filter.cats).map(function(c){return CAT_LABELS[c]||c;});h1.textContent=labels.join(' + ');}
     else if(filter.type==='src'){var s=SRC_OBJ(filter.src);h1.textContent=s?s.name:'\u4fe1\u6e90';}
+    else if(filter.type==='discover'){h1.textContent='\U0001f50d \u53d1\u73b0';}
     else h1.textContent='\u65f6\u95f4\u7ebf';
   }
   function updateMeta(){
@@ -2526,11 +4502,60 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     else{if(_srcBtnEl){try{_srcBtnEl.focus();}catch(e){}_srcBtnEl=null;}}
   }
   window.toggleSrcPanel=toggleSrcPanel;
+  /* API 压缩条目(t/s/u/d) → src.items 形状，且**必须与构建期那一条合并**而不是整条替换。
+     ?source= 这一路（api/rss.js 的 fetchOne）不发封面、不发话题标签、不发坏日期标记、
+     不发全文、也不做标题翻译；直接替换会让刷新过的卡片掉封面/掉标签/退回英文标题
+     （2026-09-21 对抗审查 C1/C2）。另外上游这次没给 pubDate 时 API 的 d 是**抓取时刻**，
+     盖到构建期已知的真实发布时间上，等于一边冒充发布时间一边让运行时永不淘汰它。
+     翻译类字段（title_zh/summary_zh）只在"原文没变"时才沿用旧的，否则上游改了标题
+     会永远显示旧译文。date_fallback 与快照同用长名。
+     判据：tests/rss_history/test_dfb_drawer_map_wire.py（真跑函数，含脏 link 那一类）。 */
+  function _apiMergeTo(oldItems){
+    var by={}; (oldItems||[]).forEach(function(o){ if(o&&o.link) by[o.link]=o; });
+    return function(it){
+      var o=by[it.u]||null;
+      var t=it.t||'';
+      var a={title:t,title_zh:t,summary_zh:it.s||'',link:it.u||'#',pub_date:it.d||'',
+             fc:it.fc||'',image:it.img||'',mu:it.mu||'',mt:it.mt||'',
+             date_fallback:!!it.date_fallback};
+      if(!o) return a;
+      if(o.title===t&&o.title_zh) a.title_zh=o.title_zh;
+      if(o.summary===it.s&&o.summary_zh) a.summary_zh=o.summary_zh;
+      if(!a.image&&o.image) a.image=o.image;
+      if(!a.fc&&o.full_content) a.fc=o.full_content;
+      if(!a.mu&&(o.media_url||o.mu)){a.mu=o.media_url||o.mu;a.mt=o.media_type||o.mt||'';}
+      if(o.tags) a.tags=o.tags;
+      if(o.bad_date) a.bad_date=o.bad_date;
+      /* time_str 已不再进产物（ITEM_DERIVED_FIELDS）：标签由 pub_date + BUILD_TS 现算，
+         这里再搬一次等于把"每场全量重写"从后门搬回来。发布时间本身的正确性由下一行管。 */
+      if(a.date_fallback&&o.pub_date&&!o.date_fallback){a.pub_date=o.pub_date;a.date_fallback=false;}
+      return a;
+    };
+  }
   function selectSrc(key){
     var uo=filter.unreadOnly,bm=filter.filterBm;
     if(!key){filter={type:'all',unreadOnly:uo,filterBm:bm};} else {filter={type:'src',src:key,unreadOnly:uo,filterBm:bm};}
     curArt=null; wallLimit=WALL_STEP; document.body.classList.remove('src-open');
     renderChips(); renderWall(); renderPanel(); window.scrollTo({top:0}); updateTitle(); updateHash(); updateUnreadBtn(); updateBmChip();
+    /* 单源实时刷新：后台静默拉取该源最新内容，成功则替换并重建，失败无感知 */
+    if(key){
+      fetch('https://starhub-refresh.vercel.app/api/rss?source='+encodeURIComponent(key),
+        (function(){var c=window.AbortController?new AbortController():null;if(c)setTimeout(function(){c.abort();},8000);return c?{signal:c.signal}:{};}())
+      )
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(data){
+        if(!data||!data.items||!data.items.length) return;
+        var src=SOURCES.find(function(s){return s.key===key;});
+        if(!src) return;
+        /* 映射 API 字段(t/s/u/d)到 buildArt 期望格式，按 link 去重 */
+        var have={}; data.items.forEach(function(it){if(it.u&&it.u!=='#')have[it.u]=1;});
+        var oldItems=src.items.filter(function(it){return !it.link||!have[it.link];});
+        var newItems=data.items.map(_apiMergeTo(src.items));
+        src.items=newItems.concat(oldItems);
+        buildArt(); renderChips(); renderWall(); renderPanel();
+        var n=data.items.length; toast('已更新 '+src.name+'（'+n+' 篇最新）');
+      }).catch(function(){});
+    }
   }
   window.selectSrc=selectSrc;
   function renderPanel(){
@@ -2595,15 +4620,34 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
   /* ── Card wall ── */
   var globalSearch = '';
   var _searchSrcMatch = null; // 搜索匹配到的信源 key
+  var _topicBigrams = null;   // 话题标签二元组（insightSearch 设置）
+  /* 长尾高质量源 key 集合：条目 ≤5 且 quality ≥60 */
+  function _discoverKeys(){
+    var srcCnt={};
+    ART.forEach(function(a){srcCnt[a.sk]=(srcCnt[a.sk]||0)+1;});
+    var qm=(ANALYSIS_DATA&&ANALYSIS_DATA.quality)?ANALYSIS_DATA.quality:{};
+    var ks={};
+    for(var sk in srcCnt){
+      if(srcCnt[sk]<=5 && (qm[sk]||0)>=60) ks[sk]=true;
+    }
+    return ks;
+  }
   function visibleArts(){
     var q = globalSearch;
+    var _dk=(filter.type==='discover')?_discoverKeys():null;
     return ART.filter(function(a){
       if(filter.type==='cat' && !filter.cats[a.c]) return false;
       if(filter.type==='src' && a.sk!==filter.src) return false;
+      if(filter.type==='discover' && !_dk[a.sk]) return false;
       if(filter.filterBm && !_bookmarks[artKey(a)]) return false;
       if(filter.unreadOnly && visited[artKey(a)]) return false;
       if(q) {
         if(_searchSrcMatch) return a.sk === _searchSrcMatch;
+        if(_topicBigrams&&_topicBigrams.length>=2){
+          var tl=(a.t||'').toLowerCase(),hits=0;
+          for(var i=0;i<_topicBigrams.length;i++){if(tl.indexOf(_topicBigrams[i])>=0)hits++;}
+          return hits>=2&&hits/_topicBigrams.length>=0.15;
+        }
         var ql=q.toLowerCase(); return (a.t||'').toLowerCase().indexOf(ql)>=0 || (a.s||'').toLowerCase().indexOf(ql)>=0 || (a.src||'').toLowerCase().indexOf(ql)>=0;
       }
       return true;
@@ -2691,6 +4735,40 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     return e.replace(re,'<mark>$1</mark>');
   }
   function artKey(a){ return a.sk+'|'+(a.u&&a.u!=='#'?a.u:a.t); }
+  /* 封面 referrer 策略。默认仍 `no-referrer`（多数图床靠它避免 Referer 泄露），但**有的图床
+     是"不带 Referer 就不给图"**：2026-10-01 实测 `images1.caifuzhongwen.com` 带 Referer 即 200、
+     不带 403 —— 全局一刀切等于自己把图关掉（用户记录里把这称为"已确认的一处自我伤害"）。
+     名单按**主机名后缀**匹配，绝不做子串匹配，否则 `http://evil.com/?x=caifuzhongwen.com` 会冒充命中。
+     判据：tests/site_nav/test_orphan_requests.py（含那条冒充样本与"改成子串匹配"的变异）。 */
+  var _REF_HOSTS = ['caifuzhongwen.com'];
+  var _BAD_COVERS = """ + json.dumps(sorted(_BAD_COVER_HOSTS), ensure_ascii=False) + """;
+  function _coverHost(u){
+    /* 必须 trim + 整体小写：Python 侧 _cover_host 是 `partition('//')[0].lower()` 判 scheme
+       再把 host 小写，大写 scheme（HTTPS://…）在两边都该算同一个 host。
+       少这一步就是"构建期判空、渲染层放行"的分叉，与今天上午修掉的翻译判据同一种形状。 */
+    var s = String(u || '').trim().toLowerCase();
+    if (s.lastIndexOf('http://', 0) !== 0 && s.lastIndexOf('https://', 0) !== 0) return '';
+    var rest = s.substring(s.indexOf('//') + 2);
+    return ((rest.split('/')[0] || '').split('@').pop().split(':')[0] || '');
+  }
+  /* 精确或作为子域命中；空 host 不命中。与构建期 Python 侧 _host_matched 同一条规则。 */
+  function _hostInTable(host, table){
+    if (!host) return false;
+    for (var i = 0; i < table.length; i++) {
+      var d = table[i];
+      if (host === d || host.slice(-(d.length + 1)) === '.' + d) return true;
+    }
+    return false;
+  }
+  /* 渲染层再过滤一次必挂域名：构建期已把封面写空，这里兜的是实时链路
+     (?source= / ?batch=) 现抓回来的条目。表只有一份，住在 _BAD_COVER_HOSTS，
+     由 _BAD_COVERS 注入 —— 实时侧再抄一份就是第二个会分叉的事实来源。 */
+  function _dropBadCover(u){
+    return _hostInTable(_coverHost(u), _BAD_COVERS) ? '' : (u || '');
+  }
+  function _coverRefPolicy(u){
+    return _hostInTable(_coverHost(u), _REF_HOSTS) ? '' : 'no-referrer';
+  }
   function renderWall(){
     var list=visibleArts(), wall=document.getElementById('wall');
     if(!list.length){
@@ -2713,14 +4791,18 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     for(var i=0;i<end;i++){
       var a=list[i], k=artKey(a), isVis=!!visited[k];
       var isOpen=curArt&&artKey(curArt)===k;
-      var hasImg=!!a.img;
-      /* 有封面图才走封面卡；无图回退纯文字紧凑卡，避免渐变占位浪费空间 */
+      var _cv=_dropBadCover(a.img);
+      var hasImg=!!_cv;
+      /* 有可用封面图才走封面卡；无图（或被必挂域名表过滤掉）回退纯文字紧凑卡，避免渐变占位浪费空间 */
       /* A1 修复：卡片加 tabindex 使键盘可达 */
       h+='<article class="card'+(hasImg?' cover-card':'')+(isVis?' visited':'')+(isOpen?' open':'')+'" data-k="'+esc(k)+'" tabindex="0" style="--cc:var(--cat-'+a.c+')">';
       if(hasImg){
         h+='<a class="cover" href="'+esc(a.u)+'" target="_blank" rel="noopener" tabindex="-1" aria-hidden="true" onclick="event.stopPropagation()">';
         h+='<span class="cover-fallback">'+esc((a.t||'#').charAt(0).toUpperCase())+'</span>';
-        h+='<img class="cover-img" src="'+esc(a.img)+'" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">';
+        // 取不到就摘掉自己，露出下面那张 .cover-fallback 首字占位；
+        // 线上实测新华网 OSS 是 http=502/https TLS 失败、BBC 图在大陆直接连不通，
+        // 没有这一句时卡片上就是一个破图。
+        h+='<img class="cover-img" src="'+esc(_cv)+'" alt="" loading="lazy" decoding="async" referrerpolicy="'+esc(_coverRefPolicy(_cv))+'" onerror="this.remove()">';
         h+='</a>';
       }
       h+='<div class="card-top"><span class="cat-tag" style="color:var(--cat-'+a.c+')">'+(CAT_LABELS[a.c]||a.c)+'</span>';
@@ -2729,6 +4811,15 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
       h+='<a class="ext-btn" href="'+esc(a.u)+'" target="_blank" rel="noopener" title="\u539f\u7ad9" onclick="event.stopPropagation()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg></a></div>';
       h+='<h3 class="card-title">'+highlightEsc(a.t,globalSearch)+'</h3>';
       if(a.s) h+='<p class="card-summary">'+highlightEsc(a.s,globalSearch)+'</p>';
+      if(a.tags && a.tags.length){
+        h+='<div class="card-tags">';
+        for(var _ti=0;_ti<Math.min(a.tags.length,3);_ti++){
+          if(_ti>0) h+=' ';
+          h+='<span class="ctag">'+esc(a.tags[_ti])+'</span>';
+        }
+        if(a.tags.length>3) h+='<span class="ctag">+' + (a.tags.length-3) + '</span>';
+        h+='</div>';
+      }
       h+='<div class="card-foot"><span class="src-dot" style="--sc:'+a.sc+'"></span><span class="src-name">'+esc(a.src)+'</span>';
       h+='<span class="foot-meta"><button class="copy-btn" data-k="'+esc(k)+'" title="\u590d\u5236\u6807\u9898\u4e0e\u94fe\u63a5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>\u590d\u5236</button><button class="share-btn" data-k="'+esc(k)+'" title="\u5206\u4eab\u6587\u7ae0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg></button><span>'+estRead(a)+'</span></span></div>';
       h+='</article>';
@@ -2782,6 +4873,64 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
 
   /* ── Reader ── */
   var _articleCache={};
+  /* /api/article 的失败码 → 用户能看懂的一句人话。宁可写长也别写成只有码名的那种提示。
+     这份表与 api/article.js 的 Task 5 契约一一对应（7 格，不多不少；timeout 由服务端
+     AbortError 动态产生，不在那边写成字面量）。判据：tests/site_nav/test_reader_fulltext_errors.py */
+  var _FT_NOTES={
+    'challenge_page':'该站点要求浏览器人机验证，StarHub 无法代为抓取正文。可点下方"打开原文"自行阅读。',
+    'no_body':'没能从该页面提取到正文（可能是纯 JS 渲染的页面），下面保留的是信源自带摘要。',
+    'timeout':'抓取原文超时（对方站点响应过慢），下面保留的是信源自带摘要。',
+    'fetch_failed':'原文站点拒绝访问或不存在，下面保留的是信源自带摘要。',
+    'extraction_failed':'页面结构无法解析，下面保留的是信源自带摘要。',
+    'invalid_url':'这条内容没有可抓取的外部链接。',
+    'missing_url':'缺少原文地址。'
+  };
+  var _FT_NOTE_FALLBACK='未能获取正文，以下为信源摘要。';
+  function _showFulltextNote(inner,text){
+    if(!inner||inner.querySelector('.r2-ft-note')) return;
+    var n=document.createElement('div');
+    n.className='r2-ft-note';
+    n.style.cssText='margin:10px 0;padding:9px 11px;border-left:3px solid var(--brand-line);background:var(--panel-soft,rgba(0,0,0,.03));font-size:13px;line-height:1.7;color:var(--muted)';
+    n.innerHTML=esc(text);
+    var hint=inner.querySelector('.r2-foot-hint');
+    if(hint) inner.insertBefore(n,hint); else inner.appendChild(n);
+  }
+  /* ── HN 讨论页（Task 9）：那是评论列表，没有"正文"可抽 ──
+     api/article.js 对 item 页跑 Readability 抽出来的是"用户名 + 评论锚点"，
+     正是用户报的"阅读器里全是链接"。裁定：不发 /api/article，摘要当正文显示 + 给讨论入口。 */
+  function _isHnDiscussion(u){
+    /* 只按 host 边界认 news.ycombinator.com（精确或其子域）。绝不对整条 URL 做子串匹配：
+       `http://evil.com/?x=news.ycombinator.com`、`https://news.ycombinator.com.evil.com/`、
+       `https://news.ycombinator.com@evil.com/item` 都不算 —— 与封面 referrer 表那条同形状。
+       走 new URL 而不是手拆：port / userinfo / 大小写 / 非 http(s) scheme 一次处理干净；
+       解析不了（相对路径、空串、老浏览器没有 URL）就当"不是讨论页"，最多少一层短路，不会误吞正文。 */
+    var HN='news.ycombinator.com';
+    var SUB='.'+HN;
+    var s=String(u||'').trim();
+    if(!s) return false;
+    var host='';
+    try{ host=String(new URL(s).hostname||'').toLowerCase(); }
+    catch(e){ return false; }
+    if(!host) return false;
+    return host===HN||host.slice(-SUB.length)===SUB;
+  }
+  function _showSummaryAsBody(inner,a){
+    /* 讨论页的"正文"就是信源摘要（Ask/Show HN 文本帖）或一句计数（纯链接投稿），
+       再加一个能点回讨论区的出口。摘要按**文本**转义后显示：Task 8 之后 a.s 里仍可能有
+       上游自带的 HTML/尖括号，直接拼进 innerHTML 就是自我 XSS 面。
+       href 是属性上下文：esc() 走 text-node 序列化，不转引号，所以这里补一道引号。
+       换行用 \\n 双写 —— 这段 JS 活在非 raw 的 Python 三引号串里，单写会被 Python 先解成
+       真换行，产物里就变成跨行的正则字面量（判据 test_summary_newlines_become_br_in_the_artifact）。 */
+    if(!inner||inner.querySelector('.r2-fulltext')) return;
+    var div=document.createElement('div');
+    div.className='r2-fulltext';
+    var txt=esc(a.s||'（该条目无文字内容）').replace(/\\n/g,'<br>');
+    div.innerHTML='<p>'+txt+'</p><p style="margin-top:10px"><a href="'
+      +esc(a.u||'').replace(/"/g,'&quot;')
+      +'" target="_blank" rel="noopener" style="color:var(--brand-strong)">在 Hacker News 查看讨论 ↗</a></p>';
+    var hint=inner.querySelector('.r2-foot-hint');
+    if(hint) inner.insertBefore(div,hint); else inner.appendChild(div);
+  }
   function fetchFullArticle(a){
     if(!a.u||a.u==='#') return;
     var inner=document.getElementById('r2Inner');
@@ -2790,9 +4939,15 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
       _insertFulltext(a.fc);
       return;
     }
+    /* 判断必须在 fetch **之前**：放进 .then 里等于白判（请求已经发出去了，
+       用户先看到一屏评论链接列表）。有真全文时先看全文，所以这一格排在 a.fc 之后。 */
+    if(_isHnDiscussion(a.u)){ _showSummaryAsBody(inner,a); return; }
     if(_articleCache[a.u]){
-      var d=_articleCache[a.u];
-      if(d.ok) _insertFulltext(d.content);
+      var cc=_articleCache[a.u];
+      /* 命中缓存也要判 ok：分享通道（shareArt）往同一张表里写 d 时不判 ok，
+         直接插就是把 undefined 当正文喂给 innerHTML。失败项在这里出声。 */
+      if(cc&&cc.ok&&cc.content) _insertFulltext(cc.content,cc.degraded);
+      else _showFulltextNote(inner,_FT_NOTES[cc&&cc.error]||_FT_NOTE_FALLBACK);
       return;
     }
     var old=inner.querySelector('.r2-ft-loading');
@@ -2804,9 +4959,16 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     if(hint) inner.insertBefore(ld,hint); else inner.appendChild(ld);
     var apiBase='https://starhub-refresh.vercel.app/api/article';
     fetch(apiBase+'?url='+encodeURIComponent(a.u)).then(function(r){return r.json();}).then(function(d){
-      _articleCache[a.u]=d;
       var cur=inner.querySelector('.r2-ft-loading'); if(cur) cur.remove();
-      if(d.ok&&d.content) _insertFulltext(d.content);
+      if(d.ok&&d.content){
+        /* 只缓存成功：把失败也缓存的话，会话内每次重试都拿回同一份失败并永久静默 */
+        _articleCache[a.u]=d;
+        _insertFulltext(d.content,d.degraded);
+        return;
+      }
+      /* ok:false 是服务端的**回答**，不是网络故障：过去这里没有 else，转圈被上一行删掉后
+         阅读器既不显示正文也不显示原因（用户报的"部分内容加载不出"）。 */
+      _showFulltextNote(inner,_FT_NOTES[d.error]||_FT_NOTE_FALLBACK);
     }).catch(function(){
       var cur=inner.querySelector('.r2-ft-loading'); if(cur) cur.remove();
       /* F3 修复：全文加载失败时显示行内提示与重试按钮 */
@@ -2865,9 +5027,56 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     var iframes=body.querySelectorAll('iframe');
     for(var j=0;j<iframes.length;j++){try{iframes[j].src='about:blank';}catch(e){}}
   }
-  function _insertFulltext(html){
+  /* 正文内联图片的渲染层兜底：只改属性、不碰结构。
+     为什么构建期规范之外还要这一道：文章接口（api/article.js）现抓的正文压根不过构建期规范，
+     Readability 的输出格式由站点决定，而双重转义那一类正文在运行时通道上服务端
+     压根拿不回 `data-src`（见 task-4-5-report.md 的 L1）—— 只能在浏览器里救。
+     referrer 复用封面那一份表（_coverRefPolicy/_coverHost/_hostInTable/_REF_HOSTS），
+     本函数里不写任何域名：第二张表就是第 4 个会分叉的事实来源。
+     判据：tests/site_nav/test_reader_body_images.py（含运行时通道 data-src 的行为样本）。 */
+  function _hardenBodyImages(root,baseUrl){
+    if(!root||!root.querySelectorAll) return;
+    var lazyAttrs=['data-src','data-original','data-lazy-src','data-croporisrc'];
+    var imgs=root.querySelectorAll('img');
+    var base=(baseUrl&&/^https?:/i.test(baseUrl))?baseUrl:'';
+    for(var i=0;i<imgs.length;i++){
+      var im=imgs[i];
+      var src=(im.getAttribute('src')||'').trim();
+      /* 空 src 与占位图都去懒加载属性里找真地址：老快照与现抓正文都常见这一形。 */
+      if(!src||src.slice(0,5)==='data:'){
+        for(var k=0;k<lazyAttrs.length;k++){
+          var v=(im.getAttribute(lazyAttrs[k])||'').trim();
+          if(v){ src=v; break; }
+        }
+      }
+      /* 相对/协议相对地址按**这条内容自己的原文链接**落地；补不出 http(s) 就当没有图。 */
+      if(src&&src.slice(0,11)!=='data:image/'&&!/^https?:/i.test(src)){
+        var abs='';
+        try{ abs=new URL(src,base||location.href).href; }catch(e){ abs=''; }
+        src=/^https?:/i.test(abs)?abs:'';
+      }
+      /* 没有可用地址就整枚摘掉：留在正文里的破图占位比没有图更糟（一枚碎图标压在段落中间）。 */
+      if(!src){ if(im.parentNode) im.parentNode.removeChild(im); continue; }
+      im.setAttribute('src',src);
+      im.setAttribute('loading','lazy');
+      im.setAttribute('decoding','async');
+      var pol=_coverRefPolicy(src);
+      /* pol 为空串=这家图床要带 Referer 才给图：必须 removeAttribute，
+         写成 attr="" 的属性值语义在浏览器间并不一致。 */
+      if(pol) im.setAttribute('referrerpolicy',pol); else im.removeAttribute('referrerpolicy');
+      if(!im._ftErr){
+        im._ftErr=1;
+        im.addEventListener('error',function(){this.style.display='none';});
+      }
+    }
+  }
+  function _insertFulltext(html,degraded){
     var inner=document.getElementById('r2Inner');
     if(!inner||inner.querySelector('.r2-fulltext')) return;
+    /* degraded 是服务端**给了内容但不足以称"全文"**的标注（值只可能 paywall/short，
+       判定住在 lib/body_rules.js 的 classifyBody）：照旧显示正文，但不许再假装它是全文。 */
+    if(degraded==='paywall') _showFulltextNote(inner,'该站点为付费内容，以下仅为可公开的试读部分。');
+    else if(degraded==='short') _showFulltextNote(inner,'正文可能不完整（站点仅提供短摘要或需 JS 渲染）。');
     var div=document.createElement('div');
     div.className='r2-fulltext';
     
@@ -2907,6 +5116,9 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
         var bs=tog.querySelectorAll('button');bs[0].classList.add('active');bs[1].classList.remove('active');
       };
     }
+    /* 正文内联图片兜底（referrer/懒加载/破图），必须在媒体嵌入之前跑：
+       _renderMedia 会往容器里插 iframe/audio，那是我们不该管的另一批元素。 */
+    _hardenBodyImages(div,curArt&&curArt.u);
     /* 媒体嵌入：YouTube 视频 / 播客音频 */
     _renderMedia(curArt,div);
   }
@@ -2979,6 +5191,17 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     h+='<span class="src-dot" style="--sc:'+a.sc+'"></span><span>'+esc(a.src)+'</span>';
     h+='<span>\u00b7</span><span title="'+esc(a.date||'')+'">'+_dynTime(a)+'</span><span>\u00b7</span><span>'+estRead(a)+'</span></div>';
     if(a.s){
+      /* 症状③的最后一条通道：互方把同一段话既塞进 description 又塞进 content:encoded 时，
+         下面 _insertFulltext(a.fc) 还会再渲染一遍 ⇒ 同一段话屏幕上出现两遍。
+         已发布产物 15,632 条里这样的 191 条（1.22%），其中 151 条正文里还带图 ⇒
+         不能丢正文，只能把这块重复的摘要隐掉；翻译/原文按钮在正文那块上仍然在。
+         口径只看剥标签后的可见文字：**逐字相等**或**正好是正文开头的前缀**都算重复
+         （出口把摘要截到 200 字会补省略号，比之前先摘掉尾巴那个 U+2026，否则现抓通道判不出来）；
+         不引入第三套正文规则。
+         频度会随第二遍解码被删掉而上升：这一批上线后现网一次读到 93/2,412（3.8%）——
+         旧出口把两侧解成不一样的形状，所以以前是漏报，不是没有。 */
+      var _dupFt = _summaryDuplicatedByFulltext(a.s, a.fc);
+      if(!_dupFt){
       // Auto-format summary into paragraphs
       var formattedSummary = formatSummary(a.s);
       h+='<div class="r2-summary">'+formattedSummary+'</div>';
@@ -2986,6 +5209,7 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
         h+='<div class="r2-lang-toggle">';
         h+='<button class="active" id="btnOrig">\u539f\u6587</button>';
         h+='<button id="btnTrans">\u7ffb\u8bd1</button></div>';
+      }
       }
     } else {
       h+='<div class="fallback-card"><div class="fb-ico">🔗</div>';
@@ -3013,6 +5237,22 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
   }
 
   // Format summary text into readable paragraphs
+  /* 摘要是否已被内嵌全文逐字重复（只比可见文字，不做正文规范）。
+     判据：tests/site_nav/test_reader_summary_dedupe.py */
+  function _summaryDuplicatedByFulltext(sum, fc){
+    if(!sum || !fc) return false;
+    /* 门槛必须与 fetchFullArticle 的 `if(a.fc&&a.fc.length>100)` 对齐（比的是**原始**长度、带标签）：
+       短于它的 fc 根本不会入屏（转去现抓或出降级提示），这时再隐掉摘要 = 整块面板一个字都不剩。
+       线上今天 93 条同段全部是长正文 ⇒ 那是数据巧合，不是代码保证，所以这条要写死。 */
+    if(String(fc).length <= 100) return false;
+    var vis = function(x){ return String(x).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(); };
+    /* 摘掉出口截断补的那个省略号（`truncate` 到 200 字会加 U+2026），否则现抓/批量通道上
+       "摘要=正文开头"那一格永远比不中 ⇒ 用户还是读两遍。 */
+    var a = vis(sum).replace(/\\u2026+$/, '');
+    var f = vis(fc);
+    return a.length > 24 && f.slice(0, a.length) === a;
+  }
+
   function formatSummary(text){
     if(!text) return '';
     // Step 1: Normalize line endings
@@ -3077,32 +5317,42 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
   }
 
   // ── OPML export ──
+  /* 先从 rss_sources.json 获取 url 映射（chunk 数据可能不含 url），
+     获取失败则回退到 SOURCES 自带的 url（下次构建后 chunk 含 url） */
   function exportOPML(){
-    var groups={};
-    SOURCES.forEach(function(s){
-      var cat=s.cat||'other';
-      if(!groups[cat]) groups[cat]=[];
-      groups[cat].push(s);
-    });
-    var xml='<?xml version="1.0" encoding="UTF-8"?>\\n';
-    xml+='<opml version="2.0">\\n<head><title>StarHub RSS \\u4fe1\\u6e90</title><dateCreated>'+new Date().toUTCString()+'</dateCreated></head>\\n<body>\\n';
-    CAT_ORDER.forEach(function(c){
-      if(!groups[c]||!groups[c].length) return;
-      var label=CAT_LABELS[c]||c;
-      xml+='  <outline text="'+esc(label)+'" title="'+esc(label)+'">\\n';
-      groups[c].forEach(function(s){
-        xml+='    <outline type="rss" text="'+esc(s.name)+'" title="'+esc(s.name)+'" xmlUrl="'+esc(s.url)+'"/>\\n';
+    var _doExport=function(urlMap){
+      var groups={};
+      SOURCES.forEach(function(s){
+        var cat=s.cat||'other';
+        if(!groups[cat]) groups[cat]=[];
+        groups[cat].push(s);
       });
-      xml+='  </outline>\\n';
-    });
-    xml+='</body>\\n</opml>';
-    var blob=new Blob([xml],{type:'text/xml;charset=utf-8'});
-    var a=document.createElement('a');
-    a.href=URL.createObjectURL(blob);
-    a.download='starhub-rss-sources.opml';
-    a.click();
-    URL.revokeObjectURL(a.href);
-    toast('\u5df2\u5bfc\u51fa '+SOURCES.length+' \u4e2a\u4fe1\u6e90');
+      var xml='<?xml version="1.0" encoding="UTF-8"?>\\n';
+      xml+='<opml version="2.0">\\n<head><title>StarHub RSS \\u4fe1\\u6e90</title><dateCreated>'+new Date().toUTCString()+'</dateCreated></head>\\n<body>\\n';
+      CAT_ORDER.forEach(function(c){
+        if(!groups[c]||!groups[c].length) return;
+        var label=CAT_LABELS[c]||c;
+        xml+='  <outline text="'+esc(label)+'" title="'+esc(label)+'">\\n';
+        groups[c].forEach(function(s){
+          var u=s.url||urlMap[s.key]||'';
+          xml+='    <outline type="rss" text="'+esc(s.name)+'" title="'+esc(s.name)+'" xmlUrl="'+esc(u)+'"/>\\n';
+        });
+        xml+='  </outline>\\n';
+      });
+      xml+='</body>\\n</opml>';
+      var blob=new Blob([xml],{type:'text/xml;charset=utf-8'});
+      var a=document.createElement('a');
+      a.href=URL.createObjectURL(blob);
+      a.download='starhub-rss-sources.opml';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      toast('\\u5df2\\u5bfc\\u51fa '+SOURCES.length+' \\u4e2a\\u4fe1\\u6e90');
+    };
+    /* 尝试从 rss_sources.json 获取 url 映射 */
+    fetch('rss_sources.json').then(function(r){return r.ok?r.json():null;}).then(function(srcs){
+      var m={}; if(srcs)srcs.forEach(function(s){if(s.key&&s.url)m[s.key]=s.url;});
+      _doExport(m);
+    }).catch(function(){ _doExport({}); });
   }
 
   // ── Keyboard help ──
@@ -3117,7 +5367,7 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
   // ── Window exports ──
   window.ART = ART;
   window.closeReader = function(){ _cleanupMedia(); document.body.classList.remove('reading'); curArt=null; window.curArt=null; updateCardStates(); if(_prevFocusEl){try{_prevFocusEl.focus();}catch(e){}_prevFocusEl=null;} };
-  window.closeOverlays = function(){ document.body.classList.remove('src-open'); window.closeReader(); };
+  window.closeOverlays = function(){ document.body.classList.remove('src-open'); window.closeReader(); closeInsight(); };
   window.clearSrcF = function(e){ e.stopPropagation(); var uo=filter.unreadOnly,bm=filter.filterBm; filter={type:'all',unreadOnly:uo,filterBm:bm}; curArt=null; wallLimit=WALL_STEP; renderChips(); renderWall(); renderPanel(); updateTitle(); updateHash(); updateUnreadBtn(); updateBmChip(); };
   window.toggleSrcPanel = toggleSrcPanel;
   window.selectSrc = selectSrc;
@@ -3138,6 +5388,7 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     gsInput.addEventListener('input', function(){
       globalSearch = this.value.trim();
       _searchSrcMatch = null;
+      _topicBigrams = null;
       if(globalSearch.length >= 1) {
         var ql = globalSearch.toLowerCase();
         var matched = SOURCES.filter(function(s){ return s.name.toLowerCase().indexOf(ql) >= 0; });
@@ -3159,6 +5410,7 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     gsClear.addEventListener('click', function(){
       gsInput.value = ''; globalSearch = '';
       _searchSrcMatch = null;
+      _topicBigrams = null;
       gsWrap.classList.remove('has-q', 'src-hit');
       curArt = null; wallLimit = WALL_STEP;
       renderWall(); updateMeta(); gsInput.focus();
@@ -3214,7 +5466,7 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
 
   /* ── URL hash ── */
   function updateHash(){
-    var p='#view='+(filter.type==='cat'?'cat&c='+Object.keys(filter.cats).join(','):filter.type==='src'?'src&s='+encodeURIComponent(filter.src):'all');
+    var p='#view='+(filter.type==='cat'?'cat&c='+Object.keys(filter.cats).join(','):filter.type==='src'?'src&s='+encodeURIComponent(filter.src):filter.type==='discover'?'discover':'all');
     try{history.replaceState(null,'',p);}catch(e){}
   }
   function restoreFromHash(){
@@ -3222,6 +5474,7 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     var p={};h.split('&').forEach(function(kv){var s=kv.split('=');if(s[0])p[s[0]]=decodeURIComponent(s[1]||'');});
     if(p.view==='cat'&&p.c){var cats={};p.c.split(',').forEach(function(x){if(x)cats[x]=true;});filter={type:'cat',cats:cats};return true;}
     if(p.view==='src'&&p.s){filter={type:'src',src:p.s};return true;}
+    if(p.view==='discover'){filter={type:'discover'};return true;}
     return false;
   }
 
@@ -3237,21 +5490,52 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     buildArt();
     renderChips(); renderWall(); renderPanel(); updateTitle(); updateUnreadBtn(); updateBmBtn();
     _bootFinish();
-    /* 让首屏先稳定可交互，再在空闲时解析 25MB 的 chunk1，避免后台加载反过来卡住主线程 */
+    /* 让首屏先稳定可交互，再在空闲时依次加载后台分块 chunk1/2/3...，避免一次性加载阻塞主线程 */
     var _loadRest=function(){
-      loadChunk(1).then(function(){
-        var n=_mergeChunk(window.__CHUNKS&&window.__CHUNKS[1]);
-        if(n>0)toast('\u5df2\u52a0\u8f7d\u5168\u90e8 '+ART.length+' \u7bc7\u5185\u5bb9\uff08\u65b0\u589e '+n+' \u7bc7\uff09');
-      }).catch(function(){});
+      var _loaded=0;
+      /* 终点由 chunk0 的 payload 声明（_total = 本次构建写出的块数，含 chunk0 自己）。
+         读不到声明 = 用户手里还是旧 chunk0 缓存 ⇒ 退回"探到失败为止"，绝不停在第一块：
+         那正是 2026-09-30 "页面只剩 61 个源"的形状，比一次 404 严重得多。 */
+      var _total=(window.__CHUNKS&&window.__CHUNKS[0]&&window.__CHUNKS[0]._total)||0;
+      function _finish(){ if(_loaded>0){ toast('已加载全部 '+ART.length+' 篇内容（新增 '+_loaded+' 篇）'); } }
+      var _loadNext=function(idx){
+        loadChunk(idx).then(function(){
+          if(window.__CHUNKS&&window.__CHUNKS[idx]){
+            var n=_mergeChunk(window.__CHUNKS[idx]);
+            _loaded+=n;
+          }
+          if(_total && idx+1>=_total){ _finish(); return; }   // 按声明收口：不再请求注定 404 的下一块
+          _loadNext(idx+1);
+        }).catch(function(e){
+          // chunk 不存在或加载失败
+          if(idx===1){
+            // chunk1 是必需的，缺失则警告
+            if(!(window.__CHUNKS&&window.__CHUNKS[1])){
+              console.warn('[starhub] chunk1 onload 但 __CHUNKS[1] 缺失（文件截断或内容异常）');
+              toast('剩余内容数据异常，刷新页面可重试');
+              return;
+            }
+          }
+          // 所有 chunk 加载完成
+          if(_loaded>0){
+            toast('已加载全部 '+ART.length+' 篇内容（新增 '+_loaded+' 篇）');
+          }
+        });
+      };
+      _loadNext(1);
     };
     if(window.requestIdleCallback)window.requestIdleCallback(_loadRest,{timeout:5000});
     else setTimeout(_loadRest,1200);
   }
-  if(window.__CHUNKS&&window.__CHUNKS[0]){_bootWith(window.__CHUNKS[0].sources);}
-  else{loadChunk(0).then(function(){_bootWith(window.__CHUNKS&&window.__CHUNKS[0]&&window.__CHUNKS[0].sources);}).catch(function(e){
-    _bootFinish();
-    var w=document.getElementById('wall');
-    if(w)w.innerHTML='<div class="empty-hint">\u5185\u5bb9\u52a0\u8f7d\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u7f51\u7edc\u540e\u5237\u65b0\u91cd\u8bd5</div>';
+  /* chunk0 同款守卫（复审 P2）：onload 不等于数据完好，截断/损坏时显式报错而非静默空站 */
+  function _bootFail(msg){_bootFinish();console.warn('[starhub]',msg);var w=document.getElementById('wall');if(w)w.innerHTML='<div class="empty-hint">'+msg+'</div>';}
+  if(window.__CHUNKS&&window.__CHUNKS[0]&&window.__CHUNKS[0].sources&&window.__CHUNKS[0].sources.length){try{_bootWith(window.__CHUNKS[0].sources);}catch(e){console.warn('[starhub] boot 异常:',e);_bootFail('首屏渲染异常，请刷新重试');}}
+  else if(window.__CHUNKS&&window.__CHUNKS[0]){_bootFail('首屏数据异常，请刷新重试');}
+  else{loadChunk(0).then(function(){
+        var _cs=window.__CHUNKS&&window.__CHUNKS[0]&&window.__CHUNKS[0].sources;
+        if(!_cs||!_cs.length){_bootFail('首屏数据异常，请刷新重试');return;}
+        try{_bootWith(_cs);}catch(e){console.warn('[starhub] boot 异常:',e);_bootFail('首屏渲染异常，请刷新重试');}}).catch(function(e){
+    _bootFail('内容加载失败，请检查网络后刷新重试');
   });}
   /* 无限滚动：接近底部自动加载更多（带节流锁） */
   var _scrollLock=false;
@@ -3294,7 +5578,13 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
   /* ── Refresh: 后台增量更新 —— 不整页 reload，避免重新下载18MB 页面导致长时间白屏 ── */
   var _refreshing=false, _lastTotal=ART.length;
   /* ── Dynamic relative time: computed from a.date at render time, never frozen ─ */
-  function _dynTime(a) {
+  /* 日期缺失时 a.date 由 first_seen（首次收录时刻）降级而来，见 _fallback_date_iso；
+     这类条目必须与「发布时间」区分显示，不能把收录时间冒充成发布时间。 */
+  function _dynTime(a){
+    var s=_dynTimeCore(a);
+    return (a&&a.dfb&&s)?('\u6536\u5f55 '+s):s;
+  }
+  function _dynTimeCore(a) {
     if (!a || !a.date) return a && a.time ? a.time : '';
     // bad_date: pub_date 不可信（构建时自动检测：wechat类目/日期倒挂/抓取时间冒充），显示绝对日期
     if (a.bad_date) {
@@ -3333,11 +5623,14 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
       try{
         if(window.__CHUNKS&&window.__CHUNKS[i])return resolve();
         var sc=document.createElement('script'),done=false;
-        var t=setTimeout(function(){if(!done){done=true;reject(new Error('chunk '+i+' timeout'));}},45000);
+        /* 大 chunk（37MB 级）在慢网络下下载可超 45s：超时只提示、绝不 reject——
+           reject 会让 .catch 静默吞掉合并，数据到位也无人消费（线上实证 bug）；
+           onload/onerror 才是脚本状态的唯一事实源 */
+        var t=setTimeout(function(){if(!done){toast('内容仍在后台加载，完成后自动合并…');}},45000);
         sc.src='rss-data-'+i+'.js?v='+BUILD_TS;
         sc.onload=function(){if(!done){done=true;clearTimeout(t);resolve();}};
         sc.onerror=function(){if(!done){done=true;clearTimeout(t);reject(new Error('chunk '+i+' fail'));}};
-        document.head.appendChild(sc);
+        try{document.head.appendChild(sc);}catch(e){clearTimeout(t);throw e;}
       }catch(e){reject(e);}
     });
   }
@@ -3363,14 +5656,14 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
       /* EV-16 修复：后台合并后仅对新增内容交织，首屏已见内容不换位 */
       if(added>0){buildArt();
         var _oldLimit=wallLimit;
-        tierInterleave();
+        if(sortMode!=='diverse') tierInterleave();
         wallLimit=Math.min(ART.length,Math.max(wallLimit,120));
         renderChips();renderWall();renderPanel();
         /* 恢复用户已滚动到的位置，避免已见内容换位 */
         if(_oldLimit>WALL_STEP) wallLimit=Math.max(wallLimit,_oldLimit);
       }
       return added;
-    }catch(e){return 0;}
+    }catch(e){console.warn('[starhub] chunk 合并失败（数据在 __CHUNKS，刷新可重试）:', e);return 0;}
   }
   function _mergeRemoteSources(j){
     try{
@@ -3381,20 +5674,38 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
         if(!s||!s.items||!s.items.length) return;
         s.items.forEach(function(it){
           if(!it||!it.u||it.u==='#') return;
-          var a={t:it.t||'', s:it.s||'', src:s.name, sk:s.key, c:s.cat, sc:s.color, ti:s.tier||3,
-                 time:_fmtRel(it.d), date:it.d||'', u:it.u, fc:it.fc||'', img:it.img||'', mu:it.mu||'', mt:it.mt||'', bad_date:!!it.bad_date};
+          var a={t:it.t_zh||it.t||'', s:it.s||'', src:s.name, sk:s.key, c:s.cat, sc:s.color, ti:s.tier||3,
+                 time:_fmtRel(it.d), date:it.d||'', u:it.u, fc:it.fc||'', img:it.img||'', mu:it.mu||'', mt:it.mt||'', bad_date:!!it.bad_date, dfb:!!it.date_fallback, tags:_tagsOf(it)};
+          // 远程通道日期钳制：未来日期回拉到 now
+          if (a.date) {
+            var _at = new Date(a.date).getTime();
+            if (!isNaN(_at) && _at > Date.now()) {
+              a.date = new Date(Date.now()).toISOString();
+            }
+          }
           if(!a.t) return;
           var k=artKey(a);
           if(known[k]) return;
           known[k]=1; added.push(a);
         });
       });
-      if(!added.length) return 0;
-      added.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
-      for(var i=added.length-1;i>=0;i--) ART.unshift(added[i]);
-      ART.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
-      tierInterleave();
+      if(!added.length){
+        /* 无新增内容时也要纠错：若可见首屏混入无日期条目（NaN 置顶缺陷的指纹），
+           重新规范化排序。健康状态下该分支不触发，因此不会造成可见跳变。
+           例外：quality 模式按源质量重排，天然会把高质量源的无日期条目顶回首屏，
+           谓词会恒真 → 每次刷新都重渲染，故排除该模式。 */
+        var _head=Math.min(ART.length, wallLimit||0), _bad=0;
+        for(var h=0;h<_head;h++){ var _d=ART[h].date; if(!_d||isNaN(new Date(_d).getTime())) _bad++; }
+        if(sortMode!=='quality' && _head>0 && _bad*2>_head){ applySort(); renderChips(); renderWall(); renderPanel(); }
+        return 0;
+      }
+      ART = added.concat(ART);
+      /* 不再对 added 单独预排序：紧接着的 applySort() 会对整个 ART 重排，
+         预排序对最终顺序无影响（原为 localeCompare，已随口径统一移除） */
+      applySort();
+      if(sortMode!=='diverse') tierInterleave();
       wallLimit=Math.min(ART.length, Math.max(wallLimit, WALL_STEP));
+      window.ART = ART;
       return added.length;
     }catch(e){ return 0; }
   }
@@ -3403,40 +5714,82 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     _lastTotal=ART.length;
     if(n>0){
       renderChips(); renderWall(); renderPanel();
-      toast('已更新 '+n+' 篇新文章');
-    } else if(manual){
-      toast('已是最新内容');
     }
+    return n;
   }
+  /* Fix P2: 分批实时刷新 —— T1 实时 + T2/T3 分批抓取，逐批合并渲染 */
+  var _API_BASE='https://starhub-refresh.vercel.app/api/rss';
   window.refreshRss=function(manual){
     if(manual===undefined) manual=true;
-    if(_refreshing){ if(manual) toast('正在检查更新…'); return; }
+    if(_refreshing){ if(manual) toast('正在刷新中…'); return; }
     _refreshing=true;
     var btn=document.getElementById('refreshBtn');
     if(btn) btn.classList.add('loading');
-    if(manual) toast('正在后台检查更新…');
-    var settled=false;
+    if(manual) toast('正在实时刷新…');
+    var totalAdded=0, done=false;
     var ctrl=window.AbortController?new AbortController():null;
-    var timer=setTimeout(function(){ if(settled) return; settled=true; if(ctrl) ctrl.abort(); _refreshing=false; if(btn) btn.classList.remove('loading'); if(manual) toast('检查超时，请稍后重试'); }, 30000);
-    fetch('https://starhub-refresh.vercel.app/api/rss', ctrl?{signal:ctrl.signal}:{}).then(function(r){
-      if(!r.ok) throw new Error('HTTP '+r.status);
-      return r.json();
-    }).then(function(j){
-      if(settled) return; settled=true;
+    /* 整体超时 3 分钟（T1 + 多批 T2/T3） */
+    var timer=setTimeout(function(){
+      if(done) return; done=true;
+      if(ctrl) ctrl.abort(); _refreshing=false;
+      if(btn) btn.classList.remove('loading');
+      if(manual) toast(totalAdded>0?'已更新 '+totalAdded+' 篇（部分批次超时）':'刷新超时');
+      if(totalAdded>0){ renderChips(); renderWall(); renderPanel(); }
+    }, 180000);
+    function fetchJson(url){
+      return fetch(url, ctrl?{signal:ctrl.signal}:{}).then(function(r){
+        if(!r.ok) throw new Error('HTTP '+r.status);
+        return r.json();
+      });
+    }
+    /* Step 1: T1 实时刷新 */
+    fetchJson(_API_BASE+'?refresh=1').then(function(j){
+      if(done) return;
+      totalAdded+=_applyRemote(j, false);
+      _lastTotal=ART.length;
+      if(totalAdded>0){ renderChips(); renderWall(); renderPanel(); }
+      /* Step 2: 获取批次信息 */
+      return fetchJson(_API_BASE+'?batch_info=1');
+    }).then(function(info){
+      if(done) return;
+      if(!info||!info.totalBatches) throw new Error('no batch info');
+      if(manual) toast('T1 完成，正在抓取 T2/T3（0/'+info.totalBatches+' 批）…');
+      /* Step 3: 逐批抓取 T2/T3 */
+      var chain=Promise.resolve();
+      for(var b=0;b<info.totalBatches;b++){
+        (function(batchIdx){
+          chain=chain.then(function(){
+            if(done) return;
+            return fetchJson(_API_BASE+'?batch='+batchIdx).then(function(bj){
+              if(done) return;
+              var n=_applyRemote(bj, false);
+              totalAdded+=n;
+              _lastTotal=ART.length;
+              if(n>0){ renderChips(); renderWall(); renderPanel(); }
+              if(manual) toast('实时刷新 '+((batchIdx+1)*100/info.totalBatches).toFixed(0)+'%…');
+            });
+          });
+        })(b);
+      }
+      return chain;
+    }).then(function(){
+      if(done) return; done=true;
       clearTimeout(timer); _refreshing=false;
       if(btn) btn.classList.remove('loading');
-      _applyRemote(j, manual);
-    }).catch(function(){
-      if(settled) return; settled=true;
+      if(manual) toast(totalAdded>0?'已更新 '+totalAdded+' 篇新文章':'已是最新内容');
+    }).catch(function(err){
+      if(done) return; done=true;
       clearTimeout(timer); _refreshing=false;
       if(btn) btn.classList.remove('loading');
-      if(manual) toast('检查更新失败，请稍后重试');
+      console.warn('[refreshRss] error:', err);
+      if(manual) toast(totalAdded>0?'已更新 '+totalAdded+' 篇（部分失败）':'刷新失败，请稍后重试');
+      if(totalAdded>0){ renderChips(); renderWall(); renderPanel(); }
     });
   };
   /* 自动刷新：每 5 分钟用轻量 meta 接口探测新构建，仅当有新内容时才拉取合并（页面隐藏时跳过） */
   setInterval(function(){
     if(document.hidden || _refreshing) return;
-    fetch('https://starhub-refresh.vercel.app/api/rss?meta=1').then(function(r){ return r.ok?r.json():null; }).then(function(m){
+    fetch(_API_BASE+'?meta=1').then(function(r){ return r.ok?r.json():null; }).then(function(m){
       if(!m || typeof m.total!=='number') return;
       if(m.total>_lastTotal) window.refreshRss(false);
     }).catch(function(){});
@@ -3885,33 +6238,119 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
 
   function _escH(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
   function _normT(s){ return (s||'').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,''); }
-  // \u68c0\u6d4b\u6807\u9898\u662f\u5426\u4e3b\u8981\u4e3a\u975e\u4e2d\u6587\uff08\u9700\u8981\u7ffb\u8bd1\uff09
-  function _needsTranslation(t){ if(!t) return false; var cjk=(t.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g)||[]).length; return cjk < t.replace(/[\s\d\p{P}]/gu,'').length * 0.3; }
+  // 是否需要翻译 = 剥掉 ANSI/URL/标点/符号之后**真有拉丁词**，且中文不占多数，且不是 HN 元数据样板。
+  // 旧口径 `cjk < t.replace(/[\s\d\p{P}]/gu,'').length*0.3` 把 + = < ~ 这类数学符号（属于 \p{S}，
+  // 不在旧的排除集里）和 ANSI 残片 [1m 一起算进"非中文长度"：线上实测一条中文垃圾文本
+  // （💻基本信息 + 78 个 `+` + [1m硬件质量体检报告…）被稀释成"需要翻译"，直连与兜底各发一次。
+  var _CJK_R = /[\\u4e00-\\u9fff\\u3400-\\u4dbf]/g;
+  var _KANA_R = /[\\u3040-\\u309f\\u30a0-\\u30ff]/;
+  var _LETTER_R = /\\p{L}/gu;
+  // 注意 `\\b`：这段 JS 活在非 raw 的三引号串里，单写 \b 会被 Python 变成退格符，
+  // 词边界整个失效（判据 test_hn_metadata_stub_is_not_translated 就是这么抓到的）。
+  var _META_STUB = /^(article url|comments url|points|submitted by|# comments|permalink|story link)\\b/i;
+  function _needsTranslation(t){
+    if(!t) return false;
+    var raw=String(t);
+    /* 与构建期 _needs_translation 同一条规则（双向对照判据见
+       tests/rss_translate/test_buildtime_skip_guard.py::test_runtime_and_buildtime_predicates_agree）。
+       旧版这里用"有没有 ≥2 字母的拉丁词"当门槛 ⇒ 谚文/西里尔/阿拉伯文一个拉丁字母都没有，
+       整类被跳过；而摘要是运行时专属（09-16 起移出构建期），等于日韩俄阿的摘要永不翻。
+       门槛改成"剥掉 CJK 之后是否还剩任何字母"（\\p{L}，等价于 Python 的 str.isalpha），
+       并把"含假名一律翻"这条构建期规则补齐。 */
+    if(_KANA_R.test(raw)) return true;
+    var cjk=(raw.match(_CJK_R)||[]).length;
+    var clean=raw.replace(/\\u001b?\[[0-9;]{1,4}m/g,' ')
+                 .replace(/https?:\\/\\S+/gi,' ')
+                 .replace(_CJK_R,' ')
+                 .replace(/[\s\d\p{P}\p{S}]/gu,' ');
+    var letters=(clean.match(_LETTER_R)||[]).length;
+    if(!letters) return false;
+    if(cjk>=letters) return false;
+    var lines=raw.split(/\\r?\\n/).filter(function(l){ return l.trim(); });
+    if(lines.length>=3 && lines.filter(function(l){ return _META_STUB.test(l.trim()); }).length*2>=lines.length)
+      return false;   // HN 链接投稿的"正文"就是 URL/点数：翻出来只有 URL 和数字，没有信息量
+    return true;
+  }
   // 批量翻译 AI 动态流英文标题：主力 = 浏览器端 GTX 直连（用户本地 IP，端点响应带 ACAO:* 实证开放；
   // 服务端共享 DC 出口反而会被 Google 频率限流——线上实测 gtx 429）；失败条目再走服务端 API 兜底
   // （api/translate mode:'bulk'：GTX 尽力 → Agnes 限量）。引擎分流策略（用户定版）：Agnes 仅留
   // 给全文/摘要按钮（mode:'full'）与兜底，绝不作为批量主力。
   var TR_API = 'https://starhub-refresh.vercel.app/api/translate';
-  /* 浏览器端 GTX 批量直译：并发 3，返回与 texts 等长的译文数组（失败为 ''，由调用方决定服务端兜底） */
-  function _browserGtx(texts){
-    var out=[],i=0,done=0;
-    for(var k=0;k<texts.length;k++) out.push('');
+  // 浏览器 GTX 断路器。两条独立判据，方向相反，不能合成一条：
+  //   · 连接层不可达（TypeError / Failed to fetch）= 直连对这个客户端不存在
+  //     —— 本仓实测大陆浏览器 8 条文本 / 16 次请求 / 0 成功 ⇒ 第一批就熔断。
+  //   · HTTP 4xx/5xx（限流、临时故障）= 能连通 ⇒ 仍要"连续 2 批全败"才熔断，
+  //     否则一次抖动就把可用用户的直连掐了，全压到服务端 Agnes（Agnes 是限量兜底，不是主力）。
+  // 熔断状态按"今天"存 localStorage：失败条目进不了 _trCache（那里只存成功译文），
+  // 不跨访问记住就会每次重访都重发同一批必败请求（线上控制台正是这样刷屏的）。
+  var GTX_ABORT_MS = 3500;   // 8s 是给"连通但慢"设的；连不通时等满 8s 只是白等
+  var _bgtxDead=false, _bgtxFailStreak=0;
+  function _gtxDayKey(){ try{ return localStorage.getItem('_gtxDead'); }catch(e){ return null; } }
+  function _gtxDeadToday(){ var d=_gtxDayKey(); return !!d && d===new Date().toISOString().slice(0,10); }
+  function _markGtxDead(){ try{ localStorage.setItem('_gtxDead', new Date().toISOString().slice(0,10)); }catch(e){} }
+  if(_gtxDeadToday()) _bgtxDead=true;
+  function _gtxUnreachable(e){
+    var n=String((e&&e.name)||''), m=String((e&&e.message)||e||'');
+    if(n==='AbortError'||/abort/i.test(m)) return false;   // 超时不算"不可达"，否则慢网络会被永久误判
+    return n==='TypeError'||/failed to fetch|networkerror|cors/i.test(m);
+  }
+  // 客户端翻译缓存：localStorage 持久化，回访用户直接命中，不再发任何翻译请求
+  var _trCache=(function(){
+    try{return JSON.parse(localStorage.getItem('_trCache')||'{}');}catch(e){return {};}
+  })();
+  function _saveTrCache(){
+    try{var s=JSON.stringify(_trCache);if(s.length<400000)localStorage.setItem('_trCache',s);}catch(e){}
+  }
+  /* 浏览器端 GTX 批量直译：并发 3，返回与 texts 等长的译文数组（失败为 ''，由调用方决定服务端兜底）
+     + 客户端缓存命中直接返回 + 断路器触发后跳过直连 */
+  var _bgtxUnreachable=false;
+  /* 截断落在词边界：500 字符硬切会把 "developed" 切成 "develop"，
+     线上实测发出过 "...Hundreds of trekkers on the " 这种半句。 */
+  function _cutW(s,n){
+    s=String(s); if(s.length<=n) return s;
+    var c=s.slice(0,n), i=Math.max(c.lastIndexOf(' '), c.lastIndexOf('\\n'));
+    return i>40 ? c.slice(0,i) : c;
+  }
+  function _browserGtx(texts,_ctrlSink){
+    var out=[],uncached=[],uncachedIdx=[],_seen={},_dup={};
+    // ① 客户端缓存命中：直接填入，不发请求
+    for(var k=0;k<texts.length;k++){
+      var key=String(texts[k]).slice(0,200),hit=_trCache[key];
+      if(hit){out[k]=hit;}
+      else if(Object.prototype.hasOwnProperty.call(_seen,key)){ _dup[k]=_seen[k]; out[k]=''; }
+      else{_seen[key]=k; out[k]=''; uncached.push(texts[k]); uncachedIdx.push(k);}
+    }
+    if(!uncached.length) return Promise.resolve(out);
+    // ② 断路器已触发（本会话熔断，或今天已经判过不可达）：直接返回空串，由调用方走服务端兜底。
+    // 判据放在函数入口而不是只放在加载时：加载时那次读 localStorage 早于任何写入，会漏判。
+    if(_bgtxDead || _gtxDeadToday()){ _bgtxDead=true; return Promise.resolve(out); }
+
+    var i=0,done=0,batchFail=true;
     return new Promise(function(resolve){
-      if(!texts.length){ resolve(out); return; }
       function one(){
-        if(i>=texts.length) return;
+        if(i>=uncached.length) return;
         var idx=i++;
         var ctrl=(typeof AbortController==='function')?new AbortController():null;
-        var tmr=ctrl?setTimeout(function(){ctrl.abort();},8000):null;
-        fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q='+encodeURIComponent(String(texts[idx]).slice(0,500)),{signal:ctrl?ctrl.signal:undefined})
+        // 把控制器交出去：换窗口时要能打断**在飞**的那一批（只丢结果不够，请求照扣带宽与配额）
+        if(ctrl && _ctrlSink) _ctrlSink.push(ctrl);
+        var tmr=ctrl?setTimeout(function(){ctrl.abort();},GTX_ABORT_MS):null;
+        fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q='+encodeURIComponent(_cutW(uncached[idx],500)),{signal:ctrl?ctrl.signal:undefined})
         .then(function(r){ if(tmr)clearTimeout(tmr); return r.ok?r.json():Promise.reject(new Error('gtx '+r.status)); })
         .then(function(j){
           var tr=((j[0]||[]).map(function(x){ return (x&&x[0])||''; }).join('')||'').trim();
-          if(tr) out[idx]=tr;
-        }).catch(function(){ if(tmr)clearTimeout(tmr); })
-        .then(function(){ done++; if(done>=texts.length){ resolve(out); } else { one(); } });
+          if(tr){ out[uncachedIdx[idx]]=tr; _trCache[String(uncached[idx]).slice(0,200)]=tr; batchFail=false; _bgtxUnreachable=false; }
+        }).catch(function(e){ if(tmr)clearTimeout(tmr); if(_gtxUnreachable(e)) _bgtxUnreachable=true; })
+        .then(function(){ done++; if(done>=uncached.length){
+          for(var q=0;q<texts.length;q++){ if(_dup[q]!==undefined) out[q]=out[_dup[q]]; }
+          if(batchFail){ _bgtxFailStreak++; } else { _bgtxFailStreak=0; }
+          // 不可达：一批就熔断并跨访问记住；限流：仍要连续 2 批，别把能连通的用户掐了
+          if(_bgtxUnreachable){ _bgtxDead=true; _markGtxDead(); }
+          else if(_bgtxFailStreak>=2){ _bgtxDead=true; }
+          _saveTrCache();
+          resolve(out);
+        } else { one(); } });
       }
-      for(var w=0;w<Math.min(3,texts.length);w++) one();
+      for(var w=0;w<Math.min(3,uncached.length);w++) one();
     });
   }
   function _translateAfItems(){
@@ -3966,57 +6405,159 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     })();
   }
   /* ── RSS 卡片墙运行时翻译兜底：构建期翻译熔断/漏网的英文条目，挂载于 renderWall 末尾；
-     主力 = 浏览器端 GTX 直连，失败条目走服务端 API 兜底；_zhTried 标记防重复请求，
-     完成后重渲染刷新卡片（终止条件：cands 耗尽）。 */
-  var _wallTrBusy=0,_wallDirty=0;
+     主力 = 浏览器端 GTX 直连，失败条目走服务端 API 兜底，完成后重渲染刷新卡片。
+
+     队列范围刻意取**当前渲染窗口**而不是整条 ART（2026-10-01 实测，HANDOFF §10.25）：
+     全库 25766 条里标题只有 5.5% 仍需翻（构建期预翻已覆盖 100% 的 title_zh），摘要 33% 需翻；
+     旧写法从 ART 头上遍历，把 9902 条待翻文本按每批 10 条 / 2.5s 走满 ≈41 分钟，
+     绝大部分花在看不见的条目上；而 GTX 在大陆不可达时这些整批转 /api/translate
+     ⇒ 等于每个访客替全库消耗服务端翻译配额。窗口化后一次首屏 ≈36 个文本，总量随浏览而非全库。
+
+     打断语义（用户 2026-10-01 选定）：窗口指纹一变（切排序 / 改筛选 / 滚动扩窗）就换代、
+     abort 在飞请求，并且**旧批次回来的结果一律丢弃** —— 否则会把上一个窗口的译文
+     写进用户此刻正看着的条目（串台）。 */
+  var _wallTrBusy=0;
+  var _wallGen=0, _wallFp='', _wallCtrls=[];
+  var WALL_SUMMARY_LIMIT = 30;      // 摘要只翻窗口前 30 条：长文本才是任务量的大头
+  function _wallWindow(){
+    var w = (typeof visibleArts === 'function') ? visibleArts() : ART;
+    if(!w || !w.length) return [];
+    return w.slice(0, Math.max(0, wallLimit || 0));
+  }
+  function _wallFingerprint(win){
+    var ft = (typeof filter !== 'undefined' && filter && filter.type) || '';
+    var fs = (typeof filter !== 'undefined' && filter && filter.src) || '';
+    var sm = (typeof sortMode !== 'undefined' && sortMode) || '';
+    /* 指纹只取"窗口头部是谁" + 排序/筛选，**不含 wallLimit 与长度**：
+       滚动扩窗是往同一个窗口里追加（不该打断在飞批次，否则快速滚动的人永远翻不完），
+       而切排序/换筛选是把窗口整个换掉（必须打断，否则旧结果会串台到新窗口）。 */
+    return [sm, ft, fs, win.length ? artKey(win[0]) : ''].join('|');
+  }
+  function _abortWallInflight(){
+    for(var i=0;i<_wallCtrls.length;i++){ try{ _wallCtrls[i].abort(); }catch(e){} }
+    _wallCtrls = [];
+  }
   function _scheduleWallTranslate(){ setTimeout(_translateWallItems,120); }
-  function _translateWallItems(){
-    if(_wallTrBusy) return;
-    var cands=ART.filter(function(a){ return !a._zhTried && (_needsTranslation(a.t)||(a.s&&_needsTranslation(a.s))); });
-    if(!cands.length) return;
-    var batch=cands.slice(0,10);
-    batch.forEach(function(a){ a._zhTried=1; });
-    _wallTrBusy=1;
-    var texts=[],map=[];
-    batch.forEach(function(a){
-      if(_needsTranslation(a.t)){ texts.push(a.t); map.push({a:a,f:'t'}); }
-      if(a.s&&_needsTranslation(a.s)){ texts.push(a.s); map.push({a:a,f:'s'}); }
+  function _applyWallTr(map, idxs, trs, myGen){
+    if(myGen !== _wallGen) return;              // 已被新窗口打断：结果作废
+    idxs.forEach(function(idx, k){
+      var m = map[idx]; if(!m) return;
+      var zh = (String(trs[k] || '')).trim(); if(!zh) return;
+      if(m.f === 't' && _needsTranslation(m.a.t)) m.a.t = zh;
+      else if(m.f === 's' && m.a.s && _needsTranslation(m.a.s)) m.a.s = zh;
     });
-    if(!texts.length){ _wallTrBusy=0; return; }
+  }
+  function _translateWallItems(){
+    var win = _wallWindow();
+    var fp = _wallFingerprint(win);
+    if(fp !== _wallFp){                         // 窗口换了：先打断在飞的，再允许立刻重开一轮
+      _wallFp = fp; _wallGen++; _abortWallInflight(); _wallTrBusy = 0;
+    }
+    if(_wallTrBusy) return;
+    var myGen = _wallGen;
+    var cands = win.filter(function(a){
+      return !a._zhTried && (_needsTranslation(a.t) || (a.s && _needsTranslation(a.s)));
+    });
+    if(!cands.length) return;
+    _wallTrBusy = 1;
+    var texts = [], map = [];
+    cands.forEach(function(a){
+      a._zhTried = 1;                            // 打过标记就不再重发（失败条目保留原文）
+      if(_needsTranslation(a.t)){ texts.push(a.t); map.push({a:a, f:'t'}); }
+    });
+    cands.slice(0, WALL_SUMMARY_LIMIT).forEach(function(a){
+      if(a.s && _needsTranslation(a.s)){ texts.push(a.s); map.push({a:a, f:'s'}); }
+    });
+    if(!texts.length){ _wallTrBusy = 0; return; }
+    var ctrls = [];
+    _wallCtrls = ctrls;                          // 交给换代时 abort 的那份引用
     (async function(){
-      var trs = await _browserGtx(texts);
-      var failed=[];
-      trs.forEach(function(zhRaw,idx){
-        var m=map[idx]; if(!m) return;
-        var zh=(zhRaw||'').trim(); if(!zh){ failed.push(idx); return; }
-        if(m.f==='t'&&_needsTranslation(m.a.t)) m.a.t=zh;
-        else if(m.f==='s'&&m.a.s&&_needsTranslation(m.a.s)) m.a.s=zh;
+      var trs = await _browserGtx(texts, ctrls);
+      if(myGen !== _wallGen) return;
+      var failed = [], okIdx = [];
+      trs.forEach(function(zhRaw, idx){
+        if(String(zhRaw || '').trim()) okIdx.push(idx); else failed.push(idx);
       });
+      _applyWallTr(map, okIdx, trs, myGen);
       if(failed.length){
-        var fbTexts=failed.map(function(k){ return texts[k]; });
-        var ctrl=(typeof AbortController==='function')?new AbortController():null;
-        var tmr=ctrl?setTimeout(function(){ctrl.abort();},12000):null;
-        try{
-          var resp=await fetch(TR_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({texts:fbTexts,mode:'bulk'}),signal:ctrl?ctrl.signal:undefined});
-          if(tmr)clearTimeout(tmr);
-          var j=(resp&&resp.ok)?(await resp.json().catch(function(){ return null; })):null;
-          if(j&&j.ok&&j.translations&&j.translations.length===fbTexts.length){
-            fbTexts.forEach(function(_,fi){
-              var m=map[failed[fi]]; if(!m) return;
-              var zh=(j.translations[fi]||'').trim(); if(!zh) return;
-              if(m.f==='t'&&_needsTranslation(m.a.t)) m.a.t=zh;
-              else if(m.f==='s'&&m.a.s&&_needsTranslation(m.a.s)) m.a.s=zh;
-            });
-          }
-        }catch(e){ if(tmr)clearTimeout(tmr); }
+        /* 服务端兜底：按 15 条分片（bulk 上限），每片同样受代数管制 */
+        for(var s = 0; s < failed.length; s += 15){
+          var part = failed.slice(s, s + 15);
+          var fbTexts = part.map(function(k){ return texts[k]; });
+          var ctrl = (typeof AbortController === 'function') ? new AbortController() : null;
+          if(ctrl) ctrls.push(ctrl);
+          var tmr = ctrl ? setTimeout(function(){ ctrl.abort(); }, 12000) : null;
+          try{
+            var resp = await fetch(TR_API, {method:'POST', headers:{'Content-Type':'application/json'},
+                                            body: JSON.stringify({texts: fbTexts, mode: 'bulk'}),
+                                            signal: ctrl ? ctrl.signal : undefined});
+            if(tmr) clearTimeout(tmr);
+            var j = (resp && resp.ok) ? (await resp.json().catch(function(){ return null; })) : null;
+            if(j && j.ok && j.translations && j.translations.length === fbTexts.length){
+              _applyWallTr(map, part, j.translations, myGen);
+            }
+          }catch(e){ if(tmr) clearTimeout(tmr); }
+          if(myGen !== _wallGen) return;
+        }
       }
-      _wallDirty=1;
-      _wallTrBusy=0;
-      if(_wallDirty){ _wallDirty=0; renderWall(); }
-      // 批间节流：温和节奏防单 IP 突发高频（失败条目保留原文，下批继续）
-      setTimeout(_translateWallItems,2500);
+      _wallTrBusy = 0;
+      renderWall();
+      setTimeout(_translateWallItems, 2000);
     })();
   }
+  /* 运行时翻译诊断：摘要翻译自 2026-09-16 起移出构建期，"到底翻没翻"只有浏览器知道，
+     构建日志看不到这一半。带 ?transdiag=1 自动跑一次，或在 console 里调 transDiag()。 */
+  function _transDiag(){
+    var cjk = function(s){ return /[一-鿿]/.test(String(s || '')); };
+    var rep = { at: new Date().toISOString(), total: ART.length };
+    var sNeed = 0, sDone = 0, tNeed = 0, tDone = 0, tried = 0;
+    ART.forEach(function(a){
+      if (a.s && String(a.s).trim()) { if (cjk(a.s)) sDone++; else sNeed++; }
+      if (a.t) { if (cjk(a.t)) tDone++; else tNeed++; }
+      if (a._zhTried) tried++;
+    });
+    rep.summary_english = sNeed; rep.summary_cjk = sDone;
+    rep.title_english = tNeed; rep.title_cjk = tDone;
+    rep.tried = tried; rep.untried = ART.length - tried;
+    function probe(name, url, opts){
+      var t0 = Date.now();
+      return fetch(url, opts).then(function(r){
+        return r.text().then(function(t){
+          return { name: name, ok: r.ok, status: r.status, ms: Date.now() - t0, head: String(t).slice(0, 36) };
+        });
+      }).catch(function(e){
+        return { name: name, ok: false, ms: Date.now() - t0, err: String(e).slice(0, 56) };
+      });
+    }
+    var sample = 'the riverbed hosts coral reef and betta fish';
+    var p1 = probe('gtx_direct ', 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q=' + encodeURIComponent(sample));
+    var p2 = probe('vercel_bulk', TR_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ texts: [sample], mode: 'bulk' }) });
+    Promise.all([p1, p2]).then(function(rs){
+      rep.channels = rs;
+      try { console.log('[transDiag] ' + JSON.stringify(rep)); } catch (e) {}
+      _renderDiag(rep);
+    });
+    return rep;
+  }
+  function _renderDiag(rep){
+    var NL = String.fromCharCode(10);
+    var d = document.getElementById('transDiag');
+    if (!d) {
+      d = document.createElement('div'); d.id = 'transDiag';
+      d.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:9999;max-width:92vw;background:#111;color:#eee;font:11px/1.5 monospace;padding:8px 10px;border:1px solid #444;border-radius:6px;white-space:pre-wrap';
+      document.body.appendChild(d);
+    }
+    var lines = ['运行时翻译诊断 ' + rep.at,
+      '条目 ' + rep.total + ' ｜ 摘要：英文 ' + rep.summary_english + ' / 中文 ' + rep.summary_cjk,
+      '标题：英文 ' + rep.title_english + ' / 中文 ' + rep.title_cjk,
+      '补翻已尝试 ' + rep.tried + ' / 未尝试 ' + rep.untried];
+    (rep.channels || []).forEach(function(c){
+      lines.push(c.name + (c.ok ? ' HTTP ' + c.status : ' 失败') + ' ' + c.ms + 'ms ' + (c.head || c.err || ''));
+    });
+    d.textContent = lines.join(NL);
+  }
+  window.transDiag = _transDiag;
+  if (location.search.indexOf('transdiag=1') >= 0) setTimeout(_transDiag, 12000);
   function _fmtRel(s){ if(!s) return ''; try{ var d=new Date(s),n=Date.now(),diff=n-d.getTime(); if(diff<0)return ''; var m=Math.floor(diff/60000); if(m<1)return '\u521a\u521a'; if(m<60)return m+' \u5206\u949f\u524d'; var h=Math.floor(m/60); if(h<24)return h+' \u5c0f\u65f6\u524d'; return Math.floor(h/24)+' \u5929\u524d'; }catch(e){return '';} }
 
   function toggleAiFeed(){
@@ -4029,6 +6570,12 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
 
   /* ── 刷新（参照主页 refreshRss 模式） ── */
   function refreshAiFeed(){
+    /* D6: 热榜 Tab 下刷新热榜数据 */
+    if(afTab==='hot'){
+      _hotLoaded=false; _hotLoading=false;
+      loadHotSnapshot();
+      return;
+    }
     if(afRefreshing) return;
     if(!afLoaded) { _loadAll(); return; }
     afRefreshing = true;
@@ -4301,103 +6848,228 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     if(th){th.classList.toggle('on',tab==='hot');th.setAttribute('aria-selected',tab==='hot'?'true':'false');}
     var hw=document.getElementById('hpWrap');
     if(hw) hw.style.display=(tab==='hot')?'flex':'none';
-    var rb=document.getElementById('afRefreshBtn'); if(rb) rb.style.display=(tab==='feed')?'':'none';
+    var rb=document.getElementById('afRefreshBtn'); if(rb) rb.style.display=''; /* D6: 双 Tab 均显示刷新按钮 */
     var hb=document.getElementById('btnHot'); if(hb) hb.classList.toggle('on',tab==='hot'&&document.body.classList.contains('ai-open'));
     if(tab==='hot'&&!_hotLoaded) loadHotSnapshot();
   }
   window.switchAfTab=switchAfTab;
-  var _hotPlatformNames={weibo:'微博',zhihu:'知乎','zhihu-daily':'知乎日报',baidu:'百度',bilibili:'B站',douyin:'抖音'};
+  var _hotPlatformNames={weibo:'微博',zhihu:'知乎',baidu:'百度',bilibili:'B站',douyin:'抖音',ithome:'IT之家',hackernews:'Hacker News',github:'GitHub',solidot:'Solidot',sspai:'少数派',juejin:'掘金',v2ex:'V2EX',producthunt:'Product Hunt',aihot:'AIHOT',chongbuluo:'虫部落',pcbeta:'远景论坛',nowcoder:'牛客',coolapk:'酷安',xueqiu:'雪球',zaobao:'联合早报',wallstreetcn:'华尔街见闻',cls:'财联社',jin10:'金十数据',gelonghui:'格隆汇',fastbull:'法布财经',toutiao:'今日头条',tencent:'腾讯新闻',thepaper:'澎湃新闻',ifeng:'凤凰网',cankaoxiaoxi:'参考消息',sputniknewscn:'卫星通讯社',kaopu:'靠谱',mktnews:'市场资讯',douban:'豆瓣',tieba:'贴吧',hupu:'虎扑',steam:'Steam',iqiyi:'爱奇艺',qqvideo:'腾讯视频',dongqiudi:'懂球帝'};
   /* dot：平台品牌色（未选中态圆点，提供平台色差区分）；deep：选中态实底色（加深变体，白字对比 ≥4.4:1，明暗主题均可读） */
-  var _hotPlatformColors={weibo:'#ff4400',zhihu:'#0066ff','zhihu-daily':'#0084ff',baidu:'#2932e1',bilibili:'#fb7299',douyin:'#fe2c55'};
-  var _hotPlatformDeep={weibo:'#d5380f',zhihu:'#0052cc','zhihu-daily':'#0066cc',baidu:'#1f28b8',bilibili:'#c73a6c',douyin:'#d9284a'};
+  var _hotPlatformColors={weibo:'#ff4400',zhihu:'#0066ff',baidu:'#2932e1',bilibili:'#fb7299',douyin:'#fe2c55',ithome:'#d32f2f',hackernews:'#ff6600',github:'#6e5491',solidot:'#4caf50',sspai:'#da3325',juejin:'#1e80ff',v2ex:'#778087',producthunt:'#da552f',aihot:'#0891b2',chongbuluo:'#558b2f',pcbeta:'#1565c0',nowcoder:'#0097a7',coolapk:'#10b981',xueqiu:'#1e88e5',zaobao:'#c62828',wallstreetcn:'#1565c0',cls:'#0277bd',jin10:'#ef6c00',gelonghui:'#00897b',fastbull:'#f57c00',toutiao:'#d32f2f',tencent:'#1976d2',thepaper:'#c62828',ifeng:'#e64a19',cankaoxiaoxi:'#ad1457',sputniknewscn:'#283593',kaopu:'#2e7d32',mktnews:'#4e342e',douban:'#007722',tieba:'#4caf50',hupu:'#d32f2f',steam:'#1b2838',iqiyi:'#00be07',qqvideo:'#ff6900',dongqiudi:'#2e7d32'};
+  var _hotPlatformDeep={weibo:'#d5380f',zhihu:'#0052cc',baidu:'#1f28b8',bilibili:'#c73a6c',douyin:'#d9284a',ithome:'#b71c1c',hackernews:'#cc5200',github:'#4a3769',solidot:'#2e7d32',sspai:'#b71c1c',juejin:'#1565c0',v2ex:'#5a5f66',producthunt:'#b5441f',aihot:'#067090',chongbuluo:'#33691e',pcbeta:'#0d47a1',nowcoder:'#006064',coolapk:'#047857',xueqiu:'#1565c0',zaobao:'#8e0000',wallstreetcn:'#0d47a1',cls:'#01579b',jin10:'#e65100',gelonghui:'#00695c',fastbull:'#ef6c00',toutiao:'#b71c1c',tencent:'#0d47a1',thepaper:'#8e0000',ifeng:'#bf360c',cankaoxiaoxi:'#78002e',sputniknewscn:'#1a237e',kaopu:'#1b5e20',mktnews:'#3e2723',douban:'#004400',tieba:'#2e7d32',hupu:'#b71c1c',steam:'#0d1117',iqiyi:'#007a07',qqvideo:'#cc5400',dongqiudi:'#1b5e20'};
+  /* 分类筛选：key→中文名，members 为平台 ID 数组 */
+  var _hotCats=[
+    {key:'all',name:'\u5168\u90e8',members:[]},
+    {key:'hot',name:'\u70ed\u641c',members:['weibo','zhihu','baidu','bilibili','douyin']},
+    {key:'tech',name:'\u79d1\u6280',members:['ithome','hackernews','github','solidot','sspai','juejin','v2ex','producthunt','aihot','chongbuluo','pcbeta','nowcoder','coolapk']},
+    {key:'biz',name:'\u8d22\u7ecf',members:['xueqiu','zaobao','wallstreetcn','cls','jin10','gelonghui','fastbull']},
+    {key:'news',name:'\u8d44\u8baf',members:['toutiao','tencent','thepaper','ifeng','cankaoxiaoxi','sputniknewscn','kaopu','mktnews']},
+    {key:'life',name:'\u751f\u6d3b',members:['douban','tieba','hupu','steam','iqiyi','qqvideo','dongqiudi']}
+  ];
+  var _hotCatKey='all';
   window.toggleHotPanel=function(){
     var panelOpen=document.body.classList.contains('ai-open');
     if(panelOpen&&afTab==='hot'){toggleAiFeed();return;} /* 已在热榜 Tab→再次点击关闭抽屉（移动端习惯） */
     if(!panelOpen) toggleAiFeed();
     switchAfTab('hot');
   };
+  var _platExpanded=false;
+  function _applyPlatCollapse(){
+    var row=document.getElementById('hpTabs');
+    if(row) row.classList.toggle('collapsed',window.innerWidth<900&&!_platExpanded);
+  }
+  /* 平台→分类映射：根据平台 ID 返回所属分类 key */
+  function _platCat(p){
+    for(var i=0;i<_hotCats.length;i++){
+      if(_hotCats[i].members&&_hotCats[i].members.indexOf(p)!==-1) return _hotCats[i].key;
+    }
+    return 'all';
+  }
   function loadHotSnapshot(){
     if(_hotLoading || _hotLoaded) return;
     _hotLoading=true;
     var list=document.getElementById('hotList');
     if(!list) return;
-    list.innerHTML='<div class="hp-empty">加载中…</div>';
-    fetch('hot_snapshot.json',{cache:'no-cache'}).then(function(r){
-      if(!r.ok) throw new Error('HTTP '+r.status);
+    list.innerHTML=\'<div class="hp-empty">加载中…</div>\';
+    fetch(\'hot_snapshot.json\',{cache:\'no-cache\'}).then(function(r){
+      if(!r.ok) throw new Error(\'HTTP \'+r.status);
       return r.json();
     }).then(function(data){
       _hotLoaded=true;_hotLoading=false;
       _hotData=(data||[]).filter(function(s){return s.items&&s.items.length;});
-      if(!_hotData.length){list.innerHTML='<div class="hp-empty">暂无热榜数据</div>';return;}
-      /* 平台子 Tab：仅渲染有数据的平台 */
-      var tabs=document.getElementById('hpTabs');
-      tabs.innerHTML=_hotData.map(function(s){
+      if(!_hotData.length){list.innerHTML=\'<div class="hp-empty">\u6682\u65e0\u70ed\u699c\u6570\u636e</div>\';return;}
+      /* 分类筛选行 → 分段控件（WS-A2） */
+      var segEl=document.getElementById(\'hpCats\');
+      if(segEl){
+        segEl.className=\'hp-seg\';
+        segEl.setAttribute(\'role\',\'tablist\');
+        segEl.innerHTML=_hotCats.map(function(c){
+          return \'<button class="hp-seg-btn\'+(c.key===\'all\'?\' on\':\'\')+\'" role="tab" aria-selected="\'+(c.key===\'all\')+\'" data-cat="\'+c.key+\'">\'+c.name+\'</button>\';
+        }).join(\'\');
+        segEl.querySelectorAll(\'.hp-seg-btn\').forEach(function(b){
+          b.addEventListener(\'click\',function(){_filterHotCat(b.getAttribute(\'data-cat\'));});
+        });
+      }
+      /* 平台 chips（WS-A3） */
+      var row=document.getElementById(\'hpTabs\');
+      row.className=\'plat-row collapsed\';
+      row.innerHTML=_hotData.map(function(s){
         var p=s.platform;
-        return '<button class="hp-tab" data-p="'+p+'"><span class="dot" style="background:'+(_hotPlatformColors[p]||'#888')+'"></span>'+(_hotPlatformNames[p]||p)+'</button>';
-      }).join('');
-      tabs.querySelectorAll('.hp-tab').forEach(function(b){
-        b.addEventListener('click',function(){renderHotPlat(b.getAttribute('data-p'));});
+        return \'<button class="plat-chip" data-p="\'+p+\'" data-cat="\'+_platCat(p)+\'"><span class="dot" style="background:\'+(_hotPlatformColors[p]||\'#888\')+\'"></span>\'+(_hotPlatformNames[p]||p)+\'</button>\';
+      }).join(\'\');
+      /* 展开/收起按钮（WS-A4 移动端折叠） */
+      var moreHtml=\'<button class="plat-more" id="btnPlatMore" aria-expanded="false"><span>全部 \'+_hotData.length+\' 个</span>\';
+      moreHtml+=\'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg></button>\';
+      var wrap=row.parentNode.querySelector(\'.plat-wrap\');
+      if(wrap){var existing=document.getElementById(\'btnPlatMore\');if(!existing) row.insertAdjacentHTML(\'afterend\',moreHtml);}
+      var moreBtn=document.getElementById(\'btnPlatMore\');
+      if(moreBtn){
+        moreBtn.onclick=function(){
+          _platExpanded=!_platExpanded;
+          row.classList.toggle(\'collapsed\',window.innerWidth<900&&!_platExpanded);
+          moreBtn.querySelector(\'span\').textContent=_platExpanded?\'收起\':\'全部 \'+_visiblePlats().length+\' 个\';
+          moreBtn.classList.toggle(\'open\',_platExpanded);
+          moreBtn.setAttribute(\'aria-expanded\',_platExpanded);
+        };
+      }
+      row.querySelectorAll(\'.plat-chip\').forEach(function(b){
+        b.addEventListener(\'click\',function(){renderHotPlat(b.getAttribute(\'data-p\'),true);});
       });
       renderHotPlat(_hotData[0].platform);
+      _applyPlatCollapse();
     }).catch(function(){
       _hotLoading=false;
-      list.innerHTML='<div class="hp-empty">加载失败，请稍后重试</div>';
+      list.innerHTML=\'<div class="hp-empty">加载失败，请稍后重试</div>\';
     });
   }
-  function renderHotPlat(p){
-    var tabs=document.getElementById('hpTabs');
-    tabs.querySelectorAll('.hp-tab').forEach(function(b){
-      var on=b.getAttribute('data-p')===p;
-      b.classList.toggle('on',on);
-      b.style.background=on?(_hotPlatformDeep[p]||'#555'):'';
+  function _visiblePlats(){
+    return _hotData.filter(function(s){return _hotCatKey===\'all\'||_platCat(s.platform)===_hotCatKey;});
+  }
+  /* 分类筛选：切换平台 chips 可见性（WS-A5 交互反馈） */
+  function _filterHotCat(cat){
+    _hotCatKey=cat;
+    var segEl=document.getElementById(\'hpCats\');
+    if(segEl) segEl.querySelectorAll(\'.hp-seg-btn\').forEach(function(b){
+      var on=b.getAttribute(\'data-cat\')===cat;
+      b.classList.toggle(\'on\',on);
+      b.setAttribute(\'aria-selected\',on);
     });
-    var list=document.getElementById('hotList');
+    var chips=document.getElementById(\'hpTabs\');
+    var firstVisible=null;
+    chips.querySelectorAll(\'.plat-chip\').forEach(function(b){
+      var show=(cat===\'all\'||b.getAttribute(\'data-cat\')===cat);
+      b.style.display=show?\'\':\'none\';
+      if(show&&!firstVisible) firstVisible=b;
+    });
+    /* 更新展开按钮计数 */
+    var moreBtn=document.getElementById(\'btnPlatMore\');
+    if(moreBtn&&!_platExpanded){
+      var vis=_visiblePlats();
+      moreBtn.querySelector(\'span\').textContent=\'全部 \'+vis.length+\' 个\';
+    }
+    /* 如果当前选中的平台被隐藏，自动切到第一个可见平台（带 fade 反馈） */
+    var curChip=chips.querySelector(\'.plat-chip.on\');
+    if(curChip&&curChip.style.display===\'none\'&&firstVisible){
+      renderHotPlat(firstVisible.getAttribute(\'data-p\'),true);
+    }
+    /* 分类切换后平台行滚回起点 */
+    chips.scrollLeft=0;
+  }
+  function renderHotPlat(p,swap){
+    var chips=document.getElementById(\'hpTabs\');
+    chips.querySelectorAll(\'.plat-chip\').forEach(function(b){
+      var on=b.getAttribute(\'data-p\')===p;
+      b.classList.toggle(\'on\',on);
+      b.style.background=on?(_hotPlatformDeep[p]||\'#555\'):\'\';
+    });
+    var list=document.getElementById(\'hotList\');
     var src=null;
     for(var i=0;i<_hotData.length;i++){ if(_hotData[i].platform===p){src=_hotData[i];break;} }
-    if(!src){list.innerHTML='<div class="hp-empty">暂无热榜数据</div>';return;}
-    var h='';
+    if(!src){list.innerHTML=\'<div class="hp-empty">暂无热榜数据</div>\';return;}
+    var h=\'\';
     var platTrends=(ANALYSIS_DATA&&ANALYSIS_DATA.hot_trends&&ANALYSIS_DATA.hot_trends[p])||{};
     for(var j=0;j<src.items.length;j++){
-      var it=src.items[j],rk=it.rank||(j+1),cls=rk<=3?' top3':'';
-      var hotTxt=it.hot?(''+it.hot).replace(/^(\d+)(\d{4,})$/,function(m,a,b){return a+'\u4e07';}):'';
-      h+='<a class="hp-item" href="'+_escH(it.url||'#')+'" target="_blank" rel="noopener">';
-      h+='<span class="hp-rank'+cls+'">'+rk+'</span>';
-      h+='<span class="hp-title">'+_escH(it.title||'')+'</span>';
-      if(hotTxt) h+='<span class="hp-hot">'+hotTxt+'</span>';
-      var td=platTrends[it.title||''];
-      if(td&&td.trend==='rising') h+='<span class="hp-trend t-up">\u2191'+td.rise+'</span>';
-      else if(td&&td.trend==='falling') h+='<span class="hp-trend t-down">\u2193'+Math.abs(td.rise)+'</span>';
-      else if(td&&td.trend==='new') h+='<span class="hp-trend t-new">\u65b0</span>';
-      h+='</a>';
+      var it=src.items[j],rk=it.rank||(j+1),cls=rk<=3?\' top3\':\'\';
+      var hotTxt=it.hot?(\'\'+it.hot).replace(/^(\d+)(\d{4,})$/,function(m,a,b){return a+\'\u4e07\';}):\'\';
+      h+=\'<a class="hp-item" href="\'+_escH(it.url||\'#\')+\'" target="_blank" rel="noopener">\';
+      h+=\'<span class="hp-rank\'+cls+\'">\'+rk+\'</span>\';
+      h+=\'<span class="hp-title">\'+_escH(it.title||\'\')+\'</span>\';
+      if(hotTxt) h+=\'<span class="hp-hot">\'+hotTxt+\'</span>\';
+      var td=platTrends[it.title||\'\'];
+      if(td&&td.trend===\'rising\') h+=\'<span class="hp-trend t-up">\u2191\'+td.rise+\'</span>\';
+      else if(td&&td.trend===\'falling\') h+=\'<span class="hp-trend t-down">\u2193\'+Math.abs(td.rise)+\'</span>\';
+      else if(td&&td.trend===\'new\') h+=\'<span class="hp-trend t-new">\u65b0</span>\';
+      h+=\'</a>\';
     }
-    list.innerHTML=h||'<div class="hp-empty">暂无热榜数据</div>';
+    list.innerHTML=h||\'<div class="hp-empty">暂无热榜数据</div>\';
+    /* 分类切换 fade 动画（WS-A5） */
+    if(swap&&!matchMedia(\'(prefers-reduced-motion:reduce)\').matches){
+      list.classList.remove(\'hp-swap\');void list.offsetWidth;list.classList.add(\'hp-swap\');
+    }
   }
+  window.addEventListener('resize',function(){ _applyPlatCollapse(); });
 
-  /* ── Insight Panel（每日洞察） ── */
+  /* ── Insight Panel（每日洞察 · WS-B 容器化） ── */
+  var _insightScrollY=0;
   function toggleInsight(){
-    var bar=document.getElementById('insightBar');
+    var panel=document.getElementById('insightPanel');
     var btn=document.getElementById('btnInsight');
-    if(!bar)return;
-    var opening=!bar.classList.contains('open');
-    bar.classList.toggle('open',opening);
-    if(btn)btn.classList.toggle('on',opening);
-    if(opening) renderInsight();
+    if(!panel)return;
+    var opening=!panel.classList.contains('open');
+    if(opening){ renderInsight(); }
+    panel.classList.toggle('open',opening);
+    if(btn){
+      btn.classList.toggle('on',opening);
+      btn.setAttribute('aria-expanded',opening);
+    }
+    /* 遮罩 + 滚动锁 */
+    var scrim=document.getElementById('scrim');
+    if(scrim) scrim.classList.toggle('on',opening);
+    if(opening){
+      _insightScrollY=window.scrollY;
+      document.body.style.overflow='hidden';
+      panel.querySelector('.ip-close').focus();
+    } else {
+      document.body.style.overflow='';
+      window.scrollTo(0,_insightScrollY);
+      if(btn) btn.focus();
+    }
   }
   window.toggleInsight=toggleInsight;
+  function closeInsight(){
+    var p=document.getElementById('insightPanel');
+    if(p&&p.classList.contains('open')) toggleInsight();
+  }
 
   function renderInsight(){
     var el=document.getElementById('insightBody');
     if(!el||!ANALYSIS_DATA)return;
     var d=ANALYSIS_DATA, h='';
+    /* D2: SVG 图标替代 emoji，与站内线性图标体系一致 */
+    var _ico={chart:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:13px;height:13px"><path d="M3 3v18h18"/><path d="M7 16l4-8 4 4 5-6"/></svg>',bell:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:13px;height:13px"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',signal:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:13px;height:13px"><path d="M2 20h.01"/><path d="M7 20v-4"/><path d="M12 20v-8"/><path d="M17 20V8"/><path d="M22 4v16"/></svg>',clock:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:13px;height:13px"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:13px;height:13px"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>',bolt:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:13px;height:13px"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>',crystal:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:13px;height:13px"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>',tag:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:13px;height:13px"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>',flame:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:13px;height:13px"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>'};
+    /* WS-C 前端去重兆底 */
+    var _dedupSeen=new Set(), _dedupCount=0;
+    function _dedup(text){ var t=String(text||'').trim(); if(!t) return ''; var key=t.slice(0,120); if(_dedupSeen.has(key)){_dedupCount++;return '';} _dedupSeen.add(key);return t; }
+    /* signals 规范化 */
+    function _normSignals(raw){
+      return (Array.isArray(raw)?raw:[]).map(function(s){
+        if(s&&typeof s==='object') return {signal:s.signal||s.label||s.name||s.text||'',conf:s.confidence};
+        var m=String(s).match(/['"]?signal['"]?\s*:\s*['"]([^'"]+)['"]/);
+        var c=String(s).match(/['"]?confidence['"]?\s*:\s*([\d.]+)/);
+        return {signal:m?m[1]:String(s),conf:c?parseFloat(c[1]):null};
+      }).filter(function(x){return x.signal;});
+    }
     // 统计摘要
     if(d.stats||d.generated_at){
       h+='<div class="ib-stats">';
       if(d.stats){
-        h+='<span>\U0001f4ca \u6587\u7ae0: '+d.stats.total_articles+'</span>';
-        h+='<span>\U0001f514 \u8fd124h: '+d.stats.recent_count+'</span>';
-        h+='<span>\U0001f4e1 \u4fe1\u6e90: '+d.stats.source_count+'</span>';
+        h+='<span>'+_ico.chart+' \u6587\u7ae0: '+d.stats.total_articles+'</span>';
+        h+='<span>'+_ico.bell+' \u8fd124h: '+d.stats.recent_count+'</span>';
+        h+='<span>'+_ico.signal+' \u4fe1\u6e90: '+d.stats.source_count+'</span>';
       }
-      if(d.generated_at) h+='<span>\u23f0 '+(d.generated_at||'').slice(0,16).replace('T',' ')+'</span>';
+      if(d.generated_at) h+='<span>'+_ico.clock+' '+(d.generated_at||'').slice(0,16).replace('T',' ')+'</span>';
+      /* D3 轻量场：标注深度分析时间（generated_at 即为上次重分析时间） */
+      if(d.stale) h+='<span style="color:var(--faint,#94a3b8)">\U0001f50d \u6df1\u5ea6\u5206\u6790: '+(d.generated_at||'').slice(11,16)+'</span>';
       h+='</div>';
       h+='<div style="font-size:10.5px;color:var(--faint);padding:0 0 6px;">\u6570\u636e\u8303\u56f4: \u8fd1 72 \u5c0f\u65f6\u6eda\u52a8\u7a97\u53e3</div>';
     }
@@ -4430,11 +7102,11 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     if(d.deep_insights){
       var di=d.deep_insights;
       if(di.narrative){
-        h+='<div class="ib-section"><div class="ib-label">\U0001f50d \u53d9\u4e8b\u8109\u7edc</div>';
+        h+='<div class="ib-section"><div class="ib-label">'+_ico.search+' \u53d9\u4e8b\u8109\u7edc</div>';
         h+='<div class="ib-narrative">'+esc(di.narrative)+'</div></div>';
       }
       if(di.causal_chains&&di.causal_chains.length){
-        h+='<div class="ib-section"><div class="ib-label">\u26a1 \u56e0\u679c\u94fe</div><div class="ib-chain-grid">';
+        h+='<div class="ib-section"><div class="ib-label">'+_ico.bolt+' \u56e0\u679c\u94fe</div><div class="ib-chain-grid">';
         di.causal_chains.forEach(function(c){
           h+='<div class="ib-chain-card">';
           if(typeof c==='string'){
@@ -4448,14 +7120,14 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
         h+='</div></div>';
       }
       if(di.signals&&di.signals.length){
-        h+='<div class="ib-section"><div class="ib-label">\U0001f4e1 \u4fe1\u53f7\u770b\u677f</div><div class="ib-signal-grid">';
+        h+='<div class="ib-section"><div class="ib-label">'+_ico.signal+' \u4fe1\u53f7\u770b\u677f</div><div class="ib-signal-grid">';
         di.signals.forEach(function(s){
           h+='<div class="ib-signal-card">'+esc(s.label||s.name||s.text||s.signal||'')+'</div>';
         });
         h+='</div></div>';
       }
       if(di.outlook){
-        h+='<div class="ib-section"><div class="ib-label">\U0001f52e \u8d8b\u52bf\u5c55\u671b</div>';
+        h+='<div class="ib-section"><div class="ib-label">'+_ico.crystal+' \u8d8b\u52bf\u5c55\u671b</div>';
         h+='<div class="ib-outlook">'+esc(di.outlook)+'</div></div>';
       }
     }
@@ -4463,7 +7135,7 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
     if(d.topic_clusters&&d.topic_clusters.length){
       var maxCnt=0;
       d.topic_clusters.forEach(function(c){if(c.count>maxCnt)maxCnt=c.count;});
-      h+='<div class="ib-section"><div class="ib-label">\U0001f4ca \u8bdd\u9898\u805a\u7c7b</div><div class="ib-cluster-list">';
+      h+='<div class="ib-section"><div class="ib-label">'+_ico.chart+' \u8bdd\u9898\u805a\u7c7b</div><div class="ib-cluster-list">';
       d.topic_clusters.slice(0,12).forEach(function(c){
         var pct=maxCnt>0?Math.round(c.count/maxCnt*100):0;
         h+='<div class="ib-cluster-card" data-kw="'+esc(c.label||'')+'" onclick="insightSearch(this.dataset.kw)">';
@@ -4523,29 +7195,37 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
       });
       h+='</div></div>';
     }
-    // 话题趋势（跨周期轨迹）
+    // 话题趋势（跨周期轨迹）— 只展示有轨迹信号的话题，与「今日话题」差异化
     var topicTraj=(d.rss_trajectories&&d.rss_trajectories.topics)||{};
     if(d.topics&&d.topics.length&&Object.keys(topicTraj).length>0){
-      h+='<div class="ib-section ib-trend"><div class="ib-trend-title">\U0001f4c8 \u8bdd\u9898\u8d8b\u52bf</div><div class="ib-trend-list">';
-      d.topics.slice(0,10).forEach(function(t){
+      var trendTopics=[];
+      d.topics.forEach(function(t){
         var tl=(t.label||(t.labels&&t.labels.length?t.labels.join(' '):''));
-        var traj=topicTraj[tl]||{};
-        var lc=traj.lifecycle||'emerging';
-        var cnt=t.count||0;
-        var arrow='', arrowCls='';
-        if(lc==='hot'){arrow='\U0001f525';arrowCls='t-hot';}
-        else if(lc==='emerging'){arrow='\u2b06';arrowCls='t-up';}
-        else if(lc==='cooling'){arrow='\u2b07';arrowCls='t-down';}
-        else if(lc==='cold'){arrow='\u2744';arrowCls='t-down';}
-        var lcLabel={emerging:'\u65b0\u5174',hot:'\u706b\u7206',cooling:'\u964d\u6e29',cold:'\u51b7\u5374'}[lc]||lc;
-        h+='<div class="ib-trend-item" data-kw="'+esc(tl)+'" onclick="insightSearch(this.dataset.kw)">';
-        h+='<span class="ib-trend-label">'+esc(tl)+'</span>';
-        h+='<span class="ib-trend-count">'+cnt+'\u7bc7</span>';
-        if(arrow) h+='<span class="ib-trend-arrow '+arrowCls+'">'+arrow+'</span>';
-        h+='<span class="ib-trend-lc lc-'+lc+'">'+lcLabel+'</span>';
-        h+='</div>';
+        var traj=topicTraj[tl];
+        if(traj&&(traj.lifecycle||traj.latest_count)) trendTopics.push({topic:t,label:tl,traj:traj});
       });
-      h+='</div></div>';
+      trendTopics.sort(function(a,b){return (b.traj.latest_count||0)-(a.traj.latest_count||0);});
+      if(trendTopics.length>0){
+        h+='<div class="ib-section ib-trend"><div class="ib-trend-title">\U0001f4c8 \u8bdd\u9898\u8d8b\u52bf</div><div class="ib-trend-list">';
+        trendTopics.slice(0,8).forEach(function(item){
+          var t=item.topic,tl=item.label,traj=item.traj;
+          var lc=traj.lifecycle||'emerging';
+          var cnt=traj.latest_count||t.count||0;
+          var arrow='', arrowCls='';
+          if(lc==='hot'){arrow='\U0001f525';arrowCls='t-hot';}
+          else if(lc==='emerging'){arrow='\u2b06';arrowCls='t-up';}
+          else if(lc==='cooling'){arrow='\u2b07';arrowCls='t-down';}
+          else if(lc==='cold'){arrow='\u2744';arrowCls='t-down';}
+          var lcLabel={emerging:'\u65b0\u5174',hot:'\u706b\u7206',cooling:'\u964d\u6e29',cold:'\u51b7\u5374'}[lc]||lc;
+          h+='<div class="ib-trend-item" data-kw="'+esc(tl)+'" onclick="insightSearch(this.dataset.kw)">';
+          h+='<span class="ib-trend-label">'+esc(tl)+'</span>';
+          h+='<span class="ib-trend-count">'+cnt+'\u7bc7</span>';
+          if(arrow) h+='<span class="ib-trend-arrow '+arrowCls+'">'+arrow+'</span>';
+          h+='<span class="ib-trend-lc lc-'+lc+'">'+lcLabel+'</span>';
+          h+='</div>';
+        });
+        h+='</div></div>';
+      }
     }
     // 跨平台共振
     if(d.cross_platform&&d.cross_platform.length){
@@ -4585,14 +7265,51 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
       h+='</div></div>';
     }
     if(!h) h='<div class="ib-no-data">\u6682\u65e0\u5206\u6790\u6570\u636e</div>';
+    /* WS-C 去重提示 */
+    if(_dedupCount>0) h+='<div class="ip-dedup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg>\u5df2\u81ea\u52a8\u8df3\u8fc7 '+_dedupCount+' \u6bb5\u4e0e\u4e0a\u6587\u91cd\u590d\u7684\u5185\u5bb9</div>';
     el.innerHTML=h;
+    /* 锚点导航（WS-B2） */
+    var navEl=document.getElementById('ipNav');
+    if(navEl){
+      var secs=el.querySelectorAll('.ib-section, .ip-sec');
+      var navHtml='';
+      secs.forEach(function(s,i){
+        var label=(s.querySelector('.ib-label, .ip-label')||{}).textContent||'';
+        if(!label) return;
+        if(!s.id) s.id='ip-sec-'+i;
+        navHtml+='<button data-t="'+s.id+'" class="'+(i===0?'on':'')+'">'+label+'</button>';
+      });
+      navEl.innerHTML=navHtml;
+      navEl.querySelectorAll('button').forEach(function(b){
+        b.onclick=function(){
+          navEl.querySelectorAll('button').forEach(function(x){x.classList.remove('on');});
+          b.classList.add('on');
+          var target=document.getElementById(b.dataset.t);
+          if(target) target.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth',block:'start'});
+        };
+      });
+    }
   }
 
   function insightSearch(keyword){
+    var bg=null;
+    // 长标签（话题/趋势）→ 提取字符二元组做模糊匹配
+    var clean=keyword.replace(/^\[RSS\/\w+\]\s*/,'');
+    if(clean.length>15){
+      var low=clean.toLowerCase(),arr=[];
+      for(var i=0;i<low.length-1;i++){
+        var c=low[i],n=low[i+1];
+        if(c.trim()&&n.trim()&&c!==n) arr.push(c+n);
+      }
+      var seen={},uniq=[];
+      arr.forEach(function(b){if(!seen[b]){seen[b]=1;uniq.push(b);}});
+      if(uniq.length>=2) bg=uniq;
+    }
     var si=document.getElementById('globalSearch');
     if(si){si.value=keyword;si.dispatchEvent(new Event('input'));}
+    // input handler 会重置 _topicBigrams=null，所以在 dispatch 之后赋值
+    _topicBigrams=bg;
     window.scrollTo({top:0,behavior:'smooth'});
-    // 延迟滚动到首篇匹配卡片（等待渲染完成）
     setTimeout(function(){
       var first=document.querySelector('.wall .card');
       if(first) first.scrollIntoView({behavior:'smooth',block:'center'});
@@ -4609,15 +7326,35 @@ def _build_js(sources_with_items, build_ts_ms=0, analysis_json=''):
 
 CHUNK0_SIZE = 360  # 首屏块文章数（复刻前端 ART 排序后取前 N 篇）
 
+def _chrono_key(item):
+    """切块排序键：按解析后的**绝对时间**降序（与前端 _dateCmpDesc 同口径）。
+
+    不能直接比 pub_date 字符串：数据里 "+08:00" 与 "+00:00/Z" 混用，字符串比较是
+    时区盲的（实测 "…T09:00:00+08:00" 会被判为比 "…T02:00:00+00:00" 更新，导致首屏
+    选片选错）。无日期/非法日期返回 (0, 0) → 一律沉底进 chunk1。
+    """
+    s = item.get("pub_date") or ""
+    try:
+        d = datetime.datetime.fromisoformat(s)
+    except (ValueError, TypeError):
+        return (0, 0.0)
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=datetime.timezone(datetime.timedelta(hours=8)))  # 裸值按北京时间
+    try:
+        return (1, d.timestamp())
+    except (OverflowError, OSError, ValueError):
+        return (0, 0.0)
+
+
 def _split_data_chunks(sources, chunk0_size=CHUNK0_SIZE):
-    """把全量文章拆成两块：首屏 chunk0 按严格时间排序（不交织），
+    """把全量文章切成两段：首屏 chunk0 按严格时间排序（不交织），后台段由调用方再分块；
     后台 chunk1 包含剩余文章；前端合并 chunk1 后再应用 tier 交织。
     两块均保持 sources 富字段结构，前端可原样消费。"""
     flat = []
     for s in sources:
         for it in s.get("items", []):
             flat.append((s, it))
-    flat.sort(key=lambda x: x[1].get("pub_date") or "", reverse=True)
+    flat.sort(key=lambda x: _chrono_key(x[1]), reverse=True)
     seen = set()
     c0_items = {}
     for s, it in flat[:chunk0_size]:
@@ -4629,39 +7366,132 @@ def _split_data_chunks(sources, chunk0_size=CHUNK0_SIZE):
         # 标记 BestBlogs 源（URL 含 bestblogs.dev）
         _is_bb = 'bestblogs.dev' in (s.get('url') or '')
         if k in c0_items:
-            c0 = dict(s); c0["items"] = c0_items[k]
+            c0 = dict(s); c0["items"] = _strip_derived_items(c0_items[k])
             if _is_bb: c0["bb"] = True
             chunk0.append(c0)
             rest = [it for it in s.get("items", []) if id(it) not in seen]
             if rest:
-                c1 = dict(s); c1["items"] = rest
+                c1 = dict(s); c1["items"] = _strip_derived_items(rest)
                 if _is_bb: c1["bb"] = True
                 chunk1.append(c1)
         elif s.get("items"):
-            if _is_bb: s = dict(s); s["bb"] = True
+            # 不改动入参对象：剥派生字段要生成副本，直接写 s 会污染内存里的历史条目
+            s = dict(s)
+            s["items"] = _strip_derived_items(s.get("items", []))
+            if _is_bb: s["bb"] = True
             chunk1.append(s)
     return chunk0, chunk1
 
+def _empty_stale_chunk(path, num, dump):
+    """旧块**清空而不是删除**。CI 的提交步骤是 `git add ... rss-data-*.js`（磁盘 glob 展开）：
+    文件一旦被 os.remove 掉就匹配不到，删除永远进不了提交 ⇒ 旧块留在仓库里继续被分发，
+    页面照样把它合并进来（2026-09-21 实测：闸门报"出厂 9,045 条 / >168h 0 条"，
+    而残留的 rss-data-2.js 里还挂着 11,486 条旧数据，其中 5,060 条 >168h）。
+    留着空文件才是可提交的变更，内容清空后合并进来也不带任何旧条目。
+    """
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("/* StarHub data chunk %d emptied (kept so git can commit the change) */" % num + chr(10))
+        f.write("(window.__CHUNKS=window.__CHUNKS||[])[" + str(num) + "]=" + dump({"sources": []}) + ";" + chr(10))
+
+
+def _retire_stale_chunks(out_dir, n_chunks, dump):
+    """把上一场多出来的旧块**清空**（不是删除）。CI 的提交步骤是 `git add ... rss-data-*.js`
+    按磁盘 glob 展开：文件被 os.remove 掉就匹配不到，删除永远进不了提交 ⇒ 旧块留在仓库
+    继续被 Pages/Vercel 分发，页面照样把它合并进来（真实事故见
+    tests/rss_history/test_stale_chunk_guard.py 的 docstring）。
+    """
+    import glob as _glob
+    emptied = 0
+    for old_file in _glob.glob(os.path.join(out_dir, "rss-data-*.js")):
+        basename = os.path.basename(old_file)
+        try:
+            num = int(basename.replace("rss-data-", "").replace(".js", ""))
+        except ValueError:
+            continue
+        if num > n_chunks:
+            _empty_stale_chunk(old_file, num, dump)
+            emptied += 1
+    if emptied:
+        print("[数据分块] 清空 %d 个多余旧块（删除不会被 git add 的 glob 匹配到）" % emptied)
+
+
 def write_data_chunks(sources, chunk0_size=CHUNK0_SIZE):
-    """写出 rss-data-0.js / rss-data-1.js（与 OUT 同目录），页面经 script 标签加载。"""
+    """写出 rss-data-0.js + rss-data-{1..N}.js（与 OUT 同目录），页面经 script 标签加载。
+    chunk1+ 按 MAX_CHUNK_BYTES 分片；单块过大 = 慢网络取不到 = 页面只剩首屏。"""
     out_dir = os.path.dirname(os.path.abspath(OUT)) or "."
     chunk0, chunk1 = _split_data_chunks(sources, chunk0_size)
 
     def _dump(obj):
         return json.dumps(obj, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c")
 
-    with open(os.path.join(out_dir, "rss-data-0.js"), "w", encoding="utf-8") as f:
-        f.write("/* StarHub data chunk 0 (first screen) - auto generated, do not edit */\n")
-        f.write("(window.__CHUNKS=window.__CHUNKS||[])[0]=" + _dump({"sources": chunk0}) + ";\n")
-    with open(os.path.join(out_dir, "rss-data-1.js"), "w", encoding="utf-8") as f:
-        f.write("/* StarHub data chunk 1 (background merge) - auto generated, do not edit */\n")
-        f.write("(window.__CHUNKS=window.__CHUNKS||[])[1]=" + _dump({"sources": chunk1}) + ";\n")
+    # chunk0 最后写：它要在 payload 里声明总块数，而总数只有等 chunk1 的分桶数定了才知道。
+    # 声明写在 JSON 里而不是追加一条 `window.__CHUNKS[0]._total=..` 语句 ——
+    # tests/rss_history/test_chunk_budget.py 的 _payload() 按"整个文件是一个 JSON"解析，追加会打爆它。
     n0 = sum(len(s.get("items", [])) for s in chunk0)
-    n1 = sum(len(s.get("items", [])) for s in chunk1)
-    print("[数据分块] chunk0 %d 篇 / chunk1 %d 篇（共 %d）" % (n0, n1, n0 + n1))
+
+    def _write_chunk0(total):
+        with open(os.path.join(out_dir, "rss-data-0.js"), "w", encoding="utf-8") as f:
+            f.write("/* StarHub data chunk 0 (first screen) - auto generated, do not edit */\n")
+            f.write("(window.__CHUNKS=window.__CHUNKS||[])[0]="
+                    + _dump({"sources": chunk0, "_total": total}) + ";\n")
+
+    # chunk1+: 按每块上限拆分。
+    # 2026-09-30 线上实证：这里曾写 80MB，而后台数据实测 50.6MB ⇒ n_chunks 恒为 1，
+    # "分块"退化成一块 60MB 巨石；慢网络取不到时 script 的 onload 照样触发但
+    # __CHUNKS[1] 从未赋值，页面只剩 chunk0 首屏的 61 个源（控制台明写"文件截断"）。
+    # 6MB/块 ≈ 9 块，单块失败只丢尾部一块而不是整块后台数据；上限 24 块防文件数失控。
+    MAX_CHUNK_BYTES = 6 * 1024 * 1024
+    MAX_CHUNKS = 24
+    n1_total = sum(len(s.get("items", [])) for s in chunk1)
+    if not chunk1:
+        # 无剩余数据，写空 chunk1
+        with open(os.path.join(out_dir, "rss-data-1.js"), "w", encoding="utf-8") as f:
+            f.write("/* StarHub data chunk 1 - auto generated, do not edit */\n")
+            f.write("(window.__CHUNKS=window.__CHUNKS||[])[1]={sources:[]};\n")
+        _retire_stale_chunks(out_dir, 1, _dump)
+        _write_chunk0(2)      # 文件仍是两个（0 和空的 1），声明必须跟实际文件数一致
+        print("[数据分块] chunk0 %d 篇 / chunk1 0 篇（共 %d）" % (n0, n0))
+        return
+
+    # 估算每源 JSON 体积，按体积均匀分桶
+    src_sizes = []
+    for s in chunk1:
+        try:
+            sz = len(json.dumps(s, ensure_ascii=False).encode("utf-8"))
+        except Exception:
+            sz = 1024
+        src_sizes.append(sz)
+    total_bytes = sum(src_sizes)
+    n_chunks = max(1, (total_bytes + MAX_CHUNK_BYTES - 1) // MAX_CHUNK_BYTES)
+    n_chunks = min(n_chunks, MAX_CHUNKS)
+    _write_chunk0(1 + n_chunks)
+    target_per_chunk = total_bytes / n_chunks
+
+    buckets = [[] for _ in range(n_chunks)]
+    bucket_sizes = [0] * n_chunks
+    for i, (s, sz) in enumerate(zip(chunk1, src_sizes)):
+        # 放入当前最小的桶
+        min_idx = bucket_sizes.index(min(bucket_sizes))
+        buckets[min_idx].append(s)
+        bucket_sizes[min_idx] += sz
+
+    for idx, bucket in enumerate(buckets):
+        chunk_idx = idx + 1
+        fname = "rss-data-%d.js" % chunk_idx
+        with open(os.path.join(out_dir, fname), "w", encoding="utf-8") as f:
+            f.write("/* StarHub data chunk %d (background merge) - auto generated, do not edit */\n" % chunk_idx)
+            f.write("(window.__CHUNKS=window.__CHUNKS||[])[%d]=" % chunk_idx + _dump({"sources": bucket}) + ";\n")
+        n_items = sum(len(s.get("items", [])) for s in bucket)
+        size_mb = bucket_sizes[idx] / 1024 / 1024
+        print("[数据分块] %s: %d 源 %d 篇 %.1f MB" % (fname, len(bucket), n_items, size_mb))
+
+    _retire_stale_chunks(out_dir, n_chunks, _dump)
+
+    print("[数据分块] chunk0 %d 篇 / %d 个后台块 %d 篇（共 %d）" % (n0, n_chunks, n1_total, n0 + n1_total))
 
 
-def build_html(sources_with_items, build_time, total_items, build_ts_ms=0, analysis_data=None):
+def build_html(sources_with_items, build_time, total_items, build_ts_ms=0, analysis_data=None,
+               diverse_window_minutes=120, diverse_enabled=True):
     """生成完整 HTML 页面 — 卡片墙 + 抽屉阅读器。"""
     # 构建洞察面板 HTML（仅当分析数据存在时显示按钮）
     insight_btn = ''
@@ -4674,15 +7504,17 @@ def build_html(sources_with_items, build_time, total_items, build_ts_ms=0, analy
             '</svg> 洞察</button>\n'
         )
         insight_bar = (
-            '<div class="insight-bar" id="insightBar">\n'
-            '<div class="ib-head">\n'
-            '<h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">'
+            '<aside class="insight-panel" id="insightPanel" role="dialog" aria-modal="true" aria-label="\u6bcf\u65e5\u6d1e\u5bdf">\n'
+            '<div class="ip-head">\n'
+            '<h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">'
             '<path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>'
-            ' 每日洞察</h3>\n'
-            '<button class="ib-close" onclick="toggleInsight()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>\n'
+            ' \u6bcf\u65e5\u6d1e\u5bdf</h2>\n'
+            '<span class="ip-gen" id="ipGen"></span>\n'
+            '<button class="ip-close" onclick="toggleInsight()" aria-label="\u5173\u95ed\u6d1e\u5bdf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>\n'
             '</div>\n'
-            '<div class="ib-body" id="insightBody"></div>\n'
-            '</div>\n'
+            '<nav class="ip-nav" id="ipNav" aria-label="\u6d1e\u5bdf\u7ae0\u8282\u5bfc\u822a"></nav>\n'
+            '<div class="ip-body" id="insightBody"></div>\n'
+            '</aside>\n'
         )
     # 分析数据 JSON 注入到 JS
     analysis_json = ''
@@ -4696,7 +7528,9 @@ def build_html(sources_with_items, build_time, total_items, build_ts_ms=0, analy
         '<title>RSS 聚合阅读器 · StarHub</title>\n'
         '<style>' + _build_css() + '</style>\n'
         + '<link rel="preload" href="rss-data-0.js?v=' + str(int(build_ts_ms)) + '" as="script">\n'
-        + '<link rel="preload" href="hot_snapshot.json" as="fetch" crossorigin>\n'
+        # 这里原本还有一行 preload hot_snapshot.json：消费方是 `fetch(…,{cache:'no-cache'})`，
+        # no-cache 明确绕过预载那份（且 preload 带 crossorigin、fetch 不带 credentials，键也对不上）
+        # ⇒ 每次加载白下 63KB，控制台每次都报 "preloaded but not used"。删预载，不删 no-cache（那是数据新鲜度）。
         '</head>\n<body>\n'
         + _build_header() +
         '<div class="toolbar">\n'
@@ -4708,6 +7542,7 @@ def build_html(sources_with_items, build_time, total_items, build_ts_ms=0, analy
                 '<button class="unread-toggle" id="markAllReadBtn" onclick="markAllRead()" title="\u5168\u90e8\u6807\u8bb0\u5df2\u8bfb" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg> \u5168\u90e8\u5df2\u8bfb</button>\n'
         '<button class="ai-feed-btn" id="btnAiFeed" onclick="toggleAiFeed()" title="AI \u52a8\u6001\u6d41"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> AI \u52a8\u6001</button>\n'
         '<button class="hot-btn" id="btnHot" onclick="toggleHotPanel()" title="\u5168\u7f51\u70ed\u699c"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2c1 3-2 5-2 8a4 4 0 0 0 8 0c0-3-2-5-2-8"/><path d="M8.5 14.5A5 5 0 0 0 12 22a5 5 0 0 0 3.5-7.5"/></svg> \u70ed\u699c</button>\n'
+        '<span class="tb-divider" aria-hidden="true"></span>\n'
         + insight_btn +
         
         '<span id="fpillWrap"></span>\n'
@@ -4716,7 +7551,9 @@ def build_html(sources_with_items, build_time, total_items, build_ts_ms=0, analy
         '<div class="search-row">\n'
         '<span class="global-search" id="globalSearchWrap"><input id="globalSearch" placeholder="\u641c\u7d22\u6587\u7ae0\u6807\u9898\u3001\u6458\u8981\u6216\u4fe1\u606f\u6e90\u540d\u79f0\u2026" autocomplete="off"><span class="sx" id="globalSearchClear">\u2715</span></span>\n'
                 '<span class="src-match-label" id="srcMatchLabel" style="display:none" aria-live="polite"></span>\n'
-        '<select class="sort-select" id="sortSelect" title="\u6392\u5e8f\u65b9\u5f0f"><option value="newest">\u6700\u65b0\u53d1\u5e03</option><option value="oldest">\u6700\u65e9\u53d1\u5e03</option><option value="active">\u6700\u8fd1\u6d3b\u8dc3</option><option value="quality">\u4fe1\u6e90\u8d28\u91cf</option></select>\n'
+        '<select class="sort-select" id="sortSelect" title="\u6392\u5e8f\u65b9\u5f0f"><option value="newest">\u6700\u65b0\u53d1\u5e03</option><option value="oldest">\u6700\u65e9\u53d1\u5e03</option><option value="active">\u6700\u8fd1\u6d3b\u8dc3</option><option value="quality">\u4fe1\u6e90\u8d28\u91cf</option>'
+        + ('<option value="diverse">\u591a\u6837\u63a8\u8350</option>' if diverse_enabled else '')
+        + '</select>\n'
         '</div>\n'
         + insight_bar +
         '<div class="build-bar">\u81ea\u52a8\u751f\u6210\u4e8e ' + _esc(build_time) + '\uff08\u5317\u4eac\u65f6\u95f4\uff09\u00b7 \u5171 ' + str(total_items) + ' \u7bc7 \u00b7 <span id="buildRel"></span><span id="liveStatus"></span></div>\n'
@@ -4730,8 +7567,10 @@ def build_html(sources_with_items, build_time, total_items, build_ts_ms=0, analy
         '<button class="af-refresh" id="afRefreshBtn" onclick="refreshAiFeed()" title="\u5237\u65b0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg></button>\n'
         '<button class="af-close" onclick="toggleAiFeed()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>\n'
         '<div class="hp-wrap" id="hpWrap">\n'
-        '<div class="hp-tabs" id="hpTabs"></div>\n'
-        '<div class="hp-body" id="hotList"><div class="hp-empty">\u70b9\u51fb\u52a0\u8f7d\u70ed\u699c</div></div></div>\n'
+        '<div class="dim-row"><span class="dim-label">分类</span><div class="dim-body"><div class="hp-seg" id="hpCats" role="tablist" aria-label="热榜分类筛选"></div></div></div>\n'
+        '<hr class="dim-sep">\n'
+        '<div class="dim-row" style="padding-top:0"><span class="dim-label">平台</span><div class="dim-body plat-wrap"><div class="plat-row collapsed" id="hpTabs"></div></div></div>\n'
+        '<div class="hp-body" id="hotList"><div class="hp-empty">点击加载热榜</div></div></div>\n'
         '<div class="af-sub" id="afUpdated"></div>\n'
         '<div class="af-filter" id="afFilter" style="display:none"></div>\n'
         '<div class="af-body" id="afList"><div class="af-empty">\u70b9\u51fb\u67e5\u770b AI \u52a8\u6001</div></div>\n'
@@ -4824,7 +7663,36 @@ _TECH_DICT = sorted({
 
 # 已知无意义双字组合（滑动窗口回退时过滤）
 _NOISE_BIGRAMS = {'军一', '核被', '审一', '已故', '人称', '据报',
-                  '的的', '了了', '是是', '在在', '有有', '和和'}
+                  '的的', '了了', '是是', '在在', '有有', '和和',
+                  # 日期/时间碎片
+                  '月日', '年月', '日年', '时分', '秒分',
+                  # 无意义组合
+                  '地址', '网址', '链接', '点击', '查看', '阅读', '原文'}
+
+
+def _is_valid_ngram(word):
+    """判断 n-gram 是否有意义（质量过滤）。"""
+    if not word or len(word) < 2:
+        return False
+    # 排除连续相同字符（被被、一一、审审）
+    if len(set(word)) == 1:
+        return False
+    # 排除停用词
+    if word in _STOP_WORDS:
+        return False
+    # 排除已知无意义组合
+    if word in _NOISE_BIGRAMS:
+        return False
+    # 含空格 → 拒绝（如 "月 日"、"址  "）
+    if ' ' in word or '\u3000' in word:
+        return False
+    # 含特殊符号 → 拒绝（如 "文 ·"、"评论:"）
+    if re.search(r'[·:：.,，;；!?！？()（）\[\]【】{}<>]', word):
+        return False
+    # 纯数字 → 拒绝
+    if word.isdigit():
+        return False
+    return True
 
 
 def _has_repeated_chars(text, min_repeats=2, min_run=2):
@@ -4835,20 +7703,6 @@ def _has_repeated_chars(text, min_repeats=2, min_run=2):
         if text[i] == text[i + 1] and '\u4e00' <= text[i] <= '\u9fff':
             count += 1
     return count >= min_repeats
-
-
-def _is_valid_ngram(word):
-    """判断 n-gram 是否有意义（质量过滤）。"""
-    # 排除连续相同字符（被被、一一、审审）
-    if len(set(word)) == 1:
-        return False
-    # 排除停用词
-    if word in _STOP_WORDS:
-        return False
-    # 排除已知无意义组合
-    if word in _NOISE_BIGRAMS:
-        return False
-    return True
 
 
 def _tokenize(text):
@@ -4900,12 +7754,18 @@ def _tokenize(text):
     return tokens
 
 
+@functools.lru_cache(maxsize=65536)
+def _tokenize_cached(text):
+    """tokenize 结果缓存：D4 语料放大后同一文本多份复现，避免重复分词（rev8 P1-3）。"""
+    return tuple(_tokenize(text))
+
+
 def _tfidf_keywords(texts, top_n=50, per_doc_top=10):
     """从文本列表中提取全局 TF-IDF 关键词。返回 [(keyword, score), ...]。"""
     if not texts:
         return []
-    # 每篇文章的 token 集合
-    doc_tokens = [_tokenize(t) for t in texts]
+    # 每篇文章的 token 集合（缓存：重复语料只分词一次）
+    doc_tokens = [list(_tokenize_cached(t)) for t in texts]
     n_docs = len(doc_tokens)
     # DF: 每个 token 出现在多少篇文档中
     df = collections.Counter()
@@ -4929,11 +7789,19 @@ def _tfidf_keywords(texts, top_n=50, per_doc_top=10):
     return sorted(scores.items(), key=lambda x: -x[1])[:top_n]
 
 
-def _extract_keywords(rss_history, now_bj):
-    """从 72h 历史中提取关键词。返回 {global: [...], by_cat: {cat: [...]}}。"""
+def _extract_keywords(rss_history, now_bj, unreliable_srcs=None):
+    """从 72h 历史中提取关键词。返回 {global: [...], by_cat: {cat: [...]}}。
+
+    D4：bad_date 不可信源（unreliable_srcs）的条目按 0.3 权重精确降权——
+    以 10 倍放大实现整数化配比（正常基线 10 份、不可信 3 份），
+    tfidf 频次与文本份数线性映射，权重比逐字面成立。
+    """
+    _W_BASE, _W_RECENT, _UNRELIABLE_FACTOR = 10, 2, 3
+    unreliable = unreliable_srcs or set()
     cutoff_24h = now_bj.replace(tzinfo=None) - datetime.timedelta(hours=24)
     # 近 24h 文章用于热点提取
     recent_texts = []
+    recent_count = 0
     cat_texts = collections.defaultdict(list)
     for item in rss_history.values():
         pd_str = item.get('pub_date', '')
@@ -4951,9 +7819,19 @@ def _extract_keywords(rss_history, now_bj):
         text = (title + ' ' + summary).strip()
         if not text:
             continue
-        if pd >= cutoff_24h:
-            recent_texts.append(text)
-        cat_texts[item.get('cat', 'other')].append(text)
+        is_recent = pd >= cutoff_24h
+        if is_recent:
+            recent_count += 1  # 真实近24h条数（与语料复制解耦，rev8 P1-1）
+        # D4 权重以语料份额计（精确 0.3）：正常 recent = W_BASE*W_RECENT 份 + W_BASE 份；
+        # 不可信 = 正常 × UNRELIABLE_FACTOR/10（0.3 倍）
+        if item.get('source_key', '') in unreliable:
+            if is_recent:
+                recent_texts.extend([text] * (_W_BASE * _W_RECENT * _UNRELIABLE_FACTOR // 10))
+            cat_texts[item.get('cat', 'other')].extend([text] * (_W_BASE * _UNRELIABLE_FACTOR // 10))
+        else:
+            if is_recent:
+                recent_texts.extend([text] * (_W_BASE * _W_RECENT))
+            cat_texts[item.get('cat', 'other')].extend([text] * _W_BASE)
     # 全局关键词（近 24h 优先，但用全部 72h 数据）
     all_texts = recent_texts * 2 + [t for cat_ts in cat_texts.values() for t in cat_ts]  # 近 24h 权重 x2
     global_kw = _tfidf_keywords(all_texts, top_n=50)
@@ -4962,7 +7840,7 @@ def _extract_keywords(rss_history, now_bj):
     for cat, texts in cat_texts.items():
         if len(texts) >= 3:
             by_cat[cat] = _tfidf_keywords(texts, top_n=20)
-    return {"global": global_kw, "by_cat": by_cat, "recent_count": len(recent_texts)}
+    return {"global": global_kw, "by_cat": by_cat, "recent_count": recent_count}
 
 
 def _score_sources(sources_with_items, rss_history):
@@ -4994,7 +7872,15 @@ def _score_sources(sources_with_items, rss_history):
         s = src_stats.get(sk, {'total': 0, 'has_summary': 0, 'has_fullcontent': 0, 'bad_date_count': 0, 'total_with_date': 0})
         n = s['total']
         if n == 0:
-            result[sk] = {'score': 0, 'metrics': {}, 'article_count': 0}
+            # 72h 历史无数据：用 tier 推断默认分（新增源/低频源/被跳过源）
+            _tier = src.get('tier', 3)
+            _default = {1: 60, 2: 40}.get(_tier, 25)
+            result[sk] = {
+                'score': _default,
+                'metrics': {},
+                'article_count': 0,
+                'inferred': True,
+            }
             continue
         freshness = min(1.0, n / 10.0)              # 72h 内文章数 / 10 篇满分
         coverage = s['has_summary'] / n if n > 0 else 0
@@ -5016,6 +7902,210 @@ def _score_sources(sources_with_items, rss_history):
             'article_count': n,
         }
     return result
+
+
+# ──────────────────── 话题标签提取（issue C2） ────────────────────
+# 旧实现直接取 _tokenize 的词频 Top3。但 _tokenize 是「从位置 0 起逐位贪心吞 3 字」
+# 的扫描器，词典术语会被前一位置的误吞切断，且切点落在词中间：
+#     '苹果发布会'   → ['苹果发', '布会']
+#     '关于人工智能' → ['关于人', '工智能']      （'工智能' 是 '人工智能' 的真子串）
+#     '出席金砖国家' → ['出席金', '砖国家']
+# 真实语料实测（27076 个标签）：16.7% 的标签首/尾是虚词功能字
+# （'的星尘' / '或让' / '将瞄准' / '定 价' / '大  '），4.2% 含空白，
+# 台标与栏目名（rfi / cnn / hn / 问与答）进入 Top 15 —— 与「出版社样板污染」同源。
+#
+# 新口径（顺序即优先级）：
+#   P1 词典术语整词命中（绝不切碎）
+#   P2 英文词：原文含大写（品牌/缩写）或命中词典，且非台标/样板
+#   P3 长度 4..上界的边界对齐中文整段（'苹果发布会' 这类短段整取，不切）
+#   P4 其余中文段（2~3 字、或超过上界）用过滤后的词频兜底
+#   P5 按源样板抑制：某 token 出现在该源 ≥60% 篇目中 → 台标/栏目名，整源剔除
+_TAG_MAX_LEN = 6                 # 中文标签长度上界；超过这个长度的整段是句子片段，不是标签
+_TAG_BOILER_MIN_ITEMS = 10       # 源内至少这么多篇才做样板词统计（样本太少无统计意义）
+_TAG_BOILER_RATIO = 0.6          # 出现在该源 ≥60% 篇目 → 判为台标/栏目名
+
+# 首/尾出现这些字即为「切在词中间」的切片（'的星尘' / '或让' / '将瞄准'）
+_TAG_EDGE_NOISE = set(
+    "的了是在我有和就不都一个上也这到说们为你对被把让给用从向"
+    "该此其本如与及或并等将已正未很更最又还只仅才再也都吗呢吧啊着过据称当以对"
+)
+# 样板/泛化词：命中词典也不作标签（否则 '发布'/'公司'/'技术' 会占领标签表）
+_TAG_BLOCKLIST = set("""
+报道 据悉 表示 指出 认为 透露 宣布 发布 推出 上线 下线 升级 更新 修复
+完成 使用 进行 实现 相关 有关 目前 近日 今日 昨日 未来 正在 已经 可以 需要
+公司 企业 机构 政府 部门 组织 用户 产品 服务 平台 应用 软件 硬件
+系统 数据 技术 创新 突破 进展 成果 市场 行业 领域 情况 问题 方面 内容 方式
+为什么 有没有 一个 做了 第一个 第二十 十周年 评论 询问 突发 分享 观点 消息
+记者 编辑 来源 版权 转载 声明 观察 分析 解读 盘点 汇总 速览 早报 晚报
+网址 链接 原文 全文 本文 本站 译者 校对 责编 发自 综合报道 文章来源
+文章网址 评论网址 阅读全文 查看更多 推荐阅读 相关阅读 点击查看 详情
+""".split())
+# 英文样板词：多为栏目名/停用词，且不在 _TECH_DICT 内
+_TAG_EN_BLOCKLIST = set("""
+hn pro fix show duo flash ask news de le der web france fr en es
+the and for with from that this new top best how why what when who
+you your his her its our their all any can may not but
+""".split())
+_TAG_DICT_LOWER = set(t.lower() for t in _TECH_DICT)
+_TAG_CJK_RUN = re.compile(r"[\u4e00-\u9fff]{2,}")
+_TAG_EN_WORD = re.compile(r"[A-Za-z][A-Za-z0-9._+\-]{1,19}")
+_TAG_WS = re.compile(r"\s")
+
+
+def _tag_src_name_norm(name):
+    """源名归一化：只留字母/数字/汉字（用于台标自指判断）。"""
+    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", (name or "").lower())
+
+
+def _is_tag_station(tok, src_norm):
+    """台标判定：标签是源名的一部分，或源名是标签的一部分（'cnn' ⊂ 'CNN'）。"""
+    if not src_norm or len(tok) < 2:
+        return False
+    tl = tok.lower()
+    return tl in src_norm or (len(src_norm) >= 3 and src_norm in tl)
+
+
+def _tag_edge_ok(tok):
+    """标签首/尾不得是虚词功能字（'的星尘' / '或让' 这类切片的判据）。"""
+    return len(tok) >= 2 and tok[0] not in _TAG_EDGE_NOISE and tok[-1] not in _TAG_EDGE_NOISE
+
+
+def _tag_ok(tok, src_norm, low_text):
+    """标签通用过滤：长度/空白/样板/边界/数值单位/台标/词典术语真子串。"""
+    if len(tok) < 2 or _TAG_WS.search(tok):
+        return False
+    if tok in _TAG_BLOCKLIST or tok in _TAG_EN_BLOCKLIST:
+        return False
+    if not _tag_edge_ok(tok) or _is_numeric_unit_phrase(tok):
+        return False
+    if _is_tag_station(tok, src_norm):
+        return False
+    if not tok.isascii() and len(tok) > _TAG_MAX_LEN:
+        return False
+    # 词典术语的真子串：'工智能' ⊂ '人工智能'（同一文本里 '人工智能' 也在）
+    if any(tok != d and tok in d and d in low_text for d in _TAG_DICT_LOWER):
+        return False
+    return True
+
+
+def _tag_candidates(text, src_norm, allow_runs=True):
+    """按优先级产出候选标签（可能超过 3 个，由调用方截断）。
+
+    allow_runs=False 时只走 P1/P2（词典术语 + 英文词），不切中文段：
+    摘要是一整段散文，长中文段里没有可用词典术语时只能靠 n-gram 硬切，
+    实测切出来的是 '自微信' / '际广播' / '文章网址' 这类东西。
+    标题本身短且是名词短语，才值得做边界对齐的整段取词。
+    """
+    text = text or ""
+    if not text.strip():
+        return []
+    low = text.lower()
+    picks = []
+
+    # P1 词典术语：整词命中。按出现位置排，同位置取更长者（避免短词吃掉长词的位）
+    hits = []
+    for term in _TECH_DICT:
+        k = low.find(term.lower())
+        if k >= 0:
+            hits.append((term.lower(), k, len(term)))
+    hits.sort(key=lambda x: (x[1], -x[2]))
+    for w, _k, _L in hits:
+        if _tag_ok(w, src_norm, low):
+            picks.append(w)
+
+    # P2 英文词：原文含大写（品牌/缩写如 OpenAI/iPhone），或命中词典（ai/llm/gpt）
+    for m in _TAG_EN_WORD.finditer(text):
+        raw = m.group(0)
+        w = raw.lower()
+        if w in _TAG_EN_BLOCKLIST or w in _TAG_BLOCKLIST:
+            continue
+        if w not in _TAG_DICT_LOWER and not any(c.isupper() for c in raw):
+            continue
+        if _is_tag_station(w, src_norm):
+            continue
+        picks.append(w)
+
+    # P3/P4 中文段：短段（4..上界）整取，其余用过滤后的词频兜底
+    if allow_runs:
+        for run in _TAG_CJK_RUN.findall(text):
+            L = len(run)
+            if L < 2:
+                continue
+            # 「本段有可用词典术语」时不再切段 —— 切碎只会产生碎片（'出席金'/'砖国家'）。
+            # 两种情形交给 P1 整词发出：
+            #   a) 段太长（>上界）：整段不可用，只能靠词典术语，切碎只会更差；
+            #   b) 段内某个可用术语几乎占满整段（len ≥ L-1）：该段基本就是这个术语 + 杂字。
+            # 反例（必须走整段）：'苹果发布会' 段内的 '发布' 是样板词、不可用，
+            # 此时整段本身就是最好的短语，切碎才会得到 '苹果发'/'布会'。
+            eff = [d for d in _TAG_DICT_LOWER if d in run and _tag_ok(d, src_norm, low)]
+            has_any = any(d in run for d in _TAG_DICT_LOWER)
+            if has_any and (L > _TAG_MAX_LEN or (eff and max(len(d) for d in eff) >= L - 1)):
+                continue
+            if 4 <= L <= _TAG_MAX_LEN and _tag_ok(run, src_norm, low):
+                picks.append(run)
+                continue
+            toks = []
+            for t in _tokenize_cached(run):
+                t = t.strip()
+                if _tag_ok(t, src_norm, low):
+                    toks.append(t)
+            for w, _ in collections.Counter(toks).most_common(3):
+                picks.append(w)
+
+    seen, out = set(), []
+    for w in picks:
+        if w in seen:
+            continue
+        seen.add(w)
+        out.append(w)
+    return out
+
+
+def _tag_articles(sources_with_items):
+    """为每篇文章提取 1-3 个话题标签。
+
+    标签来源：标题（title_zh/title/t，构建期与刷新通道两种契约）优先，
+    不足 3 个时用摘要前 200 字（summary_zh/summary/s）补齐。
+    口径见上方常量区注释（C2 修复）。
+    原地修改 item，新增 tags 字段。
+    """
+    for src in sources_with_items:
+        items = src.get("items", [])
+        if not items:
+            continue
+        sn = _tag_src_name_norm(src.get("name"))
+        # 第一遍：逐条产出候选
+        raw = []
+        for it in items:
+            title = it.get("title_zh") or it.get("title") or it.get("t") or ""
+            summary = (it.get("summary_zh") or it.get("summary") or it.get("s") or "")[:200]
+            if not (title or summary).strip():
+                raw.append([])
+                continue
+            tags = []
+            # 标题：完整管线（含边界对齐整段取词）；
+            # 摘要：只取词典术语与英文词（散文长段硬切只会得到 '自微信'/'际网址' 这类碎片）
+            for pool, allow_runs in ((title, True), (summary, False)):
+                if len(tags) >= 3:
+                    break
+                for w in _tag_candidates(pool, sn, allow_runs=allow_runs):
+                    if len(tags) >= 3:
+                        break
+                    if w not in tags:
+                        tags.append(w)
+            raw.append(tags)
+        # 第二遍：按源统计样板词（台标/栏目名），整源剔除
+        # 判据是「在这个源里几乎每篇都出现」——话题词不会这么均匀，栏目名会。
+        boiler = set()
+        if len(items) >= _TAG_BOILER_MIN_ITEMS:
+            df = collections.Counter()
+            for tags in raw:
+                for t in set(tags):
+                    df[t] += 1
+            need = max(3, _TAG_BOILER_RATIO * len(items))
+            boiler = set(t for t, c in df.items() if c >= need)
+        for it, tags in zip(items, raw):
+            it["tags"] = [t for t in tags if t not in boiler]
 
 
 def _is_numeric_unit_phrase(s):
@@ -5085,6 +8175,23 @@ def _extract_meaningful_phrase(title, max_len=14):
             return title[:i]
     # 找不到好边界，就截取到 max_len
     return title[:max_len]
+
+
+def _clean_topic_label(label, max_len=20):
+    """清洗话题标签：截断过长标签、移除未完成引号、去除尾部标点。"""
+    if not label:
+        return ''
+    # 限制最大长度
+    if len(label) > max_len:
+        label = label[:max_len].rstrip()
+    # 移除未完成的引号（截断导致的）
+    label = re.sub(r'["\'"\'「『【\(（]$', '', label)
+    # 移除尾部标点
+    label = re.sub(r'[，。：；！？,\.:;!?\s]+$', '', label)
+    # 如果标签太短或为空，返回空
+    if len(label) < 2:
+        return ''
+    return label
 
 
 def _extract_topic_label_from_titles(cluster_articles):
@@ -5388,6 +8495,9 @@ def _cluster_topics(rss_history, now_bj, max_topics=20, min_cluster=3):
             continue
         # ── 标题召回机制：优先从标题中提取语义通顺的标签 ──
         label, labels = _extract_topic_label_from_titles(cl['articles'])
+        # 清洗标签
+        label = _clean_topic_label(label)
+        labels = [_clean_topic_label(lb) for lb in labels if _clean_topic_label(lb)]
         # 如果标题召回失败，回退到原始 token 频率逻辑
         if not label:
             title_counter = collections.Counter()
@@ -5440,15 +8550,19 @@ def _generate_daily_summary(keywords, topics, stats, rising=None):
         parts.append("共 %d 篇文章，其中近 24 小时新增 %d 篇" % (total, recent))
         return "。".join(parts)
     # ── Agnes AI 结构化摘要 ──
-    if not _AGNES_KEY:
+    if not _AGNES_KEYS:
         return _template_summary()
     system_prompt = (
         "你是一名高级科技情报分析师。你的核心能力是从海量碎片化信息中提炼核心逻辑，"
         "识别被大众忽略的弱信号。\n\n"
         "## 思维模型\n"
-        "1. 见微知著：从散点关键词和话题中寻找底层共性叙事。\n"
+        "1. 见微知著：从散点关键词和话题中寻找底层共性叙事（如多个话题共同指向'AI应用落地'）。\n"
         "2. 交叉验证：RSS 专业视角与大众热榜的差异往往隐藏认知套利机会。\n"
-        "3. 反直觉思考：当全网叫好时寻找风险，当全网恐慌时寻找机会。\n\n"
+        "3. 反直觉思考：当全网叫好时寻找风险，当全网恐慌时寻找机会。拒绝平庸共识。\n\n"
+        "## 核心原则\n"
+        "1. 直击要害：拒绝'综上所述'、'众所周知'等废话，直接输出结论。\n"
+        "2. 逻辑闭环：不仅描述'发生了什么'，必须解释'为什么发生'以及'未来会怎样'。\n"
+        "3. 去情绪化：可以分析舆论情绪，但你的分析必须冷静、客观。\n\n"
         "## 数据字段解读\n"
         "- 关键词：按 TF-IDF 评分排序，排名越靠前表示该词在近 24h 文章中越突出。\n"
         "- 升温词：括号内 +N 表示排名上升 N 位，数值越大表示升温越显著。\n"
@@ -5458,7 +8572,12 @@ def _generate_daily_summary(keywords, topics, stats, rising=None):
         '{"core_trends": "核心态势(100字内): 一句话定性 + 宏观主线 + 微观佐证",\n'
         ' "signals": "异动信号(80字内): 升温话题 + 异常波动",\n'
         ' "rss_insights": "RSS深度洞察(80字内): 专业视角补充的硬核信息",\n'
-        ' "outlook": "研判建议(50字内): 关注方向或风险提示"}'
+        ' "outlook": "研判建议(50字内): 具体建议，禁止空话"}\n\n'
+        "## 正确示例\n"
+        'core_trends: "Agent工程化进入系统化阶段。OpenAI、Google、Anthropic 同步推出企业级评估服务，'
+        '标志从\'能用\'到\'可观测\'的拐点。"\n'
+        'signals: "Agent评估服务升温(+15位)、LangSmith Trace Analytics 发布、CrewAI 集成 OpenTelemetry"\n'
+        'outlook: "Agent基础设施竞争加剧，关注评估标准统一化进程"'
     )
     user_prompt = (
         "请分析以下 RSS 聚合数据：\n\n"
@@ -5490,7 +8609,7 @@ def _generate_daily_summary(keywords, topics, stats, rising=None):
         data=payload,
         headers={
             "Content-Type": "application/json",
-            "Authorization": "Bearer " + _AGNES_KEY,
+            "Authorization": "Bearer " + _AGNES_KEYS[_AGNES_KEY_IDX],
             "User-Agent": "starhub-auto-update",
         },
     )
@@ -5542,12 +8661,13 @@ def _extract_json_from_text(text):
 
 
 def _load_prev_analysis():
-    """加载前一天的分析快照（用于趋势对比）。返回完整 analysis dict。"""
+    """加载前一天的分析快照。返回 dict；损坏/非 dict（rev9 P3①）返回 None。"""
     if not os.path.exists(ANALYSIS_SNAPSHOT_FILE):
         return None
     try:
         with open(ANALYSIS_SNAPSHOT_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
     except Exception:
         return None
 
@@ -5555,8 +8675,7 @@ def _load_prev_analysis():
 def _save_analysis_snapshot(analysis_data):
     """保存分析快照到 analysis_snapshot.json。"""
     try:
-        with open(ANALYSIS_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
-            json.dump(analysis_data, f, ensure_ascii=False, indent=1)
+        _atomic_write_json(ANALYSIS_SNAPSHOT_FILE, analysis_data, ensure_ascii=False, indent=1)
         print("[分析] 保存分析快照 → %s" % ANALYSIS_SNAPSHOT_FILE)
     except Exception as e:
         print("[分析] 保存失败: %s" % e, file=sys.stderr)
@@ -5565,11 +8684,88 @@ def _save_analysis_snapshot(analysis_data):
 def _save_source_quality(quality_data):
     """保存信源质量评分到 source_quality.json。"""
     try:
-        with open(SOURCE_QUALITY_FILE, "w", encoding="utf-8") as f:
-            json.dump(quality_data, f, ensure_ascii=False, indent=1)
+        _atomic_write_json(SOURCE_QUALITY_FILE, quality_data, ensure_ascii=False, indent=1)
         print("[分析] 保存信源评分 → %s (%d 个源)" % (SOURCE_QUALITY_FILE, len(quality_data)))
     except Exception as e:
         print("[分析] 信源评分保存失败: %s" % e, file=sys.stderr)
+
+
+def _log_insight_tracking(analysis_data, mode="incremental"):
+    """将洞察板块全量追踪数据追加写入 insight_tracking_history.jsonl。
+
+    覆盖 RAGAS 评分、洞察文本、关键词、话题、统计指标与构建元信息，
+    确保「日志所见即用户所见」。14 天滚动窗口，原子写入，异常安全。
+    """
+    try:
+        now_bj = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+        ragas = analysis_data.get("_ragas_eval", {})
+        summary = analysis_data.get("summary", {})
+        stats = analysis_data.get("stats", {})
+        meta = analysis_data.get("meta", {})
+        topic_clusters = analysis_data.get("topic_clusters", [])
+        kw_global = analysis_data.get("keywords", {}).get("global", [])
+
+        entry = {
+            "ts": now_bj.isoformat(),
+            "mode": mode,
+            "overall": ragas.get("overall"),
+            "context_coverage": ragas.get("context_coverage"),
+            "faithfulness": ragas.get("faithfulness"),
+            "relevance": ragas.get("relevance"),
+            "feedback": ragas.get("feedback", ""),
+            "iterations": ragas.get("iterations"),
+            "threshold": ragas.get("threshold"),
+            "passed": (ragas.get("overall", 0) >= ragas.get("threshold", 0.6))
+                      if ragas.get("overall") is not None else None,
+            "top_keywords": [w for w, _ in kw_global[:10]],
+            "topic_labels": [c.get("label", "") for c in topic_clusters[:15]],
+            "narrative": (analysis_data.get("narrative") or "")[:500],
+            "core_trends": (summary.get("core_trends") or "")[:500],
+            "rss_insights": (summary.get("rss_insights") or "")[:500],
+            "outlook": (summary.get("outlook") or "")[:500],
+            "stats": {
+                "total_articles": stats.get("total_articles", 0),
+                "recent_count": stats.get("recent_count", 0),
+                "source_count": stats.get("source_count", 0),
+            },
+            "meta": {
+                "llm_provider": meta.get("llm_provider", ""),
+                "embed_model": meta.get("embed_model", ""),
+                "elapsed_seconds": meta.get("elapsed_seconds", 0),
+            },
+            "stale": analysis_data.get("stale", False),
+        }
+
+        # 加载现有记录
+        lines = []
+        if os.path.exists(INSIGHT_TRACKING_FILE):
+            try:
+                with open(INSIGHT_TRACKING_FILE, "r", encoding="utf-8") as f:
+                    lines = [l for l in f.readlines() if l.strip()]
+            except Exception:
+                lines = []
+
+        # 追加新记录
+        lines.append(json.dumps(entry, ensure_ascii=False) + "\n")
+
+        # 14 天滚动窗口：淘汰过期条目
+        cutoff = (now_bj - datetime.timedelta(days=14)).isoformat()
+        filtered = []
+        for line in lines:
+            try:
+                rec = json.loads(line)
+                if rec.get("ts", "") >= cutoff:
+                    filtered.append(line)
+            except json.JSONDecodeError:
+                continue
+        lines = filtered
+
+        # 原子写入
+        _atomic_write_text(INSIGHT_TRACKING_FILE, "".join(lines))
+        print("[分析] 洞察追踪日志已记录 → %s (保留 %d 条)"
+              % (INSIGHT_TRACKING_FILE, len(lines)))
+    except Exception as e:
+        print("[分析] 洞察追踪日志失败: %s" % e, file=sys.stderr)
 
 
 # ── 热榜轨迹追踪 ──
@@ -5606,8 +8802,7 @@ def _accumulate_hot_history(hot_snapshot, now_bj):
         # 清理超过 7 天的旧数据
         history[plat] = [e for e in history[plat] if e["ts"] >= cutoff_7d]
     try:
-        with open(HOT_HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, separators=(",", ":"))
+        _atomic_write_json(HOT_HISTORY_FILE, history, ensure_ascii=False, separators=(",", ":"))
         total = sum(len(v) for v in history.values())
         print("[热榜] 轨迹累积: %d 平台, %d 条记录" % (len(history), total))
     except Exception as e:
@@ -5803,20 +8998,22 @@ def _accumulate_rss_trend_history(analysis_data, now_bj):
             "count": t.get("count", 0),
             "sources": len(t.get("sources", [])),
         })
-    # 追加新快照
+    # 追加新快照（D4：记录不可信日期源名单，供趋势/关键词降权消费）
     snapshot = {
         "ts": now_bj.isoformat(),
         "keywords": kw_rank,
         "topics": topics_summary,
         "by_cat": by_cat,
+        "bad_date_sources": sorted(_LAST_UNRELIABLE_SRCS),
+        # D3 轻量场：本快照的语义主题为沿用值，消费方可据此识别平台期
+        "stale": bool(analysis_data.get("stale")),
     }
     history["snapshots"].append(snapshot)
     # 清理超过 14 天的旧快照
     cutoff_14d = (now_bj - datetime.timedelta(days=14)).isoformat()
     history["snapshots"] = [s for s in history["snapshots"] if s["ts"] >= cutoff_14d]
     try:
-        with open(RSS_TREND_HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, separators=(",", ":"))
+        _atomic_write_json(RSS_TREND_HISTORY_FILE, history, ensure_ascii=False, separators=(",", ":"))
         print("[分析] RSS 趋势历史累积: %d 个快照" % len(history["snapshots"]))
     except Exception as e:
         print("[分析] RSS 趋势历史写入失败: %s" % e, file=sys.stderr)
@@ -5983,24 +9180,66 @@ def _compute_cross_category_topics(kw_data):
     return cross[:20]
 
 
-def _run_analysis(sources_with_items, now_bj, hot_snapshot=None, hot_history=None):
-    """执行智能分析流水线。优先使用 insight_engine (LlamaIndex)，失败回退统计方法。"""
-    # ── 尝试 insight_engine (LlamaIndex) ──
+def _run_analysis(sources_with_items, now_bj, hot_snapshot=None, hot_history=None, mode="incremental"):
+    """执行智能分析流水线。
+
+    D3 轻/重分级：重分析（语义聚类/深度洞察/RAGAS）按 insight_heavy_interval_hours
+    （默认 6h；full 模式无条件重跑）间隔运行，轻量场复用上次重字段并标注 stale=true；
+    统计字段（关键词/趋势/质量/轨迹）每场照算。insight_engine 不可用时回退统计方法。
+    """
+    prev_analysis = _load_prev_analysis()
+    ie_cfg = {}
+    engine_on = False
     try:
         import insight_engine
-        ie_config = insight_engine.load_config()
-        if ie_config.get("insight_engine_enabled", True):
-            prev_analysis = _load_prev_analysis()
+        ie_cfg = insight_engine.load_config()
+        engine_on = bool(ie_cfg.get("insight_engine_enabled", True))
+    except Exception:
+        engine_on = False
+    heavy_due = True
+    if engine_on:
+        try:
+            _interval = float(ie_cfg.get("insight_heavy_interval_hours", 6))
+            if not math.isfinite(_interval) or _interval <= 0:
+                _interval = 6.0  # NaN 比较恒 False 会锁死轻量模式（rev8 P2-3）
+        except (TypeError, ValueError):
+            _interval = 6.0
+        _prev_gen = (prev_analysis or {}).get("generated_at", "")
+        # P1-2 修复（对抗性审查 f168c43）：语义字段（deep_insights）缺失也触发重分析——
+        # 重分析失败时统计路径会刷新 generated_at，仅看时间会把退化态锁定一整个间隔
+        _semantics_missing = not (prev_analysis or {}).get("deep_insights")
+        if not _prev_gen or mode == "full" or _interval <= 0 or _semantics_missing:
+            heavy_due = True
+        else:
+            try:
+                _pg = datetime.datetime.fromisoformat(_prev_gen)
+                if _pg.tzinfo:
+                    _pg = _pg.astimezone(datetime.timezone(datetime.timedelta(hours=8))).replace(tzinfo=None)
+                heavy_due = (now_bj.replace(tzinfo=None) - _pg).total_seconds() >= _interval * 3600
+            except (TypeError, ValueError):
+                heavy_due = True
+    if engine_on and heavy_due:
+        # ── 重分析：insight_engine (LlamaIndex) ──
+        try:
+            import insight_engine
             prev_keywords = []
             if prev_analysis and prev_analysis.get("keywords", {}).get("global"):
                 prev_keywords = [w for w, _ in prev_analysis["keywords"]["global"][:50]]
+            # 读取 Trending 数据供 insight engine 使用
+            trending_data = {}
+            try:
+                with open(TRENDING_SNAPSHOT_FILE, "r", encoding="utf-8") as _f:
+                    trending_data = json.load(_f)
+            except Exception:
+                pass
             ie_result = insight_engine.run_analysis(
                 hot_snapshot=hot_snapshot,
                 rss_history=_rss_history,
-                trending_data=[],
-                config=ie_config,
+                trending_data=trending_data,
+                config=ie_cfg,
                 prev_keywords=prev_keywords,
                 hot_history=hot_history,
+                bad_date_sources=set(_LAST_UNRELIABLE_SRCS),
             )
             if ie_result is not None:
                 # 合并原有需要保留的字段（热榜趋势、RSS轨迹等仍由旧方法计算）
@@ -6012,26 +9251,32 @@ def _run_analysis(sources_with_items, now_bj, hot_snapshot=None, hot_history=Non
                         ie_result.get("keywords", {}))
                 quality = _score_sources(sources_with_items, _rss_history)
                 _save_source_quality(quality)
+                # 保存 RAGAS 评估数据（在 quality 被信源质量分覆盖前）
+                _ragas_raw = ie_result.get("quality", {})
+                if isinstance(_ragas_raw, dict) and "overall" in _ragas_raw:
+                    ie_result["_ragas_eval"] = _ragas_raw
                 ie_result["quality"] = {sk: v["score"] for sk, v in quality.items()}
                 _save_analysis_snapshot(ie_result)
-                print("[分析] insight_engine (LlamaIndex) 分析完成")
+                _log_insight_tracking(ie_result, mode)
+                print("[分析] insight_engine (LlamaIndex) 重分析完成")
                 return ie_result
-    except ImportError:
-        print("[分析] insight_engine 未安装，回退统计方法")
-    except Exception as e:
-        print("[分析] insight_engine 失败: %s，回退统计方法" % e, file=sys.stderr)
-        import traceback; traceback.print_exc()
-    # ── 回退：原有统计方法 ──
+        except ImportError:
+            print("[分析] insight_engine 未安装，回退统计方法")
+        except Exception as e:
+            print("[分析] insight_engine 失败: %s，回退统计方法" % e, file=sys.stderr)
+            import traceback; traceback.print_exc()
+    elif engine_on:
+        print("[分析] 轻量模式：距上次重分析不足间隔，语义主题/深度洞察沿用旧值")
+    # ── 统计路径（insight_engine 关闭/失败/轻量场共用）──
     t0 = time.time()
     print("[分析] 开始智能分析...")
     # 1. 信源质量评分
     quality = _score_sources(sources_with_items, _rss_history)
     _save_source_quality(quality)
     # 2. 关键词提取
-    kw_data = _extract_keywords(_rss_history, now_bj)
+    kw_data = _extract_keywords(_rss_history, now_bj, _LAST_UNRELIABLE_SRCS)
     global_kw = kw_data["global"]
     # 3. 趋势检测（与上次构建对比）
-    prev_analysis = _load_prev_analysis()
     prev_kw = prev_analysis.get("keywords", {}).get("global", []) if prev_analysis else []
     rising = []
     if prev_kw:
@@ -6073,6 +9318,22 @@ def _run_analysis(sources_with_items, now_bj, hot_snapshot=None, hot_history=Non
         'hot_trends': hot_trends,
         'cross_platform': cross_platform,
     }
+    # D3 轻量场：语义主题/深度洞察/RAGAS 等重字段沿用上次重分析，诚实标注 stale；
+    # generated_at 保持上次重分析时间（前端据此展示真实新鲜度）
+    # P1-2 修复：overlay 无条件复用——重分析失败（insight_engine 抛异常）时统计路径
+    # 也要沿用上次的语义主题/深度洞察，并诚实标注 stale，防止退化态无痕。
+    # rev8 P1-2：语义主题/簇结构/深度洞察/RAGAS 显式沿用 prev（统计聚类的 topics 键
+    # 恒存在会顶掉语义主题——spec D3 承诺 light 场主题数据不回退）
+    if prev_analysis:
+        for _k in ("topics", "topic_clusters", "deep_insights", "ragas",
+                   "narrative", "cross_platform_semantic"):
+            if prev_analysis.get(_k) is not None:
+                analysis[_k] = prev_analysis[_k]
+        for _k, _v in prev_analysis.items():
+            if _k not in analysis and _k != "bad_date_sources":
+                analysis[_k] = _v
+        analysis["stale"] = True
+        analysis["generated_at"] = prev_analysis.get("generated_at") or analysis["generated_at"]
     _save_analysis_snapshot(analysis)
     # 9. RSS 内容趋势历史累积（在 analysis_snapshot 保存后，以便读取当前关键词数据）
     trend_history = _accumulate_rss_trend_history(analysis, now_bj)
@@ -6084,6 +9345,12 @@ def _run_analysis(sources_with_items, now_bj, hot_snapshot=None, hot_history=Non
     analysis['cross_category'] = cross_category
     # 重新保存（含轨迹和跨分类数据）
     _save_analysis_snapshot(analysis)
+    # 轻量模式：从旧分析中提取 RAGAS 评估数据
+    if prev_analysis and "_ragas_eval" not in analysis:
+        _prev_q = prev_analysis.get("quality", {})
+        if isinstance(_prev_q, dict) and "overall" in _prev_q:
+            analysis["_ragas_eval"] = _prev_q
+    _log_insight_tracking(analysis, mode)
     elapsed = round(time.time() - t0, 1)
     n_kw_traj = len(rss_trajectories.get('keywords', {}))
     n_topic_traj = len(rss_trajectories.get('topics', {}))
@@ -6106,113 +9373,251 @@ def main(mode="full"):
     _load_caches()
     _load_history()
 
-    # 增量模式：加载各源上次抓取时间
-    last_fetch = {}
-    if mode == "incremental":
-        last_fetch = _load_snapshot_meta()
-        print("[增量模式] 已加载 %d 个源的上次抓取记录" % len(last_fetch))
-
     sources_with_items = []
     total_items = 0
     ok_count = 0
-    skipped_count = 0
     failed_count = 0
     _source_log = []  # 每源抓取结果
     _build_start = time.time()
 
-    # 增量模式：预建历史索引（source_key → items），避免每源遍历全部历史
-    _hist_by_key = {}
-    if mode == "incremental":
-        for _v in _rss_history.values():
-            _sk = _v.get("source_key", "")
-            if _sk not in _hist_by_key:
-                _hist_by_key[_sk] = []
-            _hist_by_key[_sk].append({
-                "link": _v["link"], "pub_date": _v.get("pub_date", ""),
-                "title": _v.get("title", ""), "title_zh": _v.get("title_zh", ""),
-                "summary": _v.get("summary", ""), "summary_zh": _v.get("summary_zh", ""),
-                "full_content": _v.get("full_content", ""), "image": _v.get("image", ""),
-                "media_url": _v.get("media_url", ""), "media_type": _v.get("media_type", ""),
-            })
-        print("[增量模式] 历史索引: %d 源有历史数据" % len(_hist_by_key))
+    # 并行抓取 RSS（短超时，失败快速跳过）
+    # - 全局并发 12；同一域名并发 2（对单域行为接近串行，避免打爆 xgo.ing 等桥接服务）
+    # - 域级熔断：同域名连续 3 次「上游侧失败」则本轮跳过该域剩余源；成功但 0 条不计入。
+    #   注意它是尽力而为的限流、不是硬上限：熔断只在任务尚未开工时生效，已排在域名
+    #   信号量上的那批（≤12）照样会发出；且任何一次成功都会把连续计数清零，所以
+    #   "域内部分失败"的混合场景不会触发 —— 只有整域在失败才会。
+    # - 流水线：某源抓完即在主线程串行翻译，与其余源的网络 IO 重叠；翻译不进线程池（翻译服务有限流）
+    _results = [None] * len(RSS_SOURCES)  # 按 RSS_SOURCES 顺序回填，保持产物顺序稳定
 
-    # 串行抓取 RSS（短超时，失败快速跳过）
+    # 每场构建都抓全部源：跳过会让被跳源的内容完全依赖存档跨构建存活，而存档正是
+    # 2026-09-17 故障里断掉的那一环。RSS 也没有增量协议，省下的只是请求数。
+    _to_fetch = list(enumerate(RSS_SOURCES))
+
+    # 域名信号量与熔断状态全部在提交任务前于主线程建好，规避运行期并发初始化竞争
+    def _src_domain(url):
+        m = re.match(r"https?://([^/]+)", url or "")
+        return m.group(1) if m else ""
+
+    _domain_sems = {}
     for src in RSS_SOURCES:
-        key = src["key"]
-        tier = src.get("tier", 3)
+        _d = _src_domain(src.get("url", ""))
+        if _d and _d not in _domain_sems:
+            _domain_sems[_d] = threading.Semaphore(2)
+    _domain_lock = threading.Lock()
+    _domain_failstreak = collections.defaultdict(int)  # 域名 → 连续失败数
+    _domain_broken = set()  # 本轮已熔断域名
+    _domain_rl = set()      # 本轮命中 429 的域名（限流冷却，与熔断互不影响）
 
-        # 增量模式跳过规则（按 tier 分级阈值）：
-        # 1. T1 源始终跳过（由 api/rss.js 实时抓取）
-        # 2. T2 源：距上次抓取 < 1h 跳过
-        # 3. T3 源：距上次抓取 < 2h 跳过
-        if mode == "incremental":
-            if tier == 1:
-                skipped_count += 1
-                # 从历史索引填充 T1 源（增量构建不抓取 T1，但不能传空 items 导致历史数据流失）
-                sources_with_items.append({
-                    "key": key, "name": src["name"], "cat": src["cat"],
-                    "color": src["color"], "items": _hist_by_key.get(key, []),
-                    "tier": tier,
-                })
-                _source_log.append({"key": key, "name": src["name"], "cat": src["cat"], "tier": tier, "status": "skipped_t1", "items": len(_hist_by_key.get(key, []))})
-                continue
-            prev = last_fetch.get(key)
-            if prev:
-                try:
-                    prev_time = datetime.datetime.fromisoformat(prev)
-                    threshold = 1 * 3600 if tier <= 2 else 2 * 3600
-                    if (now - prev_time).total_seconds() < threshold:
-                        skipped_count += 1
-                        # 从历史索引填充跳过的 T2/T3 源（避免空 items 导致历史数据流失）
-                        sources_with_items.append({
-                            "key": key, "name": src["name"], "cat": src["cat"],
-                            "color": src["color"], "items": _hist_by_key.get(key, []),
-                            "tier": tier,
-                        })
-                        _source_log.append({"key": key, "name": src["name"], "cat": src["cat"], "tier": tier, "status": "skipped_cached", "items": len(_hist_by_key.get(key, []))})
-                        continue
-                except (ValueError, TypeError):
-                    pass
-
-        items = _fetch_rss(src)
-        n = len(items)
-        _fetch_ok = n > 0
-        if _fetch_ok:
-            ok_count += 1
-            last_fetch[key] = now.isoformat()
+    def _worker(i, src):
+        """只做网络 IO 与域名熔断判定；计数与翻译由主线程汇总"""
+        dom = _src_domain(src.get("url", ""))
+        with _domain_lock:
+        # 限流复查只做一次，且必须放在取到域名额之后（见下面那段）：
+        # 入口这次在变异体检里被证明是死分支（删掉后 17 条判据全绿）——
+        # 域内名额只有 2 个、排队发生在信号量内侧，入口拦不住任何已排队的 worker，
+        # 留着只会让人以为冷却有两道防线。
+            if dom and dom in _domain_broken:
+                return i, src, None, "domain_broken"
+        crashed = False
+        try:
+            if dom:
+                with _domain_sems[dom]:
+                    # 取到名额之后再查一次限流：入口那次检查挡不住已经在排队的 worker
+                    # （生产里 972 源排 12 线程、域内名额只有 2 个，
+                    #  第一次 429 落地时同域后面的 worker 大多还没发出请求，
+                    #  但"已过入口检查"的那几个会照发 —— 离线复现里六个源全被抓了）。
+                    with _domain_lock:
+                        if dom in _domain_rl:
+                            return i, src, None, "rate_limited"
+                    items = _fetch_rss(src, timeout=src.get("timeout"))
+            else:
+                items = _fetch_rss(src, timeout=src.get("timeout"))
+        except Exception as _ex429:
+            # 只认 429（鸭子类型取 code，避免依赖 urllib.error 是否被导入）。
+            # 命中即把该域拉入本场冷却：同域剩余源不再发请求，
+            # 既停止锤限流器，也不再被"连续 3 次硬失败"的熔断连坐成 domain_broken。
+            if getattr(_ex429, "code", None) == 429:
+                with _domain_lock:
+                    if dom:
+                        _domain_rl.add(dom)
+                print("[RSS聚合] %s 命中 429 限流，本域 %s 剩余源本场不再请求"
+                      % (src["name"], dom), file=sys.stderr)
+                return i, src, None, "rate_limited"
+            _ex = _ex429
+            # 我方清洗/去重链路抛错：请求本身已发出并成功，不该牵连同域名兄弟源，
+            # 但必须留痕 —— 静默吞成「0 条」让 2026-09-16 起的 84 个源无声消失了三天。
+            print("[RSS聚合] %s 抓取异常: %s: %s"
+                  % (src["name"], type(_ex).__name__, _ex), file=sys.stderr)
+            items, crashed = [], True
+        hard_fail = items is None
+        ok = bool(items)
+        with _domain_lock:
+            if ok:
+                _domain_failstreak[dom] = 0
+            elif hard_fail and dom:
+                # 只有上游侧失败（网络/HTTP/XML 不可解析）才计入域名熔断。
+                # 「成功但 feed 0 条」是正常状态：计入会让 api.xgo.ing 这种一个域名挂
+                # 160 个源的桥接服务，被前 3 个空 feed 熔断掉其余全部源，
+                # 而提交顺序固定 ⇒ 尾部源每场都轮不到（实测 0.00 次/场 × 18 场）。
+                _domain_failstreak[dom] += 1
+                if _domain_failstreak[dom] >= 3:
+                    _domain_broken.add(dom)
+        if ok:
+            _status = "ok"
+        elif hard_fail or crashed:
+            _status = "error"   # 没拿到数据且不是「上游本来就空」，与 empty 分开才查得动
         else:
-            failed_count += 1
+            _status = "empty"
+        return i, src, items, _status
 
-        # 翻译标题和摘要
-        for it in items:
-            it["title_zh"] = _translate_to_zh(it["title"]) if it["title"] else it["title"]
-            it["summary_zh"] = _translate_to_zh(it.get("summary", "")) if it.get("summary") else ""
-            it["time_str"] = _fmt_rel_time(it.get("pub_date"))
-            # 保留 pub_date 用于前端时间线排序（转为 ISO 字符串）
-            pd = it.get("pub_date")
-            if pd and hasattr(pd, 'isoformat'):
-                it["pub_date"] = pd.isoformat()
+    # 翻译线程池：有界并发（6 源并发），不拖住抓取主循环；Agnes 429/全链熔断时自动降级
+    _trans_pool = concurrent.futures.ThreadPoolExecutor(max_workers=6)
+    _trans_futs = []
+    _pool = concurrent.futures.ThreadPoolExecutor(max_workers=12)
+    try:
+        _futs = {_pool.submit(_worker, i, src): (i, src) for i, src in _to_fetch}
+        for _fut in concurrent.futures.as_completed(_futs):
+            i, src = _futs[_fut]
+            try:
+                _, src, items, status = _fut.result()
+            except Exception as _ex:
+                # 单个 worker 意外异常不拖垮整场构建：该源按失败处理，其余继续
+                print("[RSS聚合] %s worker 异常: %s" % (src["name"], _ex), file=sys.stderr)
+                items, status = [], "empty"
+            key = src["key"]
+            tier = src.get("tier", 3)
+            n = len(items) if items else 0
+            if status == "ok":
+                ok_count += 1
+                # Fix 4: T4 源连续成功后自动升级到 T3
+                if tier == 4:
+                    _tier4_success_streak[key] = _tier4_success_streak.get(key, 0) + 1
+                    if _tier4_success_streak[key] >= _TIER_PROMOTION_THRESHOLD:
+                        src["tier"] = 3
+                        print("[T4升级] %s 连续 %d 次成功 → 升级到 T3" % (src["name"], _tier4_success_streak[key]))
+                        del _tier4_success_streak[key]
+                else:
+                    _tier4_success_streak[key] = 0  # 非 T4 源重置连续计数
+                # 翻译交给独立线程池有界并发；完成顺序不影响最终产物顺序
+                if items:
+                    _trans_futs.append(_trans_pool.submit(_translate_source_items, items))
+            else:
+                failed_count += 1
+                if items is None:
+                    items = []
+            _results[i] = {
+                "key": key, "name": src["name"], "cat": src["cat"],
+                "color": src.get("color", "#6366f1"), "url": src.get("url", ""),
+                "items": items,
+                "tier": tier,
+            }
+            total_items += n
+            print("[RSS聚合] %s: %d 条%s" % (src["name"], n, "（域熔断跳过）" if status == "domain_broken" else ""))
+            _source_log.append({"key": key, "name": src["name"], "cat": src["cat"], "tier": tier, "status": status, "items": n})
+    except BaseException:
+        # 中断（Ctrl+C/任务取消）时丢弃排队任务立即退出，避免 shutdown(wait=True) 等完上千个待抓源
+        _pool.shutdown(wait=False, cancel_futures=True)
+        _trans_pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    _pool.shutdown(wait=True)
+    # 等待全部源级翻译完成（下游历史累积/渲染依赖 title_zh）
+    for _tf in _trans_futs:
+        try:
+            _tf.result()
+        except Exception as _ex:
+            print("[翻译] 条目翻译任务异常: %s" % _ex, file=sys.stderr)
+    _trans_pool.shutdown(wait=True)
 
-        src_data = {
-            "key": src["key"], "name": src["name"], "cat": src["cat"],
-            "color": src["color"], "items": items,
-            "tier": tier,
-        }
-        sources_with_items.append(src_data)
-        total_items += n
-        print("[RSS聚合] %s: %d 条" % (src["name"], n))
-        _source_log.append({"key": key, "name": src["name"], "cat": src["cat"], "tier": tier, "status": "ok" if _fetch_ok else "empty", "items": n})
+    sources_with_items.extend(r for r in _results if r is not None)
 
-    if mode == "incremental":
-        print("[增量模式] 跳过 %d 个源，抓取 %d 个源" % (skipped_count, len(RSS_SOURCES) - skipped_count))
 
     if total_items == 0 and mode == "full":
         print("[RSS聚合] 所有源均失败，尝试使用历史数据", file=sys.stderr)
 
     # 累积到 72 小时历史，用累积数据替换当次抓取
     _history_before = len(_rss_history)
+    # Fix 3: 保存抓取阶段数字，避免被历史重组覆写导致日志口径不一致
+    _items_fetched = total_items
+    _sources_with_data_before = sum(1 for s in sources_with_items if s.get("items"))
     sources_with_items, total_items = _accumulate_history(sources_with_items)
     _history_after = len(_rss_history)
+
+    # ── 历史回流图片补升级（历史缓存中的旧 URL 未经 _upgrade_img_url）──
+    _hist_upgraded = 0
+    for _src in sources_with_items:
+        for _it in _src.get("items", []):
+            _old_img = _it.get("image", "")
+            if _old_img:
+                _new_img = _upgrade_img_url(_old_img)
+                if _new_img != _old_img:
+                    _it["image"] = _new_img
+                    # 判空（→ 空串）不算"升级"，它由下面的封面计数单独播报
+                    if _new_img:
+                        _hist_upgraded += 1
+    if _hist_upgraded:
+        print("[图片升级] 历史缓存补升级 %d 张" % _hist_upgraded)
+    # 历史缓存里躺着的必挂封面同样清掉，免得每一场都重新命中一次
+    _hist_purged = _purge_bad_covers_in_history(_rss_history)
+    # 正文侧的同批清扫：老条目的 full_content 是按入库那一刻的规则出厂的，不重写就要等
+    # 它被重新抓取（或自然过期）才换过来。理由与落点与上一行同一条（见函数 docstring 的实测口径）。
+    _hist_normed = _renormalize_history_fulltext(_rss_history)
+    # 对抗审查 ②：上一行只改 `_rss_history`，而 `_accumulate_history` 早在 :909 就用
+    # `entry = dict(item)` 把历史命中抄成了**出厂副本** —— 三个消费者
+    # （`_save_api_snapshot` / `build_html` / `write_data_chunks`）读的是副本，
+    # 所以清扫必须**也在副本上再跑一遍**，否则出厂形状仍是入库那一刻的。
+    # 落点与写法照本文件 :9517-9529 那条 image 补升级（同一格道理，既有做法）。
+    _out_normed = _renormalize_outgoing_fulltext(sources_with_items)
+    # 清扫分账必须**无条件**播报：掉到 0 有两种解释（上游换了形状 / 某把刀被摘了），
+    # 两种都需要有人知道，而"只在有命中时才打印"恰好把这一信号吞掉了
+    # （与 `_bad_cover_hits` 的判空播报同一条理由）。
+    print("[历史清扫] 重写 %d 条（正文规范化 %d / 导航脱链 %d；摘要 HN 模板 %d / 粘连裸链 %d）"
+          % (_hist_normed, _LAST_HISTORY_SWEEP["fulltext"], _LAST_HISTORY_SWEEP["body_delink"],
+             _LAST_HISTORY_SWEEP["summary_hn"], _LAST_HISTORY_SWEEP["summary_glued"]))
+    # 出厂那一本另播（对抗审查 ②）：三个消费者读的是这一份，历史上这一格根本没播过，
+    # 所以"清扫只改了存盘那份"这件事在构建日志里是完全静默的。
+    print("[出厂清扫] 重写 %d 条（正文规范化 %d / 导航脱链 %d；摘要 HN 模板 %d / 粘连裸链 %d）"
+          % (_out_normed, _LAST_OUTGOING_SWEEP["fulltext"],
+             _LAST_OUTGOING_SWEEP["body_delink"], _LAST_OUTGOING_SWEEP["summary_hn"],
+             _LAST_OUTGOING_SWEEP["summary_glued"]))
+    # 判空必须可观测：0 命中说明上游换了域名或这张表已经过期，两种都需要有人知道
+    if _bad_cover_hits:
+        _bc_top = sorted(_bad_cover_hits.items(), key=lambda kv: -kv[1])
+        print("[封面判空] 丢弃 %d 张必挂封面（其中历史缓存清理 %d 张；同批历史正文重写 %d 条）：%s" % (
+            sum(_bad_cover_hits.values()), _hist_purged, _hist_normed,
+            "、".join("%s×%d" % (_h, _n) for _h, _n in _bc_top)))
+    else:
+        print("[封面判空] 0 张命中（表内 %d 个域名本场均未出现；同批历史正文重写 %d 条）"
+              % (len(_BAD_COVER_HOSTS), _hist_normed), file=sys.stderr)
+
+    # ── 剥离云存储签名参数（防止 GitHub Push Protection 拦截推送）──
+    # 在快照/历史/数据分块写入前统一清洗，一处覆盖全部输出路径
+    _oss_stripped = 0
+    for _src in sources_with_items:
+        for _it in _src.get("items", []):
+            for _k in ("link", "summary", "summary_zh", "full_content", "image", "media_url"):
+                _old_v = _it.get(_k)
+                if _old_v:
+                    _new_v = _strip_oss_signature(_old_v)
+                    if _new_v != _old_v:
+                        _it[_k] = _new_v
+                        _oss_stripped += 1
+    # _rss_history 在 _accumulate_history 中创建了独立 dict 副本，需单独清洗
+    for _link, _hit in _rss_history.items():
+        for _k in ("link", "summary", "summary_zh", "full_content", "image", "media_url"):
+            _old_v = _hit.get(_k)
+            if _old_v:
+                _new_v = _strip_oss_signature(_old_v)
+                if _new_v != _old_v:
+                    _hit[_k] = _new_v
+                    _oss_stripped += 1
+    if _oss_stripped:
+        print("[签名剥离] 已剥离 %d 处云存储签名参数" % _oss_stripped)
+
+    # ── 图片质量审计（自动发现低分辨率缩略图）──
+    try:
+        _audit_image_quality(sources_with_items)
+    except Exception as e:
+        print("[图片审计] 审计失败，跳过: %s" % e, file=sys.stderr)
 
     # ── 智能分析流水线（关键词 / 话题 / AI 摘要 / 信源评分 / 热榜轨迹 / 跨平台） ──
     analysis_data = None
@@ -6225,8 +9630,7 @@ def main(mode="full"):
             try:
                 hot_snapshot = fetch_newsnow_snapshot()
                 try:
-                    with open(HOT_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
-                        json.dump(hot_snapshot, f, ensure_ascii=False, separators=(",", ":"))
+                    _atomic_write_json(HOT_SNAPSHOT_FILE, hot_snapshot, ensure_ascii=False, separators=(",", ":"))
                 except Exception as e:
                     print("[热榜] 快照写入失败: %s" % e, file=sys.stderr)
             except Exception as e:
@@ -6235,27 +9639,37 @@ def main(mode="full"):
             # 累积热榜历史轨迹（始终执行，确保 hot_history.json 被创建）
             hot_history = _accumulate_hot_history(hot_snapshot or [], now_bj)
             analysis_data = _run_analysis(sources_with_items, now_bj,
-                                          hot_snapshot=hot_snapshot, hot_history=hot_history)
+                                          hot_snapshot=hot_snapshot, hot_history=hot_history,
+                                          mode=mode)
         except Exception as e:
             print("[分析] 智能分析失败，跳过: %s" % e, file=sys.stderr)
             import traceback; traceback.print_exc()
-
-    # 生成 API 快照（供 /api/rss 直接返回，避免实时抓取丢失历史累积数据）
-    meta = {"last_fetch": last_fetch}
-    _save_api_snapshot(sources_with_items, meta=meta)
 
     # 若分析未启用，仍需抓取热榜快照
     if not ANALYSIS_ENABLED:
         hot_snapshot = fetch_newsnow_snapshot()
         try:
-            with open(HOT_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
-                json.dump(hot_snapshot, f, ensure_ascii=False, separators=(",", ":"))
+            _atomic_write_json(HOT_SNAPSHOT_FILE, hot_snapshot, ensure_ascii=False, separators=(",", ":"))
         except Exception as e:
             print("[热榜] 快照写入失败: %s" % e, file=sys.stderr)
 
-    html_doc = build_html(sources_with_items, build_time, total_items, build_ts_ms, analysis_data=analysis_data)
-    with open(OUT, "w", encoding="utf-8") as f:
-        f.write(html_doc)
+    # ── 为每篇文章提取话题标签（供前端 diverse/topic 模式消费）──
+    try:
+        _tag_articles(sources_with_items)
+        _tagged = sum(1 for s in sources_with_items for it in s.get("items", []) if it.get("tags"))
+        print("[标签] 已为 %d 篇文章提取话题标签" % _tagged)
+    except Exception as e:
+        print("[标签] 提取失败，跳过: %s" % e, file=sys.stderr)
+
+    # 生成 API 快照（供 /api/rss 直接返回，避免实时抓取丢失历史累积数据）
+    # 必须晚于 _tag_articles()：快照构造只搬用白名单字段，早于打标则 tags 恒为空。
+    # 仍早于 build_html / write_data_chunks，保证产物写出异常时快照已落地。
+    _save_api_snapshot(sources_with_items)
+
+    html_doc = build_html(sources_with_items, build_time, total_items, build_ts_ms, analysis_data=analysis_data,
+                          diverse_window_minutes=DIVERSE_CFG["window_minutes"],
+                          diverse_enabled=DIVERSE_CFG["enabled"])
+    _atomic_write_text(OUT, html_doc)
 
     # 数据分块：rss-data-0.js（首屏）/ rss-data-1.js（全量，后台合并）
     try:
@@ -6263,17 +9677,17 @@ def main(mode="full"):
     except Exception as e:
         print("[数据分块] 写出失败: %s" % e, file=sys.stderr)
 
-    # 生成 rss_sources.json（供 /api/rss 使用）
-    sources_json = json.dumps([{"key": s["key"], "name": s["name"], "cat": s["cat"],
-        "color": s["color"], "url": s["url"], "tier": s.get("tier", 3)} for s in RSS_SOURCES], ensure_ascii=False)
-    with open("rss_sources.json", "w", encoding="utf-8") as f:
-        f.write(sources_json)
+    # 生成 rss_sources.json（供 /api/rss 使用）；整体回写保留 timeout 等扩展字段
+    for s in RSS_SOURCES:
+        s.setdefault("tier", 3)
+    _atomic_write_json("rss_sources.json", RSS_SOURCES, ensure_ascii=False, separators=(",", ":"))
 
-    print("[RSS聚合] 生成完成 → %s（%d 源成功，共 %d 篇）" % (OUT, ok_count, total_items))
+    _snapshot_items = sum(len(s.get("items", [])) for s in sources_with_items)
+    print("[RSS聚合] 生成完成 → %s（%d 源成功，抓取 %d 篇，快照 %d 篇）" % (OUT, ok_count, _items_fetched, _snapshot_items))
 
     # 打印翻译统计
-    print("[翻译统计] 缓存命中: %d, Agnes: %d, Google: %d, MyMemory: %d, Dict: %d, 跳过: %d, 失败: %d" % (
-        _TRANS_STATS["cache_hit"], _TRANS_STATS["agnes"], _TRANS_STATS["google"], _TRANS_STATS["mymemory"],
+    print("[翻译统计] 缓存命中: %d, Agnes: %d, Zen: %d, Google: %d, MyMemory: %d, Dict: %d, 跳过: %d, 失败: %d" % (
+        _TRANS_STATS["cache_hit"], _TRANS_STATS["agnes"], _TRANS_STATS["zen"], _TRANS_STATS["google"], _TRANS_STATS["mymemory"],
         _TRANS_STATS["dict"], _TRANS_STATS["skip"], _TRANS_STATS["fail"]
     ))
 
@@ -6283,22 +9697,51 @@ def main(mode="full"):
 
     # ── 写入构建日志 ──
     _build_duration = round(time.time() - _build_start, 1)
-    _snapshot_items = sum(len(s.get("items", [])) for s in sources_with_items)
     build_logger.append({
         "type": "build",
         "mode": mode,
         "duration_s": _build_duration,
         "sources_total": len(RSS_SOURCES),
         "sources_fetched": ok_count,
-        "sources_skipped": skipped_count,
+        "sources_with_data": _sources_with_data_before,
         "sources_failed": failed_count,
-        "items_fetched": total_items,
+        "items_fetched": _items_fetched,
         "items_snapshot": _snapshot_items,
+        # 闸门**之后**的口径。这三个键不是锦上添花，而是 2026-09-20 对抗审查 P0-1 的对策：
+        # sources_with_data / per_source 全是抓取阶段的数，留存闸门砍掉约四分之一内容时
+        # 构建日志纹丝不动 —— 塌陷只在产物里可见，等于给回归装了个没有观测面的开关。
+        # 取 None 而不是 0 兜底：闸门没跑到（早退/异常路径）与"闸门把内容全裁光"必须可区分，
+        # 否则日志里两种故障长得一模一样。
+        "sources_after_gate": _LAST_RETENTION_STATS.get("sources_after"),
+        "sources_empty_after_gate": (
+            len(_LAST_RETENTION_STATS["emptied"]) if _LAST_RETENTION_STATS else None),
+        # 同一个统计的**名单面**：计数只能告诉我"塌了 256 个"，问"哪 256 个、各自断供多久"
+        # 就必须回头手工探针或翻 stderr（stderr 只打前 10 个，且每场被覆盖）。
+        # 空表 [] = 这场没有一个源被清空；None = 闸门没跑到，两者必须是两个样子（沿用上面那条规矩）。
+        "sources_empty_detail": (
+            _LAST_RETENTION_STATS.get("emptied_detail") if _LAST_RETENTION_STATS else None),
+        "items_after_gate": _LAST_RETENTION_STATS.get("after"),
+        # 出厂龄期三段也落日志：跨构建趋势不用回去 grep stdout
+        "items_le_base_h": _LAST_RETENTION_STATS.get("le72"),
+        "items_base_to_hard_h": _LAST_RETENTION_STATS.get("mid"),
+        "items_over_hard_h": _LAST_RETENTION_STATS.get("over"),
         "history_before": _history_before,
         "history_after": _history_after,
-        "history_expired": _history_before - _history_after,
+        # 两条账互斥，且都不是首尾差：首尾差被每场新增的条目抵成负数（生产实测全天恒负），
+        # "过期删了多少"这本账必须由裁剪循环自己报数。
+        "history_expired": _LAST_HISTORY_ACCOUNT.get("expired"),
+        # 「不许 0 兜底」这条规矩留着：字段为 None = 这一步没跑到，
+        # 与"跑到了但是 0"必须是两个不同的样子（§12 那笔全天恒负的账就是这么漏的）。
         "trans_cache_hit": _TRANS_STATS.get("cache_hit", 0),
+        # 轮转的观测面：条数与本轮 LRU 丢弃数。为 None = `_save_trans_cache` 没跑到或抛异常，
+        # 与"跑到了但一条没丢（0）"必须是两个样子 —— 历史侧 §12 那本恒负账就是这么漏掉的。
+        "trans_cache_size": _LAST_TRANS_ACCOUNT.get("size"),
+        "trans_cache_trimmed": _LAST_TRANS_ACCOUNT.get("trimmed"),
         "trans_google": _TRANS_STATS.get("google", 0),
+        # LLM 兜底那两个引擎以前只印在 stdout 上：日志里 google/mymemory/dict 都有，
+        # 唯独 agnes/zen 缺席 —— 于是"这场到底有没有走 LLM 兜底"在构建日志里问不出答案。
+        "trans_agnes": _TRANS_STATS.get("agnes", 0),
+        "trans_zen": _TRANS_STATS.get("zen", 0),
         "trans_mymemory": _TRANS_STATS.get("mymemory", 0),
         "trans_dict": _TRANS_STATS.get("dict", 0),
         "trans_skip": _TRANS_STATS.get("skip", 0),

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StarHub build status contract",
+  "type": "object",
+  "required": ["schema_version", "last_success_at", "sources"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "last_success_at": { "type": "string", "format": "date-time" },
+    "sources": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string" },
+          "item_count": { "type": "integer" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

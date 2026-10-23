@@ -33,7 +33,8 @@
 - 新 `update.yml`：每日 09:00 + 手动触发，构建 → 校验 → Pages 发布 → 数据回写；暂用 `STARHUB_FAST=1`，未接模型密钥，避免免费翻译长尾与未授权计费。
 - 线上验证：主站 134 项、更新时间 2026-10-23 08:56；AI 晨报 72 条、6 个分类；`rss-aggregator.html` 返回 404。
 - 已删除 RSS/每日洞察的代码、数据、API、测试与依赖；`api/_lib/translate.js` 保留给搜索复用。
-- 下一步：Phase 4 骨架与共享设计系统，然后依次模块化星标管线、主站、AI 晨报、自有 Vercel API。
+- Phase 4 起步：`config/site.json`、`pipeline/starhub_pipeline`（配置/状态/CLI）、`data/schema` 已落地；构建已导出 `data/stars.json`、`data/categories.json`、`data/trending.json`、`data/build-status.json`，`validate` 已接入工作流。
+- 下一步：共享设计系统与页面壳，然后依次模块化星标管线、主站、AI 晨报、自有 Vercel API。
 
 ## 1. 为什么要重构（因果链）
 

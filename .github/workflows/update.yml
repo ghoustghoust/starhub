@@ -50,11 +50,15 @@ jobs:
           ! grep -q 'rss-aggregator' index.html
           ! grep -q 'daily-insight' ai-daily.html
 
+      - name: Validate data contracts
+        run: PYTHONPATH=pipeline python -m starhub_pipeline validate
+
       - name: Prepare Pages artifact
         run: |
           mkdir -p _site
           cp index.html ai-daily.html _site/
           if [ -f trending_board.json ]; then cp trending_board.json _site/; fi
+          if [ -d data ]; then cp -r data _site/; fi
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
@@ -74,7 +78,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add known_categories.json descriptions_zh.json trending_snapshot.json ai_daily.json
+          git add data known_categories.json descriptions_zh.json trending_snapshot.json ai_daily.json
           if git diff --cached --quiet; then
             echo "No data changes to commit."
             exit 0

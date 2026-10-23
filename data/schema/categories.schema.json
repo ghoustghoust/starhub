@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StarHub categories contract",
+  "type": "object",
+  "required": ["schema_version", "map", "labels"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "map": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "additionalProperties": true
+}

@@ -1147,6 +1147,85 @@ def _safe_json(obj):
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c")
 
 
+def _atomic_json_write(path, payload):
+    """Write a JSON contract atomically; a failed build must not truncate the
+    last usable snapshot."""
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=1)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
+def _contract_item(item):
+    health = item.get("health")
+    entry = {
+        "id": item.get("full_name"),
+        "full_name": item.get("full_name"),
+        "html_url": item.get("html_url"),
+        "description": item.get("desc") or "",
+        "language": item.get("language"),
+        "stars": int(item.get("stars") or 0),
+        "forks": int(item.get("forks") or 0),
+        "license": item.get("license") or "",
+        "topics": item.get("topics") or [],
+        "pushed_at": item.get("pushed_at") or "",
+        "starred_at": item.get("starred_at") or "",
+        "category": item.get("category") or "",
+        "category_label": item.get("categoryLabel") or item.get("category") or "",
+        "note": item.get("note") or "",
+        "health": {
+            "level": health if isinstance(health, str) else "unknown",
+            "stale": bool(item.get("stale")),
+        },
+        "updated_today": bool(item.get("updated_today")),
+    }
+    if item.get("emb"):
+        entry["embedding"] = item["emb"]
+    return entry
+
+
+def _write_site_contracts(items, known, trending, summary_text, updated):
+    """Emit the refactor's data boundary. The legacy page keeps using inline
+    data; the new frontend reads these files directly."""
+    generated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    boards = trending or {}
+    _atomic_json_write("data/stars.json", {
+        "schema_version": 2,
+        "generated_at": generated_at,
+        "items": [_contract_item(item) for item in items],
+    })
+    _atomic_json_write("data/categories.json", {
+        "schema_version": 2,
+        "updated_at": generated_at,
+        "map": known,
+        "labels": {c["key"]: c["label"] for c in CATS},
+    })
+    _atomic_json_write("data/trending.json", {
+        "schema_version": 2,
+        "generated_at": generated_at,
+        "updated": updated,
+        "summary": {"text": summary_text or ""},
+        "boards": {
+            "rising": boards.get("rising", []),
+            "total": boards.get("total", []),
+            "new": boards.get("new", []),
+        },
+    })
+    _atomic_json_write("data/build-status.json", {
+        "schema_version": 2,
+        "last_success_at": generated_at,
+        "sources": {
+            "github": {"status": "ok", "item_count": len(items)},
+            "ai_daily": {"status": "unknown"},
+        },
+    })
+    print("[contracts] 写入 data/（stars=%d）" % len(items))
+
+
 # ==================== 首页顶部「未自动清理」提醒条 ====================
 # 来由（2026-10-04 实测）：known_categories.json 有 304 个键，而 GitHub 公开 starred 全集与
 # 线上 DATA 都是 293 条、双向零差 ⇒ 多出的 11 个是**旧名残留**（仓库改名/转移后真身 id 仍在
@@ -1463,6 +1542,10 @@ def main(mode="full"):
                   open(TRENDING_BOARD, "w", encoding="utf-8"), ensure_ascii=False)
         json.dump(known, open("known_categories.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
         json.dump(desc_zh, open("descriptions_zh.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        try:
+            _write_site_contracts(out, known, trending, ai_summary, updated)
+        except Exception as e:  # noqa: BLE001
+            print("[contracts] 写入失败: %s" % e, file=sys.stderr)
 
     # 限流场也必须交得出首页：页面 HTML 已退出 git ⇒ 成功分支不写就是真的没有文件，
     # 而 Stage 的必检清单含 index.html ⇒ 缺件会让这一小时整站不发布（不只是首页旧）。

@@ -1,0 +1,19 @@
+{
+  "site": {
+    "name": "StarHub",
+    "title": "GitHub Star 收藏台",
+    "owner": "ghoustghoust",
+    "github_user": "ghoustghoust",
+    "repository": "ghoustghoust/starhub",
+    "pages_url": "https://ghoustghoust.github.io/starhub/",
+    "api_base": "",
+    "language": "zh-CN"
+  },
+  "features": {
+    "rss": false,
+    "daily_insight": false,
+    "global_search": true,
+    "live_events": true,
+    "live_ai_feed": true
+  }
+}

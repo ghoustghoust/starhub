@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StarHub stars contract",
+  "type": "object",
+  "required": ["schema_version", "generated_at", "items"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "full_name", "html_url"],
+        "properties": {
+          "id": { "type": "string" },
+          "full_name": { "type": "string" },
+          "html_url": { "type": "string", "pattern": "^https://" },
+          "description": { "type": "string" },
+          "language": { "type": ["string", "null"] },
+          "stars": { "type": "integer", "minimum": 0 },
+          "topics": { "type": "array", "items": { "type": "string" } },
+          "pushed_at": { "type": "string" },
+          "starred_at": { "type": "string" },
+          "category": { "type": "string" },
+          "category_label": { "type": "string" },
+          "note": { "type": "string" },
+          "health": {
+            "type": "object",
+            "properties": {
+              "level": { "type": "string" },
+              "stale": { "type": "boolean" }
+            }
+          },
+          "embedding": {
+            "type": "array",
+            "items": { "type": "integer" }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

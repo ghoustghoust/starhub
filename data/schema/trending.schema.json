@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StarHub trending contract",
+  "type": "object",
+  "required": ["schema_version", "generated_at", "boards"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "updated": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "properties": { "text": { "type": "string" } }
+    },
+    "boards": {
+      "type": "object",
+      "required": ["rising", "total", "new"],
+      "properties": {
+        "rising": { "type": "array", "items": { "type": "object" } },
+        "total": { "type": "array", "items": { "type": "object" } },
+        "new": { "type": "array", "items": { "type": "object" } }
+      }
+    }
+  },
+  "additionalProperties": true
+}

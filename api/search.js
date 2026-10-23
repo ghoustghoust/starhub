@@ -240,7 +240,7 @@ function sanitizeQ(q) { return trimQuery(q.replace(/"/g, '').replace(/\s+/g, ' '
 
 function withLanguage(plan, lang) {
   if (!lang) return plan;
-  if (/(^|\s)language:[^\s]+/i.test(plan)) return plan;
+  if (/(^|\s)-?language:[^\s]+/i.test(plan)) return plan;
   return trimQuery(plan + ' language:' + lang);
 }
 

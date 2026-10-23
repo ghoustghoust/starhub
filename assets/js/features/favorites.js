@@ -1,52 +1,64 @@
-/* Favorites, export and import. */
-function toggleFav(fn){
-  if(!fn) return;
-  if(favs.has(fn)){ favs.delete(fn); toast('已取消收藏'); }
-  else { favs.add(fn); toast('已收藏并置顶'); }
+import { DATA, STORE_KEY, favs } from '../core/state.js';
+import { toast } from '../core/ui.js';
+import { renderList } from './collection.js';
+
+export function toggleFav(fullName) {
+  if (!fullName) return;
+  if (favs.has(fullName)) {
+    favs.delete(fullName);
+    toast('已取消收藏');
+  } else {
+    favs.add(fullName);
+    toast('已收藏并置顶');
+  }
   saveFavs();
   renderList();
 }
 
-function saveFavs(){
-  try{ localStorage.setItem(STORE_KEY, JSON.stringify([...favs])); }catch(e){}
+export function saveFavs() {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify([...favs]));
+  } catch {
+    /* storage unavailable */
+  }
 }
 
-function exportJson(){
+export function exportJson() {
   const payload = {
     type: 'github-starhub-backup',
     user: 'ghoustghoust',
     exportedAt: new Date().toISOString(),
     favorites: [...favs],
   };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'starhub-backup-'+new Date().toISOString().slice(0,10)+'.json';
-  a.click();
-  URL.revokeObjectURL(a.href);
-  toast('已导出备份（收藏 '+favs.size+' 项）');
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const anchor = document.createElement('a');
+  anchor.href = URL.createObjectURL(blob);
+  anchor.download = 'starhub-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+  anchor.click();
+  URL.revokeObjectURL(anchor.href);
+  toast('已导出备份（收藏 ' + favs.size + ' 项）');
 }
 
-function importJson(e){
-  const f = e.target.files[0]; if(!f) return;
-  const r = new FileReader();
-  r.onload = () => {
-    try{
-      const obj = JSON.parse(r.result);
-      const arr = obj.favorites || obj.favs || [];
-      if(!Array.isArray(arr)) throw 0;
-      favs = new Set(arr.filter(x => DATA.some(d=>d.full_name===x)));
-      saveFavs(); renderList();
-      toast('已恢复收藏 '+favs.size+' 项');
-    }catch(err){ toast('导入失败：文件格式不正确'); }
+export function importJson(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const payload = JSON.parse(reader.result);
+      const favorites = payload.favorites || payload.favs || [];
+      if (!Array.isArray(favorites)) throw new Error('invalid backup');
+      favs.clear();
+      favorites
+        .filter((fullName) => DATA.some((item) => item.full_name === fullName))
+        .forEach((fullName) => favs.add(fullName));
+      saveFavs();
+      renderList();
+      toast('已恢复收藏 ' + favs.size + ' 项');
+    } catch {
+      toast('导入失败：文件格式不正确');
+    }
   };
-  r.readAsText(f);
-  e.target.value = '';
-}
-
-let toastTimer;
-function toast(msg){
-  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(()=>t.classList.remove('show'), 2000);
+  reader.readAsText(file);
+  event.target.value = '';
 }

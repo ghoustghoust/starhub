@@ -1,6 +1,10 @@
+import { LANG_COLORS, UPDATED, siteData, state } from '../core/state.js';
+import { $ } from '../core/dom.js';
+import { escHtml, fmtStars } from '../core/format.js';
+
 /* Daily trending board. */
 // ---- 每日 AI 排行榜 ----
-function buildTrendItem(p, i, full){
+export function buildTrendItem(p, i, full){
   const hasDelta = p.delta !== null && p.delta !== undefined;
   const deltaHtml = state.trendTab === 'rising'
     ? (hasDelta
@@ -28,13 +32,13 @@ function buildTrendItem(p, i, full){
     '</div>' + '<div class="tm">' + deltaHtml + '</div>';
 }
 
-function renderTrending(){
+export function renderTrending(){
   const list = $('#trendList');
-  const items = (TRENDING && TRENDING[state.trendTab]) || [];
+  const items = (siteData.TRENDING && siteData.TRENDING[state.trendTab]) || [];
   const box = $('.trending'); if(box) box.setAttribute('data-tab', state.trendTab);
   let sub = '更新于 ' + UPDATED;
   if(state.trendTab === 'rising'){
-    const src = TRENDING && TRENDING.source;
+    const src = siteData.TRENDING && siteData.TRENDING.source;
     sub += src === 'trending' ? ' · GitHub Trending 今日涨星' : (src === 'snapshot' ? ' · 快照差值' : '');
   } else {
     sub += ' · 收藏池统计';
@@ -56,25 +60,16 @@ function renderTrending(){
   });
 }
 
-function switchTrendTab(tab, scope){
+export function switchTrendTab(tab, scope){
   state.trendTab = tab;
   document.querySelectorAll((scope || '#trendTabs') + ' .trend-tab').forEach(x=>x.classList.toggle('on', x.dataset.tab===tab));
   renderTrending();
 }
 
-function switchSideTab(tab){
-  state.sideTab = tab;
-  document.querySelectorAll('.side-tab').forEach(x=>x.classList.toggle('on', x.dataset.side===tab));
-  const t = $('.trending'), f = $('.feed'), a = $('#aihotWrap');
-  if(t) t.classList.toggle('on', tab==='trend');
-  if(f) f.classList.toggle('on', tab==='feed');
-  if(a) a.classList.toggle('on', tab==='aihot');
-  if(tab==='aihot') loadAihot();
-}
 
-function renderTrendingFull(){
+export function renderTrendingFull(){
   const list = $('#mTrendList');
-  const items = (TRENDING && TRENDING[state.trendTab]) || [];
+  const items = (siteData.TRENDING && siteData.TRENDING[state.trendTab]) || [];
   list.innerHTML = '';
   if(!items.length){
     list.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:40px 0">暂无数据</div>';
@@ -88,10 +83,10 @@ function renderTrendingFull(){
   });
 }
 
-function openTrendModal(){
+export function openTrendModal(){
   $('#trendModal').classList.add('open');
   document.querySelectorAll('#mTrendTabs .trend-tab').forEach(x=>x.classList.toggle('on', x.dataset.tab===state.trendTab));
   renderTrendingFull();
 }
 
-function closeTrendModal(){ $('#trendModal').classList.remove('open'); }
+export function closeTrendModal(){ $('#trendModal').classList.remove('open'); }

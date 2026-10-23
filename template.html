@@ -245,36 +245,22 @@
 </button>
 
 <script>
-const DATA = __DATA__;
-const CATS = __CATS__;
-const LANG_COLORS = __LANGS__;
-const DEFAULT_FAVS = __FAVS__;
-const STORE_KEY = 'wb_starhub_favs_v1';
-const THEME_KEY = 'wb_starhub_theme_v1';
-const VIEW_KEY = 'wb_starhub_view_v1';
-// API 基址由构建期 config/site.json 注入，页面不再写死部署域名。
-const API_BASE = '__API_BASE__';
-// 弱防护密钥：与 Vercel 环境变量 REFRESH_KEY 一致。静态站点源码公开，此值可被提取，
-// 真正防线是服务端 Origin 白名单（仅允许本站域名跨域）；此头用于拦截无头扫描器滥用
-const REFRESH_KEY = 'sk_starhub_refresh_20260828';
-const SEARCH_API = API_BASE + '/api/search';
-// 全网搜索复用同一弱防护密钥（静态公开，隔离无意义）
-const SEARCH_KEY = REFRESH_KEY;
-const UPDATED = '__UPDATED__';
-let TRENDING = __TRENDING__;
-let FEED = __FEED__;
+window.__STARHUB_BOOT__ = {
+  DATA: __DATA__,
+  CATS: __CATS__,
+  LANG_COLORS: __LANGS__,
+  DEFAULT_FAVS: __FAVS__,
+  STORE_KEY: 'wb_starhub_favs_v1',
+  THEME_KEY: 'wb_starhub_theme_v1',
+  VIEW_KEY: 'wb_starhub_view_v1',
+  API_BASE: '__API_BASE__',
+  REFRESH_KEY: 'sk_starhub_refresh_20260828',
+  SEARCH_KEY: 'sk_starhub_refresh_20260828',
+  UPDATED: '__UPDATED__',
+  TRENDING: __TRENDING__,
+  FEED: __FEED__,
+};
 </script>
-<script src="assets/js/core/state.js?v=__ASSET_VERSION__"></script>
-<script src="assets/js/core/dom.js?v=__ASSET_VERSION__"></script>
-<script src="assets/js/core/query.js?v=__ASSET_VERSION__"></script>
-<script src="assets/js/core/ui.js?v=__ASSET_VERSION__"></script>
-<script src="assets/js/features/preferences.js?v=__ASSET_VERSION__"></script>
-<script src="assets/js/features/collection.js?v=__ASSET_VERSION__"></script>
-<script src="assets/js/features/search.js?v=__ASSET_VERSION__"></script>
-<script src="assets/js/features/trending.js?v=__ASSET_VERSION__"></script>
-<script src="assets/js/features/feed.js?v=__ASSET_VERSION__"></script>
-<script src="assets/js/features/ai-feed.js?v=__ASSET_VERSION__"></script>
-<script src="assets/js/features/favorites.js?v=__ASSET_VERSION__"></script>
-<script src="assets/js/app.js?v=__ASSET_VERSION__"></script>
+<script type="module" src="assets/js/app.bundle.js?v=__ASSET_VERSION__"></script>
 </body>
 </html>

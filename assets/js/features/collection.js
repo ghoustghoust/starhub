@@ -1,3 +1,9 @@
+import { CATS, DATA, LANG_COLORS, favs, state } from '../core/state.js';
+import { $, icon } from '../core/dom.js';
+import { escHtml, fmtRelTime, fmtStars } from '../core/format.js';
+import { parseQueryTokens, relevanceScore } from '../core/query.js';
+import { getView } from './preferences.js';
+
 /* Collection rendering, filters and cards. */
 // ---- 语言统计 ----
 const langCount = {};
@@ -6,7 +12,7 @@ const langSorted = Object.entries(langCount).sort((a,b)=>b[1]-a[1]);
 const topLangs = langSorted.slice(0, 8);
 const topSum = topLangs.reduce((s,x)=>s+x[1],0);
 
-function renderLangBar(){
+export function renderLangBar(){
   const bar = $('#langBar'); bar.innerHTML='';
   topLangs.forEach(([l,n]) => {
     const i = document.createElement('i');
@@ -25,7 +31,7 @@ function renderLangBar(){
 }
 
 // ---- 分类 tab ----
-function renderCats(){
+export function renderCats(){
   const cats = $('#cats'); cats.innerHTML='';
   const all = document.createElement('button');
   all.className = 'cat' + (state.cat===''?' on':'');
@@ -46,13 +52,13 @@ function renderCats(){
   updateCatsMask();
 }
 /* 分类溢出检测：未溢出时移除渐隐蒙版，避免两端标签残缺 */
-function updateCatsMask(){
+export function updateCatsMask(){
   const el = $('#cats'); if(!el) return;
   el.classList.toggle('no-mask', el.scrollWidth <= el.clientWidth + 2);
 }
 
 // ---- 语言下拉 ----
-function renderLangSel(){
+export function renderLangSel(){
   const sel = $('#langSel');
   const cur = state.lang;
   sel.innerHTML = '<option value="">全部语言</option>' +
@@ -60,10 +66,7 @@ function renderLangSel(){
 }
 
 // ---- 模糊搜索 ----
-function escHtml(s){
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-function hl(s){
+export function hl(s){
   const t = escHtml(s);
   if(!state.q) return t;
   // 限定符（stars:>1k 等）不进高亮词表，只高亮普通关键词
@@ -76,19 +79,19 @@ function hl(s){
   }catch(e){ return t; }
 }
 
-function fuzzyMatch(d, q){
+export function fuzzyMatch(d, q){
   const hay = (d.name+' '+d.owner+' '+d.full_name+' '+(d.desc||'')+' '+(d.language||'')+' '+(d.categoryLabel||'')+' '+(d.topics||[]).join(' ')).toLowerCase();
   const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
   return tokens.every(t => hay.includes(t));
 }
 
-function _withinDays(pushed, days){
+export function _withinDays(pushed, days){
   if(!pushed) return false;
   const t = new Date(pushed).getTime();
   if(isNaN(t)) return false;
   return (Date.now()-t) <= days*864e5;
 }
-function filterData(){
+export function filterData(){
   const {filters, words} = parseQueryTokens(state.q);
   let list = DATA.filter(d => {
     // 限定符过滤（stars:/forks:/language:/license:/pushed:/org:/topic:/in:）
@@ -163,14 +166,14 @@ function filterData(){
   return { faved, rest, semantic };
 }
 
-function catColor(key){
+export function catColor(key){
   const c = CATS.find(x=>x.key===key);
   if(!c) return '#8b949e';
   const raw = document.documentElement.dataset.theme === 'dark' ? (c.dark || c.color) : c.color;
   return clampChroma(raw, document.documentElement.dataset.theme === 'dark' ? 0.65 : 0.30, document.documentElement.dataset.theme === 'dark' ? 0.78 : 0.48);
 }
 /* 分类色亮度钳制：浅色主题保证文字对比度下限，暗色主题保证可辨亮度 */
-function clampChroma(hex, lo, hi){
+export function clampChroma(hex, lo, hi){
   const m = /^#([0-9a-f]{6})$/i.exec(hex); if(!m) return hex;
   let r=parseInt(m[1].slice(0,2),16)/255, g=parseInt(m[1].slice(2,4),16)/255, b=parseInt(m[1].slice(4,6),16)/255;
   const mx=Math.max(r,g,b), mn=Math.min(r,g,b);
@@ -186,7 +189,7 @@ function clampChroma(hex, lo, hi){
   return '#'+[h+1/3,h,h-1/3].map(x=>Math.round(hue2rgb(x)*255).toString(16).padStart(2,'0')).join('');
 }
 
-function buildCard(d, isFav){
+export function buildCard(d, isFav){
   const div = document.createElement('article');
   div.className = 'card cover-card' + (isFav?' faved':'') + (d.stale?' stale':'');
   const catColorVal = catColor(d.category);
@@ -238,7 +241,7 @@ function buildCard(d, isFav){
   return div;
 }
 
-function buildRow(d, isFav){
+export function buildRow(d, isFav){
   const div = document.createElement('div');
   div.className = 'row' + (isFav?' faved':'');
   const catColorVal = catColor(d.category);
@@ -259,13 +262,8 @@ function buildRow(d, isFav){
   return div;
 }
 
-function fmtStars(n){
-  if(n>=100000) return (n/1000).toFixed(0)+'k';
-  if(n>=1000) return (n/1000).toFixed(1).replace(/\.0$/,'')+'k';
-  return n;
-}
 
-function renderList(){
+export function renderList(){
   const { faved, rest, semantic } = filterData();
   // 语义扩展条目追加在结果尾部（带"语义相关"角标，_sem 由 buildCard 渲染）
   const semBadged = (semantic||[]).map(d=>{ const c=Object.assign({},d); c._sem=true; return c; });
@@ -303,7 +301,7 @@ function renderList(){
   }
 
   // 统计
-  $('#stTotal').textContent = counted ? DATA.length : '0';
+  $('#stTotal').textContent = state.counted ? DATA.length : '0';
   $('#stCats').textContent = CATS.length;
   $('#stLangs').textContent = langSorted.length;
   $('#stFav').textContent = favs.size;

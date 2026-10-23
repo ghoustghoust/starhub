@@ -18,6 +18,7 @@ __pycache__/
 *.lock
 
 # Generated / source-only assets
+assets/
 docs/
 *.md
 LICENSE

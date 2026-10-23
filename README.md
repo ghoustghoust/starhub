@@ -27,6 +27,7 @@
 
 ```bash
 cp .env.example .env   # 填入 GH_TOKEN / GITHUB_TOKEN
+npm run bundle         # 打包 assets/js/app.js → app.bundle.js
 python fetch_and_build.py
 ```
 

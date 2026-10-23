@@ -2,6 +2,9 @@
   "name": "starhub",
   "private": true,
   "type": "module",
+  "scripts": {
+    "bundle": "npx --yes esbuild@0.28.2 assets/js/app.js --bundle --format=esm --outfile=assets/js/app.bundle.js --minify"
+  },
   "engines": {
     "node": ">=20"
   }

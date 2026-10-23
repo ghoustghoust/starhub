@@ -1,3 +1,13 @@
+import { API_BASE, feedState, state } from '../core/state.js';
+import { $ } from '../core/dom.js';
+import { escHtml, fmtRelTime } from '../core/format.js';
+import { toast } from '../core/ui.js';
+import { refreshFeed } from './feed.js';
+
+const AIHOT_API = 'https://aihot.virxact.com/api/v1/items?mode=all&window=24h&limit=40';
+const NEWS_API = API_BASE + '/api/news';
+const AIHOT_CATS = { 'ai-models':['AI 模型','#2563eb'], 'ai-products':['AI 产品','#7c3aed'], industry:['行业动态','#0891b2'], paper:['论文','#d97706'], tip:['技巧观点','#dc2626'] };
+
 /* AI news feed. */
 // ---- AI 动态流（AIHOT 公开 API + /api/news 多源代理，浏览器直连，无需 Key） ----
 let aihotLoaded = false;
@@ -7,11 +17,11 @@ let aihotItems = [];      // 已加载全量条目（AIHOT + 代理多源合并�
 let aihotCursor = '';     // AIHOT 游标分页（page.nextCursor），空串表示无下一页
 let aihotFilter = 'all';  // 分类筛选：'all' 或 AIHOT_CATS 键
 
-function normTitle(t){ return (t || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ''); }
+export function normTitle(t){ return (t || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ''); }
 
 // 36氪/Redis 等 AI 资讯流（/api/news 多源代理）：归一化为 AIHOT 条目结构，每条携带 source 标记；
 // 仅保留近 24 小时前 15 条（避免盖过 AIHOT 主源）；失败静默返回空数组
-async function fetchNewsItems(){
+export async function fetchNewsItems(){
   try{
     const r = await fetch(NEWS_API);
     if(!r.ok) return [];
@@ -29,7 +39,7 @@ async function fetchNewsItems(){
 }
 
 // 渲染筛选条：分类计数随已加载条目实时刷新，当前选中高亮
-function renderAihotFilter(){
+export function renderAihotFilter(){
   const box = $('#aihotFilter');
   if(!box) return;
   if(!aihotItems.length){ box.style.display = 'none'; return; }
@@ -42,15 +52,15 @@ function renderAihotFilter(){
 }
 
 // 「加载更多」仅在无筛选且 AIHOT 还有下一页时显示；站外完整流入口始终保留兜底
-function updateAihotMore(){
+export function updateAihotMore(){
   const loadMore = $('#aihotLoadMore');
   if(loadMore) loadMore.style.display = (aihotCursor && aihotFilter === 'all') ? '' : 'none';
 }
 
 // 检测标题是否主要为非中文（需要翻译）
-function _needsTranslation(t){ if(!t) return false; const cjk=(t.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g)||[]).length; return cjk < t.replace(/[\s\d\p{P}]/gu,'').length * 0.3; }
+export function _needsTranslation(t){ if(!t) return false; const cjk=(t.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g)||[]).length; return cjk < t.replace(/[\s\d\p{P}]/gu,'').length * 0.3; }
 // 批量翻译 AI 动态流英文标题（Google Translate GTX 端点；5s 超时兜底，防 GFW 挂死）
-function _translateAihotItems(){
+export function _translateAihotItems(){
   const toTranslate = aihotItems.filter(it => !it._zh && _needsTranslation(it.title));
   if(!toTranslate.length) return;
   const texts = toTranslate.map(it => it.title);
@@ -70,7 +80,7 @@ function _translateAihotItems(){
   });
 }
 
-function renderAihot(){
+export function renderAihot(){
   const list = $('#aihotList');
   renderAihotFilter();
   const items = aihotFilter === 'all' ? aihotItems : aihotItems.filter(it => it.category === aihotFilter);
@@ -100,7 +110,7 @@ function renderAihot(){
 
 // 加载更多：AIHOT 游标分页（&cursor=page.nextCursor），追加条目同样按规范化标题去重；
 // window=24h 参数不变，翻页内容仍在近 24 小时窗口内；失败静默提示不影响已有列表
-async function loadAihotMore(){
+export async function loadAihotMore(){
   if(aihotMoreLoading || !aihotCursor) return;
   aihotMoreLoading = true;
   const btn = $('#aihotLoadMore');
@@ -123,7 +133,7 @@ async function loadAihotMore(){
   }
 }
 
-async function loadAihot(){
+export async function loadAihot(){
   if(aihotLoaded || aihotLoading) return;
   aihotLoading = true;
   const list = $('#aihotList');
@@ -175,9 +185,9 @@ async function loadAihot(){
 }
 
 // 30 分钟轮询：页面不可见时暂停（回调内检查 document.hidden），回到页面立即拉取一次
-function startFeedPolling(){
-  if(feedTimer) return;
-  feedTimer = setInterval(() => {
+export function startFeedPolling(){
+  if(feedState.timer) return;
+  feedState.timer = setInterval(() => {
     if(document.hidden) return;
     refreshFeed();
     if(aihotLoaded){ aihotLoaded = false; loadAihot(); }

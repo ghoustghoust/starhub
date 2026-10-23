@@ -1,37 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""本地开发工具：从现有 index.html 提取已注入的数据，重新渲染 template.html。
+"""本地预览：复用现有 index.html 的数据，重新渲染 template.html。
 
-只用于本地预览模板/样式改动；不参与 GitHub Actions 构建。
+数据从 window.__STARHUB_BOOT__ 提取，不再依赖旧的 const 数据段。
+只用于本地预览；不参与 GitHub Actions 构建。
 """
 import datetime
 import json
 import re
 import sys
+from pathlib import Path
 
 SRC = "index.html"
 TPL = "template.html"
-
-CONSTANTS = [
-    ("DATA", "__DATA__"),
-    ("CATS", "__CATS__"),
-    ("LANG_COLORS", "__LANGS__"),
-    ("DEFAULT_FAVS", "__FAVS__"),
-    ("UPDATED", "__UPDATED__"),
-    ("TRENDING", "__TRENDING__"),
-    ("FEED", "__FEED__"),
-]
+BOOT_NAME = "window.__STARHUB_BOOT__"
 
 
-def extract_value(source, name):
-    match = re.search(r"(?:const|let)\s+%s\s*=\s*" % re.escape(name), source)
-    if not match:
-        raise SystemExit("index.html 中未找到常量 %s" % name)
-
-    start = index = match.end()
+def object_end(source: str, brace_start: int) -> int:
     depth = 0
     quote = None
     escaped = False
+    index = brace_start
     while index < len(source):
         char = source[index]
         if quote:
@@ -44,38 +33,41 @@ def extract_value(source, name):
         else:
             if char in "'\"`":
                 quote = char
-            elif char in "([{":
+            elif char == "{":
                 depth += 1
-            elif char in ")]}":
+            elif char == "}":
                 depth -= 1
-            elif char == ";" and depth == 0:
-                return source[start:index]
+                if depth == 0:
+                    return index + 1
         index += 1
-    raise SystemExit("常量 %s 没有找到结束分号" % name)
+    raise SystemExit("boot object has no closing brace")
 
 
-def main():
-    source = open(SRC, encoding="utf-8").read()
-    template = open(TPL, encoding="utf-8").read()
+def boot_span(source: str) -> tuple[int, int]:
+    marker = source.find(BOOT_NAME)
+    if marker < 0:
+        raise SystemExit("window.__STARHUB_BOOT__ not found")
+    brace = source.find("{", marker)
+    if brace < 0:
+        raise SystemExit("boot object has no opening brace")
+    end = object_end(source, brace)
+    semicolon = source.find(";", end)
+    return marker, (semicolon + 1 if semicolon != -1 else end)
 
-    for name, placeholder in CONSTANTS:
-        raw = extract_value(source, name).strip()
-        if name == "UPDATED":
-            raw = raw[1:-1]
-        else:
-            json.loads(raw)
-        if placeholder not in template:
-            raise SystemExit("template.html 中缺少占位符 %s" % placeholder)
-        template = template.replace(placeholder, raw)
 
-    # Preview-only blocks are produced by fetch_and_build; keep the local
-    # renderer from leaking raw placeholders into the page.
+def main() -> None:
+    source = Path(SRC).read_text(encoding="utf-8")
+    template = Path(TPL).read_text(encoding="utf-8")
+    source_start, source_end = boot_span(source)
+    boot = source[source_start:source_end]
+    template_start, template_end = boot_span(template)
+    template = template[:template_start] + boot + template[template_end:]
+    template = template.replace(
+        "__ASSET_VERSION__",
+        datetime.datetime.now().strftime("dev%Y%m%d%H%M%S"),
+    )
     template = template.replace("__AI_SUMMARY__", "").replace("__ATTENTION__", "")
-    api_base = json.load(open("config/site.json", encoding="utf-8")).get("site", {}).get("api_base", "")
-    template = template.replace("__API_BASE__", api_base)
-    template = template.replace("__ASSET_VERSION__", datetime.datetime.now().strftime("dev%Y%m%d%H%M%S"))
-
-    open(SRC, "w", encoding="utf-8").write(template)
+    Path(SRC).write_text(template, encoding="utf-8")
     print("渲染完成：index.html 已由 template.html 重新生成")
 
 

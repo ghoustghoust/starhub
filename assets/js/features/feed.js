@@ -1,10 +1,17 @@
+import { API_BASE, feedState, siteData } from '../core/state.js';
+import { $, icon } from '../core/dom.js';
+import { escHtml } from '../core/format.js';
+import { renderTrending } from './trending.js';
+
+const EVENTS_API = API_BASE + '/api/events';
+
 /* Following activity feed. */
 // ---- 近 24 小时关注动态 ----
 const FEED_COLORS = { repo:'#0969da', star:'#e3a008', follow:'#8250df', pr:'#1a7f37', release:'#bf3989', public:'#656d76', push:'#d73a49' };
-function renderFeed(){
+export function renderFeed(){
   const list = $('#feedList');
-  const items = FEED || [];
-  $('#feedUpdated').textContent = '近 24 小时滚动窗口 · ' + (feedLive ? '实时更新于 ' : '更新于 ') + feedUpdated;
+  const items = siteData.FEED || [];
+  $('#feedUpdated').textContent = '近 24 小时滚动窗口 · ' + (feedState.live ? '实时更新于 ' : '更新于 ') + feedState.updated;
   list.innerHTML = '';
   if(!items.length){
     list.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:16px 0">近 24 小时暂无关注动态</div>';
@@ -36,31 +43,31 @@ function renderFeed(){
   });
 }
 
-// 实时拉取关注动态（Vercel 代理聚合）：成功替换 FEED 重渲染，失败静默保持静态数据
-async function refreshFeed(){
+// 实时拉取关注动态（Vercel 代理聚合）：成功替换 siteData.FEED 重渲染，失败静默保持静态数据
+export async function refreshFeed(){
   try{
     const r = await fetch(EVENTS_API);
     if(!r.ok) return;
     const j = await r.json();
     if(!j || !Array.isArray(j.items)) return;
-    FEED = j.items;
-    feedUpdated = j.updated_at || '';
-    feedLive = true;
+    siteData.FEED = j.items;
+    feedState.updated = j.updated_at || '';
+    feedState.live = true;
     renderFeed();
   }catch(e){ /* 静默降级：网络异常时保持静态数据 */ }
 }
 
-// 排行榜数据出口（同源站点件，由小时场写）：成功替换 TRENDING 重渲染，失败静默保留内联兜底。
+// 排行榜数据出口（同源站点件，由小时场写）：成功替换 siteData.TRENDING 重渲染，失败静默保留内联兜底。
 // 为什么必须有它：index.html 是单体文件，快车道每 15 分钟重建整页时并不拥有排行榜
 // （它只算 star 列表），拿不到就把内联值写成 {} ⇒ 2026-10-04 18:01 线上空榜的根因。
 // 有了这条注入路径，页面里那份内联就只是首屏兜底，覆盖不再伤人。
-async function refreshTrendingBoard(){
+export async function refreshTrendingBoard(){
   try{
     const r = await fetch('trending_board.json', {cache:'no-store'});
     if(!r.ok) return;
     const j = await r.json();
     if(!j || !j.trending) return;
-    TRENDING = j.trending;
+    siteData.TRENDING = j.trending;
     const slot = document.getElementById('aiSummarySlot');
     if(slot && j.ai_summary_html) slot.innerHTML = j.ai_summary_html;
     renderTrending();

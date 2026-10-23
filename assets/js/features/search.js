@@ -1,3 +1,11 @@
+import { API_BASE, LANG_COLORS, POOL_NAMES, SEARCH_KEY, favs, state } from '../core/state.js';
+import { $, icon } from '../core/dom.js';
+import { escHtml, fmtRelTime, fmtStars } from '../core/format.js';
+import { toast } from '../core/ui.js';
+import { filterData, hl } from './collection.js';
+
+const SEARCH_API = API_BASE + '/api/search';
+
 /* Global GitHub search modal. */
 // ---- 全网仓库搜索 ----
 const SEARCH_LANGS = ['JavaScript','TypeScript','Python','Go','Rust','Java','C++','C','C#','Swift','Kotlin','Ruby','PHP','Shell','HTML','CSS','Dart','Lua'];
@@ -8,7 +16,7 @@ let searchHasMore = false;
 let searchLoading = false;
 let searchLoaded = 0;
 
-function renderSearchHint(){
+export function renderSearchHint(){
   const btn = $('#btnSearchAll'), hint = $('#searchHint');
   const q = state.q.trim();
   btn.classList.toggle('hidden', q.length < 2);
@@ -17,20 +25,8 @@ function renderSearchHint(){
   hint.innerHTML = '收藏池匹配 <span class="n">' + (faved.length + rest.length) + '</span> 个 · 按 Enter 或点击按钮可搜索整个 GitHub（跨语言）';
 }
 
-function fmtRelTime(iso){
-  if(!iso) return '';
-  const t = new Date(iso).getTime();
-  if(isNaN(t)) return '';
-  const d = Date.now() - t;
-  const m = 60*1000, h = 60*m, day = 24*h;
-  if(d < h) return Math.max(1, Math.round(d/m)) + ' 分钟前';
-  if(d < day) return Math.round(d/h) + ' 小时前';
-  if(d < 30*day) return Math.round(d/day) + ' 天前';
-  if(d < 365*day) return Math.round(d/(30*day)) + ' 个月前';
-  return Math.round(d/(365*day)) + ' 年前';
-}
 
-function openSearchModal(){
+export function openSearchModal(){
   state.searchQuery = state.q.trim();
   if(state.searchQuery.length < 2){ toast('请输入至少 2 个字符'); return; }
   $('#sTitleQ').textContent = state.searchQuery;
@@ -45,12 +41,12 @@ function openSearchModal(){
   runSearch('new');
 }
 
-function closeSearchModal(){
+export function closeSearchModal(){
   $('#searchModal').classList.remove('open');
   if(searchAbort){ searchAbort.abort(); searchAbort = null; }
 }
 
-async function runSearch(mode){
+export async function runSearch(mode){
   if(searchLoading) return; // 防止并发（含滚动触发的加载更多）
   searchLoading = true;
   if(searchAbort) searchAbort.abort();
@@ -90,12 +86,12 @@ async function runSearch(mode){
   searchLoading = false;
 }
 
-function searchMoreFail(){
+export function searchMoreFail(){
   $('#sFoot').innerHTML = '加载更多失败，<button class="s-retry" id="sMoreRetry">点击重试</button>';
   const rb = $('#sMoreRetry'); if(rb) rb.onclick = () => runSearch('more');
 }
 
-function renderSearchState(kind, msg){
+export function renderSearchState(kind, msg){
   const list = $('#sList'); $('#sFoot').textContent = '';
   if(kind === 'loading'){
     list.innerHTML = '<div class="s-loading"><span class="spinner"></span>正在搜索 GitHub 全网…</div>';
@@ -107,7 +103,7 @@ function renderSearchState(kind, msg){
   }
 }
 
-function renderSearchResults(j, append){
+export function renderSearchResults(j, append){
   $('#sQuery').textContent = j.query || state.searchQuery;
   const tip = $('#sTip');
   if(j.translated === false){
@@ -161,7 +157,7 @@ function renderSearchResults(j, append){
     : (total > 1000 ? '已显示前 ' + searchLoaded + ' 条（共 ' + total + ' 个结果，GitHub 最多返回前 1000 条）' : '已显示全部 ' + searchLoaded + ' 条')) + spamNote;
 }
 
-function editSearchQuery(){
+export function editSearchQuery(){
   if(sEditing) return;
   sEditing = true;
   const box = $('#sQuery');

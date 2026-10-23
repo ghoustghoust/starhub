@@ -1,5 +1,27 @@
+import { API_BASE, state } from './core/state.js';
+import { $ } from './core/dom.js';
+import { escHtml } from './core/format.js';
+import { copyRepoInfo, toast } from './core/ui.js';
+import { getTheme, applyTheme, getView, applyView } from './features/preferences.js';
+import { renderLangBar, renderCats, renderLangSel, renderList, updateCatsMask } from './features/collection.js';
+import { renderSearchHint, openSearchModal, closeSearchModal, runSearch, editSearchQuery } from './features/search.js';
+import { renderTrending, switchTrendTab, renderTrendingFull, openTrendModal, closeTrendModal } from './features/trending.js';
+import { renderFeed, refreshFeed, refreshTrendingBoard } from './features/feed.js';
+import { loadAihot, loadAihotMore, startFeedPolling } from './features/ai-feed.js';
+import { toggleFav, exportJson, importJson } from './features/favorites.js';
+
 /* Event wiring and page initialization. */
 // ---- 事件绑定 ----
+function switchSideTab(tab){
+  state.sideTab = tab;
+  document.querySelectorAll('.side-tab').forEach(x => x.classList.toggle('on', x.dataset.side === tab));
+  const trending = $('.trending'), feed = $('.feed'), ai = $('#aihotWrap');
+  if(trending) trending.classList.toggle('on', tab === 'trend');
+  if(feed) feed.classList.toggle('on', tab === 'feed');
+  if(ai) ai.classList.toggle('on', tab === 'aihot');
+  if(tab === 'aihot') loadAihot();
+}
+
 function bindEvents(){
   // 导航下拉菜单：点击切换，点击外部关闭（支持多个独立下拉）
   var navDrops = document.querySelectorAll('.nav-drop');
@@ -215,7 +237,7 @@ function bindEvents(){
 
 // ---- init ----
 // 统计数字滚动动效：仅在首次进入视口时触发一次
-let counted = false;
+
 function countUp(el, target, dur){
   dur = dur || 700;
   const t0 = performance.now();
@@ -228,14 +250,14 @@ function countUp(el, target, dur){
 }
 if('IntersectionObserver' in window){
   const io = new IntersectionObserver(entries => {
-    if(entries[0].isIntersecting && !counted){
-      counted = true;
+    if(entries[0].isIntersecting && !state.counted){
+      state.counted = true;
       countUp($('#stTotal'), DATA.length);
       io.disconnect();
     }
   }, {threshold:.4});
   io.observe($('#stTotal').parentElement.parentElement);
-}else{ counted = true; }
+}else{ state.counted = true; }
 applyTheme(getTheme());
 applyView(getView());
 renderLangBar();

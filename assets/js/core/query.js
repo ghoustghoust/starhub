@@ -3,12 +3,12 @@
 // 设计：所有筛选语法化（stars:>1k / language:python / license:mit / pushed:>30d /
 // forks:>100 / org:acme / topic:rag / in:name / in:desc），卡片上的 owner/topic
 // 标签点击即写入对应限定符 —— 一个搜索框承载全部筛选，功能之间零耦合。
-function _unitNum(s){
+export function _unitNum(s){
   const m = String(s).toLowerCase().match(/^(\d+(?:\.\d+)?)([km]?)$/);
   if(!m) return NaN;
   return Math.round(parseFloat(m[1]) * (m[2]==='k'?1e3:m[2]==='m'?1e6:1));
 }
-function parseQueryTokens(q){
+export function parseQueryTokens(q){
   const filters = {starsMin:null, starsMax:null, forksMin:null, lang:'', license:'', pushedDays:null, org:'', topic:'', inName:false, inDesc:false};
   const words = [];
   String(q||'').trim().split(/\s+/).filter(Boolean).forEach(t=>{
@@ -27,7 +27,7 @@ function parseQueryTokens(q){
   });
   return {filters, words};
 }
-function relevanceScore(d, words){
+export function relevanceScore(d, words){
   if(!words.length) return 0;
   const name=(d.name||'').toLowerCase(), full=(d.full_name||'').toLowerCase();
   const topics=(d.topics||[]).join(' ').toLowerCase(), desc=(d.desc||'').toLowerCase();

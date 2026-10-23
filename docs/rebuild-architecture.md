@@ -39,9 +39,10 @@
 - 自有 Vercel API 已上线 `https://starhub-drab.vercel.app`：search/events/news/refresh 已验证；CORS 使用 `Vary: Origin` + `Cache-Control: no-store`；前端 `API_BASE` 构建期注入；静态资源带构建版本号避免 Pages 缓存旧 JS。
 - 新增 `deploy-api.yml`：API 文件变更时自动部署到 Vercel；Pages 仍由 `update.yml` 发布。
 - AI 晨报的内联 CSS/JS 已外置到 `assets/css/ai-daily.css` 与 `assets/js/ai-daily.js`，并带构建版本号；计算样式与旧版一致。
-- 主站脚本已拆为 `assets/js/core`（状态/DOM/查询/UI）、`assets/js/features`（收藏/搜索/榜单/动态/AI 动态）与 `assets/js/app.js`；共享数据仍走 boot 全局，后续可再包成 ESM。
+- 主站脚本已拆为 `assets/js/core`（状态/DOM/查询/UI/格式化）、`assets/js/features`（收藏/搜索/榜单/动态/AI 动态）与 `assets/js/app.js`，全部使用原生 ES Modules；数据通过 `window.__STARHUB_BOOT__` 注入。
+- 生产页面加载 esbuild 打出的单文件 `app.bundle.js`，带构建版本号；源模块仍保持分离，避免模块内部缓存导致旧 JS。
 - 管线已抽出 `sources/github.py`（star/trending/events/readme）、`enrich/embed/translate/llm/classify/summarize/desc`、`build/contracts/attention/trending/stars`、`render/index` 与 `taxonomy`；`fetch_and_build.py` 只剩配置、兜底页和 main 编排（约 319 行）。
-- 下一步：前端经典脚本 ESM 封装与最终全量验收。
+- 下一步：最终打包/线上验收、文档与运维收尾。
 
 ## 1. 为什么要重构（因果链）
 

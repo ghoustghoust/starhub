@@ -33,6 +33,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Build site
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -43,12 +48,16 @@ jobs:
           # until the user explicitly approves billing for this project.
         run: python fetch_and_build.py
 
+      - name: Bundle frontend
+        run: npm run bundle
+
       - name: Verify outputs
         run: |
           test -s index.html
           test -s ai-daily.html
           test -s assets/css/main.css
           test -s assets/js/app.js
+          test -s assets/js/app.bundle.js
           test -s assets/js/features/collection.js
           test -s assets/js/features/search.js
           test -s assets/css/ai-daily.css

@@ -21,6 +21,7 @@ __pycache__/
 # Generated pages and caches
 /index.html
 /ai-daily.html
+/assets/js/app.bundle.js
 /trending_board.json
 /category_guides.json
 /_site/

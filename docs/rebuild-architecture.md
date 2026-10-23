@@ -26,6 +26,15 @@
 - `D:\全网情报系统` 是同一 Vercel 团队下的另一个独立项目（qwis-intel / news.ghoustlab.com），有自己的数据与 CI；StarHub 不得依赖它。
 - “占用满”的是 qwis-intel 的 Turso 数据库配额，不是 StarHub 的 Vercel 资源；StarHub 没有 Turso 依赖。Vercel 接入只需在 `kwei888` 团队下新建独立项目。
 
+### 实施状态（2026-10-23）
+
+- Vercel 项目 `starhub` 已在团队 `kwei888` 创建（项目 ID `prj_n3vCEbSo9H4MxRogdjARvyBxLXkU`），尚未部署 API。
+- 本地解阻提交 `84f5f789`：数据源切到 `ghoustghoust`（134 stars）；移除 RSS/每日洞察生成调用；删除上游 Vercel 同步工作流；Pages 改为 Actions artifact；构建产物移出 git。
+- 新 `update.yml`：每日 09:00 + 手动触发，构建 → 校验 → Pages 发布 → 数据回写；暂用 `STARHUB_FAST=1`，未接模型密钥，避免免费翻译长尾与未授权计费。
+- 线上验证：主站 134 项、更新时间 2026-10-23 08:56；AI 晨报 72 条、6 个分类；`rss-aggregator.html` 返回 404。
+- 已删除 RSS/每日洞察的代码、数据、API、测试与依赖；`api/_lib/translate.js` 保留给搜索复用。
+- 下一步：Phase 4 骨架与共享设计系统，然后依次模块化星标管线、主站、AI 晨报、自有 Vercel API。
+
 ## 1. 为什么要重构（因果链）
 
 现状不是“代码旧”，而是四类结构性耦合：

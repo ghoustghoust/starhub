@@ -3,18 +3,13 @@
   "ai_min_stars": 500,
   "new_min_stars": 50,
   "trend_max_stars": 50000,
-  "ai_topics": ["ai", "machine-learning", "deep-learning", "llm", "gpt", "agent"],
-  "analysis_enabled": true,
-  "insight_engine_enabled": true,
-  "insight_llm_provider": "agnes",
-  "insight_max_documents": 200,
-  "insight_top_keywords": 30,
-  "insight_top_topics": 15,
-  "diverse_enabled": true,
-  "diverse_window_minutes": 120,
-  "daily_insight_enabled": true,
-  "daily_insight_judge_provider": "agnes",
-  "daily_insight_judge_model": "agnes-2.5-flash",
-  "daily_insight_judge_timeout": 60,
-  "daily_insight_cross_validation": true
+  "ai_topics": [
+    "ai",
+    "machine-learning",
+    "deep-learning",
+    "llm",
+    "gpt",
+    "agent"
+  ],
+  "ai_summary_enabled": true
 }

@@ -1,8 +1,7 @@
 {
-  "name": "starhub-refresh",
+  "name": "starhub",
   "private": true,
-  "dependencies": {
-    "@mozilla/readability": "^0.5.0",
-    "jsdom": "^25.0.0"
+  "engines": {
+    "node": ">=20"
   }
 }

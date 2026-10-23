@@ -1,7 +1,7 @@
 // Vercel Serverless Function：全网 GitHub 仓库搜索（跨语言）
 // 用法：POST /api/search  Body: { q: "视频创作", sort: "best-match"|"stars"|"updated", lang?: "Python", page?: 1 }
 //
-// 翻译（T6 重构 2026-10-04）：改用 api/translate.js 的统一降级链
+// 翻译（T6 重构 2026-10-04）：改用 api/_lib/translate.js 的统一降级链
 //   GTX → MyMemory → Agnes(多key) → Zen —— 旧版自带的 Google→MyMemory 两层在
 //   GTX 被数据中心 IP 封锁 + MyMemory 出口配额打满时全断（用户实测 translated:false，
 //   中文原词直接搜 GitHub 结果完全不可用）。translate.js 内置词级缓存与熔断。
@@ -18,7 +18,7 @@
 //   （每 IP 10 req/min、全局 25 req/min——key 公开内联在页面里，无限流时
 //   GH_TOKEN 的 30 req/min 搜索配额可被恶意烧穿）。
 // 缓存：搜索结果内存缓存 10 分钟（key=查询|sort|page）；词级翻译缓存 1 小时。
-import { translateWithFallback } from './translate.js';
+import { translateWithFallback } from './_lib/translate.js';
 
 const ALLOWED_ORIGINS = new Set([
   'https://starhub-refresh.vercel.app',

@@ -35,6 +35,12 @@ function setCachedResult(key, data){
   if(resultCache.size >= RESULT_CACHE_MAX) resultCache.delete(resultCache.keys().next().value);
   resultCache.set(key, {t: Date.now(), data});
 }
+function hasLanguageFilter(){
+  return Boolean(state.searchLang) || /(^|\s)-?language:[^\s]+/i.test(state.searchQuery);
+}
+function stripLanguageFilter(q){
+  return String(q||'').replace(/(^|\s)-?language:[^\s]+/gi, ' ').replace(/\s+/g, ' ').trim();
+}
 
 const searchModalEl = document.getElementById('searchModal');
 if(searchModalEl){
@@ -164,14 +170,24 @@ export function renderSearchState(kind, msg){
     list.innerHTML = '<div class="s-loading"><span class="spinner"></span>正在搜索 GitHub 全网…</div>';
   }else if(kind === 'empty'){
     const hint = msg || '试试缩短关键词、换英文词，或清除语言过滤';
-    const clearLang = state.searchLang
+    const clearLang = hasLanguageFilter()
       ? '<button class="btn s-clear-lang" id="sClearLang">清除语言过滤</button>'
       : '';
     list.innerHTML = '<div class="s-state"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span>未找到相关仓库</span><span style="font-size:12px">' + escHtml(hint) + '</span>' + clearLang + '</div>';
     const clear = $('#sClearLang');
     if(clear) clear.onclick = () => {
       state.searchLang = '';
+      const query = stripLanguageFilter(state.searchQuery);
+      state.searchQuery = query;
+      state.q = query;
+      const hero = $('#q');
+      if(hero){ hero.value = query; $('#btnClear').style.display = query ? 'block' : 'none'; }
       const sel = $('#sLang'); if(sel) sel.value = '';
+      const title = $('#sTitleQ'); if(title) title.textContent = query;
+      const shown = $('#sQuery'); if(shown) shown.textContent = query;
+      if(query.length < 2){ closeSearchModal(); toast('已清除语言过滤，请输入至少 2 个字符'); return; }
+      renderSearchHint();
+      syncSearchUrl();
       runSearch('new');
     };
   }else{
@@ -194,7 +210,8 @@ export function renderSearchResults(j, append){
   } else if(needsTranslation && j.translated && translatedTerms.length){
     tip.classList.remove('hidden');
     tip.classList.add('ok');
-    tip.innerHTML = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>已翻译为 ' + escHtml(translatedTerms.slice(0, 4).join(' / ')) + '，同时搜索中英文结果';
+    const shownTerms = translatedTerms.slice(0, 4).map(t => t.length > 40 ? t.slice(0, 40) + '…' : t);
+    tip.innerHTML = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>已翻译为 ' + escHtml(shownTerms.join(' / ')) + '，同时搜索中英文结果';
   } else {
     tip.classList.add('hidden'); tip.innerHTML = '';
   }

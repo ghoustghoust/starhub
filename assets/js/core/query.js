@@ -43,6 +43,7 @@ function escapeRegex(s){ return String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 export function normText(s){ return String(s||'').toLowerCase().replace(/[-_./]+/g,' ').trim(); }
 
 export function relevanceScore(d, words){
+  words = words.map(normText).filter(Boolean);
   if(!words.length) return 0;
   const name=normText(d.name);
   const owner=normText(d.owner);

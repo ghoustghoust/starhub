@@ -78,6 +78,7 @@ test('连字符与空格等价', () => {
   const repo = { name: 'machine-learning', owner: 'x', full_name: 'x/machine-learning', desc: '', topics: [], language: 'Python' };
   const descOnly = { name: 'other', owner: 'y', full_name: 'y/other', desc: 'machine learning toolkit', topics: [], language: 'Python' };
   assert.ok(relevanceScore(repo, ['machine learning']) > relevanceScore(descOnly, ['machine learning']));
+  assert.equal(relevanceScore(repo, ['machine-learning']), relevanceScore(repo, ['machine learning']));
 });
 
 test('本地相关度：精确名 > 前缀 > 子串', () => {

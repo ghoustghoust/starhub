@@ -24,6 +24,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline"))
 from starhub_pipeline.config import site_value  # noqa: E402
+from starhub_pipeline.enrich.embed import embed_star_entries  # noqa: E402
 from starhub_pipeline.sources.github import fetch_stars  # noqa: E402
 
 # Fast path for CI while the refactored pipeline is being built: skip
@@ -378,58 +379,6 @@ def health_score(repo):
     return {"tier": tier, "stale": stale}
 
 
-def embed_texts(texts):
-    """SiliconFlow bge-m3 批量 embedding（1024 维）。成功返回与输入等长的向量数组；
-    key 未配置 / 请求失败 / 返回长度不符 → None（调用方降级，语义搜索整体缺省）。"""
-    key = (os.environ.get("SILICONFLOW_API_KEY") or "").strip()
-    if not key or not texts:
-        return None
-    payload = json.dumps({"model": "BAAI/bge-m3", "input": list(texts)}).encode("utf-8")
-    req = urllib.request.Request(
-        "https://api.siliconflow.cn/v1/embeddings", data=payload,
-        headers={"Content-Type": "application/json", "Authorization": "Bearer %s" % key},
-        method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-        items = sorted(body.get("data", []), key=lambda d: d.get("index", 0))
-        vecs = [d.get("embedding") for d in items]
-        if len(vecs) != len(texts) or any(not isinstance(v, list) or not v for v in vecs):
-            print("[embed] 返回长度/形状不符: %d vs %d" % (len(vecs), len(texts)), file=sys.stderr)
-            return None
-        return vecs
-    except Exception as e:  # noqa: BLE001
-        print("[embed] 请求失败: %s" % e, file=sys.stderr)
-        return None
-
-
-def quantize_normalized(vec):
-    """向量 L2 归一化后线性映射到 int8（[-1,1]→[-127,127]）。
-    归一化后余弦相似度 == 点积，前端无需存 scale；1024 维下量化误差 ~2%，语义匹配够用。"""
-    norm = (sum(v * v for v in vec) ** 0.5) or 1.0
-    return [max(-127, min(127, round(v / norm * 127))) for v in vec]
-
-
-def embed_star_entries(entries, batch=64):
-    """对条目数组分批补 emb 键（int8 归一化向量，供前端语义搜索）。
-    embedding 任一环节失败保持原数组不变（键缺省 = 前端退化纯关键词）。"""
-    if FAST:
-        return entries
-    try:
-        texts = [(e.get("desc") or e.get("full_name") or "")[:512] for e in entries]
-        vecs = [None] * len(entries)
-        for i in range(0, len(texts), batch):
-            part = embed_texts(texts[i:i + batch])
-            if not part:
-                print("[embed] 批 %d 失败，整组降级（无 emb 键）" % (i // batch + 1), file=sys.stderr)
-                return entries
-            vecs[i:i + batch] = part
-        for e, v in zip(entries, vecs):
-            e["emb"] = quantize_normalized(v)
-        print("[embed] %d 条向量已内联（int8 归一化，%d 批）" % (len(entries), (len(texts) + batch - 1) // batch))
-    except Exception as e:  # noqa: BLE001
-        print("[embed] 降级: %s" % e, file=sys.stderr)
-    return entries
 
 
 def _agnes_generate(system, user, max_tokens=300):
@@ -1487,7 +1436,7 @@ def main(mode="full"):
         else:
             ai_summary_html = ""
         # 数据面增强（全部失败降级、不阻塞发布）：语义向量内联 + 类目导览附加进 CATS 副本
-        embed_star_entries(out)
+        embed_star_entries(out, fast=FAST)
         try:
             guides = build_category_guides(CATS, known)
         except Exception as e:  # noqa: BLE001

@@ -202,6 +202,16 @@ export function buildQueryPlan(input, enMap = new Map()) {
   return plans;
 }
 
+export function parseSearchParams(reqUrl) {
+  const url = new URL(reqUrl || '', 'https://starhub.local');
+  return {
+    q: url.searchParams.get('q') || '',
+    sort: url.searchParams.get('sort') || '',
+    lang: url.searchParams.get('lang') || '',
+    page: url.searchParams.get('page') || 1,
+  };
+}
+
 export function collectHighlightTerms(input, enMap = new Map()) {
   const terms = [];
   for (const t of tokenizeSearchQuery(input)) {
@@ -292,13 +302,7 @@ export default async function handler(req, res) {
 
   let body;
   if (isGet) {
-    const url = new URL(req.url || '', 'https://starhub.local');
-    body = {
-      q: url.searchParams.get('q') || '',
-      sort: url.searchParams.get('sort') || '',
-      lang: url.searchParams.get('lang') || '',
-      page: url.searchParams.get('page') || 1,
-    };
+    body = parseSearchParams(req.url);
   } else {
     try { body = await new Promise((resolve, reject) => { let d = ''; req.on('data', c => { d += c; if (d.length > 4096) { reject(new Error('too large')); req.destroy(); } }); req.on('end', () => resolve(JSON.parse(d || '{}'))); req.on('error', reject); }); }
     catch (e) { res.status(400).json({ error: '请求体格式错误' }); return; }

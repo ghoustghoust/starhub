@@ -38,6 +38,9 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Test pipeline
+        run: PYTHONPATH=pipeline python -m unittest discover -s pipeline/tests -q
+
       - name: Build site
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

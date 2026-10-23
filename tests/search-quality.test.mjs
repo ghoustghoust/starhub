@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildQueryPlan, collectHighlightTerms, spamReason, tokenizeSearchQuery } from '../api/search.js';
+import { buildQueryPlan, collectHighlightTerms, parseSearchParams, spamReason, tokenizeSearchQuery } from '../api/search.js';
 import { applyCors, setPublicCache } from '../api/_lib/http.js';
 import { normText, parseQueryTokens, relevanceScore } from '../assets/js/core/query.js';
 
@@ -60,6 +60,12 @@ test('查询计划去重', () => {
 test('高亮词包含原文与译文，排除限定符和否定词', () => {
   const terms = collectHighlightTerms('视频 -广告 language:Python', new Map([['视频', 'video'], ['广告', 'ad']]));
   assert.deepEqual(terms, ['视频', 'video']);
+});
+
+test('GET 查询参数解析', () => {
+  const params = parseSearchParams('/api/search?q=%E8%A7%86%E9%A2%91&sort=stars&lang=Python&page=2');
+  assert.deepEqual(params, { q: '视频', sort: 'stars', lang: 'Python', page: '2' });
+  assert.equal(parseSearchParams('/api/search').page, 1);
 });
 
 test('超长描述仍判为垃圾结果', () => {

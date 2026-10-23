@@ -267,11 +267,15 @@ export function buildRow(d, isFav){
 }
 
 
+const RENDER_STEP = 200;
+
 export function renderList(){
   const { faved, rest, semantic } = filterData();
   // 语义扩展条目追加在结果尾部（带"语义相关"角标，_sem 由 buildCard 渲染）
   const semBadged = (semantic||[]).map(d=>{ const c=Object.assign({},d); c._sem=true; return c; });
-  const restAll = rest.concat(semBadged);
+  const allRest = rest.concat(semBadged);
+  const limit = Math.max(RENDER_STEP, state.renderLimit || RENDER_STEP);
+  const restAll = allRest.slice(0, limit);
   const pinnedWrap = $('#pinnedWrap'), pinned = $('#pinned'), grid = $('#grid'), empty = $('#empty');
   const isList = getView() === 'list';
   const build = isList ? buildRow : buildCard;
@@ -286,20 +290,30 @@ export function renderList(){
     pinnedWrap.style.display='none';
   }
 
-  // 主列表
+  // 主列表：首屏只渲染一页，数据增长时不让 DOM 随收藏数线性膨胀
   grid.innerHTML='';
   restAll.forEach(d => grid.appendChild(build(d, false)));
+  const moreWrap = $('#loadMoreWrap');
+  if(moreWrap){
+    const remaining = allRest.length - restAll.length;
+    moreWrap.style.display = remaining > 0 ? '' : 'none';
+    const moreBtn = $('#loadMoreBtn');
+    if(moreBtn && remaining > 0){
+      moreBtn.textContent = '显示更多（还有 ' + remaining + ' 个）';
+      moreBtn.onclick = () => { state.renderLimit = limit + RENDER_STEP; renderList(); };
+    }
+  }
   // 只改标题文本节点（firstChild），保留 span#listCount 子节点：
   // textContent 整体赋值会销毁子节点，使 #listCount 从 DOM 消失、下次查询为 null
   const titleEl = $('#listTitle'), countEl = $('#listCount');
   if(titleEl.firstChild) titleEl.firstChild.textContent = state.cat
     ? (CATS.find(c=>c.key===state.cat)||{}).label || '全部项目'
     : '全部项目';
-  if(countEl) countEl.textContent = '('+restAll.length+')';
+  if(countEl) countEl.textContent = '('+allRest.length+')';
 
   const hasFilter = state.cat || state.lang || state.star !== 'all' || state.updated || state.topic || state.q;
-  empty.style.display = (faved.length + restAll.length === 0) ? 'block' : 'none';
-  if(faved.length + restAll.length === 0){
+  empty.style.display = (faved.length + allRest.length === 0) ? 'block' : 'none';
+  if(faved.length + allRest.length === 0){
     $('#emptyHint').textContent = hasFilter ? '当前有筛选在生效，可能挡住了结果（试试限定符 topic:xxx 或换关键词）' : '试试换一个关键词';
     $('#btnResetAll').style.display = hasFilter ? 'inline-flex' : 'none';
   }

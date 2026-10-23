@@ -28,7 +28,7 @@ from starhub_pipeline.build.attention import (  # noqa: E402
     render_star_attention,
     star_attention_items,
 )
-from starhub_pipeline.build.contracts import write_site_contracts  # noqa: E402
+from starhub_pipeline.build.contracts import write_pool_script, write_site_contracts  # noqa: E402
 from starhub_pipeline.build.stars import assemble_entries as _assemble_entries  # noqa: E402
 from starhub_pipeline.build.trending import (  # noqa: E402
     TRENDING_BOARD,
@@ -101,11 +101,11 @@ TREND_MAX_STARS = 50000  # 涨星榜排除超过此星标的巨头项目（避�
 
 BUILD_CONFIG_FILE = "build_config.json"
 
-# 限流场的首页兜底源：Pages 域（静态托管，不吃 GitHub API 的限流），实测首页 292 KB 左右，
-# 所以小于 40 KB 的一律不当"上一版首页"用 —— 把错误页/半截页当首页发出去，比缺件更糟：
-# 缺件至少会让 Stage 判失败并红，错误页却会被当成一次成功发布。
+# 限流场的首页兜底源：Pages 域（静态托管，不吃 GitHub API 的限流）。收藏池已外置到
+# data/pool.js，首页稳定在 37 KB 左右，所以阈值压到 20 KB —— 把错误页/半截页当首页
+# 发出去，比缺件更糟：缺件至少会让 Stage 判失败并红，错误页却会被当成一次成功发布。
 PAGES_INDEX_URL = PAGES_URL.rstrip("/") + "/index.html"
-MIN_REAL_PAGE_BYTES = 40000
+MIN_REAL_PAGE_BYTES = 20000
 PLACEHOLDER_INDEX = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -134,6 +134,30 @@ def fetch_live_index(url):
 def _looks_like_real_index(body):
     return (bool(body) and body.lstrip().startswith("<!DOCTYPE html>")
             and "</html>" in body and len(body) >= MIN_REAL_PAGE_BYTES)
+
+
+def ensure_pool_fallback(out_dir="."):
+    """Star 拉取失败时，首页可能来自线上旧版；它引用的 pool.js 也必须一起补齐。"""
+    path = os.path.join(out_dir, "data", "pool.js")
+    if os.path.exists(path) and os.path.getsize(path) > 1000:
+        return "existing"
+    url = PAGES_URL.rstrip("/") + "/data/pool.js"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "starhub-build/1.0"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            body = r.read().decode("utf-8", "replace")
+        if "window.__STARHUB_POOL_DATA__=" not in body:
+            raise ValueError("not a pool script")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        os.replace(tmp, path)
+        print("[首页兜底] 已补齐线上 pool.js（%d B）" % len(body))
+        return "live"
+    except Exception as exc:  # noqa: BLE001
+        print("[首页兜底] 取不到线上 pool.js：%s" % exc, file=sys.stderr)
+        return None
 
 
 def write_index_fallback(out_dir="."):
@@ -278,7 +302,8 @@ def main(mode="full"):
         except Exception as e:  # noqa: BLE001
             print("[attention] 提醒条生成失败，本场无提醒: %s" % e, file=sys.stderr)
             attention_html = ""
-        html = build_index_html(out, cats_with_guides, trending=trending, feed=feed,
+        write_pool_script(out, updated)
+        html = build_index_html(cats_with_guides, trending=trending, feed=feed,
                                 updated=updated, ai_summary_html=ai_summary_html,
                                 attention_html=attention_html)
 
@@ -300,6 +325,7 @@ def main(mode="full"):
     # 判据：tests/rss_history/test_index_fallback_on_star_ratelimit.py
     if not stars_ok:
         write_index_fallback()
+        ensure_pool_fallback()
 
     # AI 晨报：数据源是 AIHOT（自带 API→RSS→本地 ai_daily.json 三级回退），与 star 数据无关，
     # 所以刻意不挂进上面的 if stars_ok: 分支 —— 限流场也必须产出 ai-daily.html：

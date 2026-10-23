@@ -22,6 +22,7 @@ __pycache__/
 /index.html
 /ai-daily.html
 /assets/js/app.bundle.js
+/data/pool.js
 /trending_board.json
 /category_guides.json
 /_site/

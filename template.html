@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700;900&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/css/main.css?v=__ASSET_VERSION__">
+<link rel="preload" as="script" href="data/pool.js?v=__ASSET_VERSION__">
 <script>try{var _t=localStorage.getItem('wb_starhub_theme_v1')||(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.dataset.theme=_t;}catch(e){}</script>
 </head>
 <body>
@@ -161,6 +162,9 @@
 
   <div class="sec-title" id="listTitle" style="margin-top:20px">全部项目 <span class="n" style="color:var(--muted);font-weight:400" id="listCount"></span></div>
   <main class="grid" id="grid"></main>
+  <div class="load-more-wrap" id="loadMoreWrap" style="display:none">
+    <button class="btn" id="loadMoreBtn">显示更多</button>
+  </div>
 
   <div class="empty" id="empty">
     <svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -248,9 +252,11 @@
   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg>
 </button>
 
+<script>window.__STARHUB_POOL_ERROR__ = false;</script>
+<script src="data/pool.js?v=__ASSET_VERSION__" onerror="window.__STARHUB_POOL_ERROR__=true"></script>
 <script>
 window.__STARHUB_BOOT__ = {
-  DATA: __DATA__,
+  DATA: (window.__STARHUB_POOL_DATA__ && window.__STARHUB_POOL_DATA__.items) || [],
   CATS: __CATS__,
   LANG_COLORS: __LANGS__,
   DEFAULT_FAVS: __FAVS__,

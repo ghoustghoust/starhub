@@ -31,7 +31,7 @@ npm run bundle         # 打包 assets/js/app.js → app.bundle.js
 python fetch_and_build.py
 ```
 
-构建产物为 `index.html` 与 `ai-daily.html`。CI 当前使用 `STARHUB_FAST=1` 跳过免费翻译端点的长重试；带缓存的增强管线在重构中恢复。
+构建产物为 `index.html`、`ai-daily.html` 与 `data/pool.js`（收藏池，已忽略提交、随 Pages 发布）。CI 当前使用 `STARHUB_FAST=1` 跳过免费翻译端点的长重试；带缓存的增强管线在重构中恢复。
 
 ## 自定义域名
 

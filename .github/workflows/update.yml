@@ -66,6 +66,9 @@ jobs:
           test -s assets/js/features/search.js
           test -s assets/css/ai-daily.css
           test -s assets/js/ai-daily.js
+          test -s data/pool.js
+          # 收藏池已外置；首页体积必须与收藏数解耦，回退内联会直接超限
+          test $(wc -c < index.html) -lt 120000
           ! grep -q 'rss-aggregator' index.html
           ! grep -q 'daily-insight' ai-daily.html
 

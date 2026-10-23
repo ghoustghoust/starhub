@@ -1,5 +1,6 @@
 // Vercel Serverless Function：全网 GitHub 仓库搜索（跨语言）
-// 用法：POST /api/search  Body: { q: "视频创作", sort: "best-match"|"stars"|"updated", lang?: "Python", page?: 1 }
+// 用法：GET /api/search?q=视频创作&sort=best-match&lang=Python&page=1
+//       POST /api/search  Body 同参数（兼容旧客户端）
 //
 // 翻译（T6 重构 2026-10-04）：改用 api/_lib/translate.js 的统一降级链
 //   GTX → MyMemory → Agnes(多key) → Zen —— 旧版自带的 Google→MyMemory 两层在
@@ -19,7 +20,7 @@
 //   GH_TOKEN 的 30 req/min 搜索配额可被恶意烧穿）。
 // 缓存：搜索结果内存缓存 10 分钟（key=查询|sort|page）；词级翻译缓存 1 小时。
 import { translateWithFallback } from './_lib/translate.js';
-import { applyCors, rejectMethod } from './_lib/http.js';
+import { applyCors, rejectMethod, setPublicCache } from './_lib/http.js';
 
 const SORTS = new Set(['best-match', 'stars', 'updated']);
 const PER_PAGE = 30;
@@ -30,6 +31,11 @@ const TTL_TRANS = 60 * 60 * 1000;
 const MAX_TRANSLATE_TERMS = 6;
 const MAX_QUERY_LEN = 256;
 const CJK_RE = /[\u3400-\u9fff]/;
+const MAX_SEARCH_CACHE = 300;
+const MAX_TRANS_CACHE = 1000;
+const MAX_RATE_IPS = 5000;
+const CDN_TTL = 600;
+const CDN_TTL_UNTRANSLATED = 120;
 const RATE_IP = 10;     // 每 IP 每分钟
 const RATE_GLOBAL = 25; // 全局每分钟
 
@@ -45,7 +51,10 @@ function cacheGet(map, key, ttl) {
   if (Date.now() - hit.t > (hit.ttl || ttl)) { map.delete(key); return undefined; }
   return hit.v;
 }
-function cacheSet(map, key, val, ttl) { map.set(key, { t: Date.now(), v: val, ttl }); }
+function cacheSet(map, key, val, ttl, max) {
+  if (max && map.size >= max && !map.has(key)) map.delete(map.keys().next().value);
+  map.set(key, { t: Date.now(), v: val, ttl });
+}
 
 const RATE_WINDOW = 60 * 1000;
 function rateLimited(ip) {
@@ -55,6 +64,14 @@ function rateLimited(ip) {
   const arr = (rateIp.get(ip) || []).filter(t => now - t < RATE_WINDOW);
   const limited = arr.length >= RATE_IP;
   rateIp.set(ip, arr.concat([now]));
+  if (rateIp.size > MAX_RATE_IPS) {
+    for (const [addr, stamps] of rateIp) {
+      const recent = stamps.filter(t => now - t < RATE_WINDOW);
+      if (recent.length) rateIp.set(addr, recent); else rateIp.delete(addr);
+      if (rateIp.size <= MAX_RATE_IPS) break;
+    }
+    while (rateIp.size > MAX_RATE_IPS) rateIp.delete(rateIp.keys().next().value);
+  }
   if (!limited) rateGlobalTs.push(now);
   return limited;
 }
@@ -70,7 +87,7 @@ async function translateTerm(term) {
     const en = (r && r.zh) ? String(r.zh).trim().replace(/"/g, '').slice(0, 120) : '';
     if (en) {
       const hit = { en, engine: r.engine || 'unknown' };
-      cacheSet(transCache, term, hit, TTL_TRANS);
+      cacheSet(transCache, term, hit, TTL_TRANS, MAX_TRANS_CACHE);
       return hit;
     }
     console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'search_trans_fail', term: term.slice(0, 30), engine: r ? r.engine : 'no-result' }));
@@ -245,13 +262,15 @@ function withLanguage(plan, lang) {
 }
 
 export default async function handler(req, res) {
+  const isGet = req.method === 'GET';
   const allowed = applyCors(req, res, {
-    methods: 'POST, OPTIONS',
+    methods: 'GET, POST, OPTIONS',
     headers: 'Content-Type, X-Search-Key',
     allowNoOrigin: true,
+    publicCors: isGet,
   });
   if (req.method === 'OPTIONS') { res.status(allowed ? 204 : 403).end(); return; }
-  if (req.method !== 'POST') { rejectMethod(res, 'POST, OPTIONS'); return; }
+  if (!isGet && req.method !== 'POST') { rejectMethod(res, 'GET, POST, OPTIONS'); return; }
   if (!allowed) { res.status(403).json({ error: 'Forbidden' }); return; }
 
   const key = process.env.REFRESH_KEY;
@@ -272,8 +291,18 @@ export default async function handler(req, res) {
   }
 
   let body;
-  try { body = await new Promise((resolve, reject) => { let d = ''; req.on('data', c => { d += c; if (d.length > 4096) { reject(new Error('too large')); req.destroy(); } }); req.on('end', () => resolve(JSON.parse(d || '{}'))); req.on('error', reject); }); }
-  catch (e) { res.status(400).json({ error: '请求体格式错误' }); return; }
+  if (isGet) {
+    const url = new URL(req.url || '', 'https://starhub.local');
+    body = {
+      q: url.searchParams.get('q') || '',
+      sort: url.searchParams.get('sort') || '',
+      lang: url.searchParams.get('lang') || '',
+      page: url.searchParams.get('page') || 1,
+    };
+  } else {
+    try { body = await new Promise((resolve, reject) => { let d = ''; req.on('data', c => { d += c; if (d.length > 4096) { reject(new Error('too large')); req.destroy(); } }); req.on('end', () => resolve(JSON.parse(d || '{}'))); req.on('error', reject); }); }
+    catch (e) { res.status(400).json({ error: '请求体格式错误' }); return; }
+  }
 
   const zh = String(body.q || '').trim();
   if (zh.length < 2) { res.status(400).json({ error: '关键词至少 2 个字符' }); return; }
@@ -377,14 +406,19 @@ export default async function handler(req, res) {
           items,
         };
         // 翻译失败的结果只短暂缓存，翻译恢复后能尽快用上英文查询
-        cacheSet(searchCache, ck, data, (!translated && needsTranslation) ? TTL_SEARCH_UNTRANSLATED : TTL_SEARCH);
+        cacheSet(searchCache, ck, data, (!translated && needsTranslation) ? TTL_SEARCH_UNTRANSLATED : TTL_SEARCH, MAX_SEARCH_CACHE);
         break;
       }
       // total=0 → 降下一档
     }
     if (!data) {
+      if (isGet) setPublicCache(res, (needsTranslation && !translated) ? CDN_TTL_UNTRANSLATED : CDN_TTL, 60);
       res.status(200).json({ query: zh, ...meta, strategy: zh, page, total: 0, items: [] });
       return;
+    }
+    if (isGet) {
+      const ttl = (!data.translated && data.needs_translation) ? CDN_TTL_UNTRANSLATED : CDN_TTL;
+      setPublicCache(res, ttl, ttl === CDN_TTL_UNTRANSLATED ? 30 : 60);
     }
     res.status(200).json(data);
   } catch (e) {

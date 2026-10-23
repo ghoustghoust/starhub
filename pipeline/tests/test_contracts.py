@@ -23,6 +23,20 @@ class ContractsTest(unittest.TestCase):
         self.assertEqual(entry["health"], {"level": "green", "stale": False})
         self.assertEqual(entry["embedding"], [1, 2])
 
+    def test_writes_pool_script(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            contracts.write_pool_script(
+                [{"full_name": "owner/repo", "desc": "line\u2028separator"}],
+                "2026-10-23 10:00",
+                data_dir=tmp,
+            )
+            text = Path(tmp, "pool.js").read_text(encoding="utf-8")
+            self.assertTrue(text.startswith("window.__STARHUB_POOL_DATA__="))
+            payload = json.loads(text[len("window.__STARHUB_POOL_DATA__="):].rstrip(";\n"))
+            self.assertEqual(payload["items"][0]["full_name"], "owner/repo")
+            self.assertEqual(payload["updated"], "2026-10-23 10:00")
+            self.assertIn("\\u2028", text)
+
     def test_writes_all_contracts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             contracts.write_site_contracts(

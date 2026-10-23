@@ -1,10 +1,12 @@
 // GET /api/events — recent public activity from the token owner's following list.
-import { applyCors, rejectMethod } from './_lib/http.js';
+import { applyCors, rejectMethod, setPublicCache } from './_lib/http.js';
 import { ghJson } from './_lib/github.js';
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 const TTL = 10 * 60 * 1000;
+const CDN_TTL = 300;
 const CONCURRENCY = 3;
+const MAX_FOLLOWING = Math.max(1, parseInt(process.env.EVENTS_MAX_USERS || '200', 10) || 200);
 
 let cache = { t: 0, v: null };
 
@@ -24,9 +26,15 @@ function parseCn(iso) {
 
 async function fetchFollowing() {
   const out = [];
-  for (let page = 1; page <= 5; page++) {
+  const maxPages = Math.ceil(MAX_FOLLOWING / 100);
+  for (let page = 1; page <= maxPages; page++) {
     const data = await ghJson(`/user/following?per_page=100&page=${page}`, { timeout: 12000 });
     out.push(...data.map((entry) => entry.login).filter(Boolean));
+    if (out.length >= MAX_FOLLOWING) {
+      out.length = MAX_FOLLOWING;
+      console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'events_users_capped', cap: MAX_FOLLOWING }));
+      break;
+    }
     if (data.length < 100) break;
   }
   return out;
@@ -80,13 +88,17 @@ async function fetchUserEvents(user, cutoff, today) {
 }
 
 export default async function handler(req, res) {
-  const allowed = applyCors(req, res, { methods: 'GET, OPTIONS', allowNoOrigin: true });
+  const allowed = applyCors(req, res, { methods: 'GET, OPTIONS', allowNoOrigin: true, publicCors: true });
   if (req.method === 'OPTIONS') { res.status(allowed ? 204 : 403).end(); return; }
   if (req.method !== 'GET') { rejectMethod(res, 'GET, OPTIONS'); return; }
   if (!allowed) { res.status(403).json({ error: 'Forbidden' }); return; }
   if (!process.env.GH_TOKEN) { res.status(500).json({ error: 'GH_TOKEN is not configured' }); return; }
 
-  if (cache.v && Date.now() - cache.t < TTL) { res.status(200).json(cache.v); return; }
+  if (cache.v && Date.now() - cache.t < TTL) {
+    setPublicCache(res, CDN_TTL, 300);
+    res.status(200).json(cache.v);
+    return;
+  }
 
   try {
     const now = cnNow();
@@ -102,6 +114,7 @@ export default async function handler(req, res) {
     all.sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
     const body = { updated_at: cnStr(now).date + ' ' + cnStr(now).time, window: '24h', items: all };
     cache = { t: Date.now(), v: body };
+    setPublicCache(res, CDN_TTL, 300);
     res.status(200).json(body);
   } catch {
     res.status(502).json({ error: 'Upstream unavailable' });

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildQueryPlan, collectHighlightTerms, spamReason, tokenizeSearchQuery } from '../api/search.js';
+import { applyCors, setPublicCache } from '../api/_lib/http.js';
 import { normText, parseQueryTokens, relevanceScore } from '../assets/js/core/query.js';
 
 test('限定符与引号短语不会被当成关键词', () => {
@@ -88,4 +89,26 @@ test('本地相关度：精确名 > 前缀 > 子串', () => {
   const substring = relevanceScore({ ...base, name: 'preact', full_name: 'x/preact' }, ['react']);
   assert.ok(exact > prefix);
   assert.ok(prefix > substring);
+});
+
+function fakeRes() {
+  return { headers: {}, setHeader(key, value) { this.headers[key] = value; } };
+}
+
+test('公开只读响应允许任意 Origin，并可切换为 CDN 缓存', () => {
+  const res = fakeRes();
+  const allowed = applyCors({ headers: { origin: 'https://example.com' } }, res, { publicCors: true });
+  assert.equal(allowed, true);
+  assert.equal(res.headers['Access-Control-Allow-Origin'], '*');
+  assert.equal(res.headers['Cache-Control'], 'no-store');
+  setPublicCache(res, 600, 60);
+  assert.equal(res.headers['Cache-Control'], 'public, s-maxage=600, stale-while-revalidate=60');
+});
+
+test('私有响应仍只回显白名单 Origin', () => {
+  const res = fakeRes();
+  const allowed = applyCors({ headers: { origin: 'https://ghoustghoust.github.io' } }, res);
+  assert.equal(allowed, true);
+  assert.equal(res.headers['Access-Control-Allow-Origin'], 'https://ghoustghoust.github.io');
+  assert.equal(res.headers['Cache-Control'], 'no-store');
 });

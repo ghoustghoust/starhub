@@ -323,6 +323,7 @@ header{
 
 /* ---------- cards: paper entries ---------- */
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.load-more-wrap{display:flex;justify-content:center;margin:22px 0 6px}
 .card{
   position:relative;display:flex;flex-direction:column;gap:8px;background:var(--card);
   border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px 13px;box-shadow:var(--shadow-card);

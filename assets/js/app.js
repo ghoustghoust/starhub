@@ -340,6 +340,13 @@ document.addEventListener('error', e => {
   }
 }, true);
 renderList();
+if(window.__STARHUB_POOL_ERROR__){
+  const empty = $('#empty'), hint = $('#emptyHint'), grid = $('#grid');
+  if(grid) grid.innerHTML = '';
+  if(empty) empty.style.display = 'block';
+  if(hint) hint.textContent = '收藏数据加载失败，请刷新页面重试';
+  toast('收藏数据加载失败，请刷新重试');
+}
 renderTrending();
 renderFeed();
 refreshFeed(); // 打开页面即拉取实时关注动态（静默失败，静态数据兜底）

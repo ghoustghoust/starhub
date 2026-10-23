@@ -20,7 +20,6 @@ def safe_json(payload) -> str:
 
 
 def build_index_html(
-    repos,
     cats,
     trending=None,
     feed=None,
@@ -38,8 +37,7 @@ def build_index_html(
     if api_base is None:
         api_base = site_value("api_base", "")
     return (
-        template.replace("__DATA__", safe_json(repos))
-        .replace("__CATS__", safe_json(cats))
+        template.replace("__CATS__", safe_json(cats))
         .replace("__LANGS__", safe_json(LANG_COLORS))
         .replace("__FAVS__", safe_json(DEFAULT_FAVS))
         .replace("__API_BASE__", api_base)

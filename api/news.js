@@ -1,5 +1,5 @@
 // GET /api/news — AI news proxy for 36Kr and the Redis blog.
-import { applyCors, rejectMethod } from './_lib/http.js';
+import { applyCors, rejectMethod, setPublicCache } from './_lib/http.js';
 
 const MIRRORS = [
   'https://rsshub.ktachibana.party/36kr/information/AI',
@@ -10,6 +10,7 @@ const MIRRORS = [
 const REDIS_FEED = 'https://redis.io/feed/';
 const REDIS_LIMIT = 3;
 const TTL = 10 * 60 * 1000;
+const CDN_TTL = 600;
 let cache = { t: 0, v: null };
 
 const stripHtml = (value) => (value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -48,12 +49,16 @@ function parseRss(xml) {
 }
 
 export default async function handler(req, res) {
-  const allowed = applyCors(req, res, { methods: 'GET, OPTIONS', allowNoOrigin: true });
+  const allowed = applyCors(req, res, { methods: 'GET, OPTIONS', allowNoOrigin: true, publicCors: true });
   if (req.method === 'OPTIONS') { res.status(allowed ? 204 : 403).end(); return; }
   if (req.method !== 'GET') { rejectMethod(res, 'GET, OPTIONS'); return; }
   if (!allowed) { res.status(403).json({ error: 'Forbidden' }); return; }
 
-  if (cache.v && Date.now() - cache.t < TTL) { res.status(200).json(cache.v); return; }
+  if (cache.v && Date.now() - cache.t < TTL) {
+    setPublicCache(res, CDN_TTL, 300);
+    res.status(200).json(cache.v);
+    return;
+  }
 
   const items = [];
   const sources = [];
@@ -71,5 +76,6 @@ export default async function handler(req, res) {
   if (!items.length) { res.status(502).json({ error: 'Upstream unavailable' }); return; }
   const body = { updated_at: new Date().toISOString(), sources, items };
   cache = { t: Date.now(), v: body };
+  setPublicCache(res, CDN_TTL, 300);
   res.status(200).json(body);
 }

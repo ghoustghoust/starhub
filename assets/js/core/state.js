@@ -55,6 +55,7 @@ export const state = {
   sortTouched: false,
   counted: false,
   searchMode: 'local',
+  renderLimit: 200,
 };
 
 export const siteData = {

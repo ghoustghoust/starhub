@@ -67,6 +67,13 @@ def main() -> None:
         datetime.datetime.now().strftime("dev%Y%m%d%H%M%S"),
     )
     template = template.replace("__AI_SUMMARY__", "").replace("__ATTENTION__", "")
+    # 旧首页的 DATA 是内联数组：移除外置资源标签，继续用内联数据预览。
+    if re.search(r"\bDATA\s*:\s*\[", boot):
+        template = re.sub(r'\s*<link rel="preload" as="script" href="data/pool\.js\?v=[^"]*">', "", template)
+        template = re.sub(r'\s*<script>window\.__STARHUB_POOL_ERROR__ = false;</script>', "", template)
+        template = re.sub(r'\s*<script src="data/pool\.js\?v=[^"]*"[^>]*></script>', "", template)
+    elif not Path("data/pool.js").exists():
+        print("警告：缺少 data/pool.js，页面将没有收藏数据；先运行 python fetch_and_build.py", file=sys.stderr)
     Path(SRC).write_text(template, encoding="utf-8")
     print("渲染完成：index.html 已由 template.html 重新生成")
 

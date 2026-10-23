@@ -47,6 +47,25 @@ def contract_item(item: dict[str, Any]) -> dict[str, Any]:
     return entry
 
 
+def write_pool_script(items: list[dict[str, Any]], updated: str, data_dir: str = "data") -> None:
+    """Write the frontend pool as a versioned external script.
+
+    Keeping the collection out of index.html makes the document size independent
+    of the number of stars; the script is cacheable and can be prefetched early.
+    """
+    path = os.path.join(data_dir, "pool.js")
+    os.makedirs(data_dir, exist_ok=True)
+    tmp = path + ".tmp"
+    payload = {"schema_version": 2, "updated": updated, "items": items}
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    body = body.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.write("window.__STARHUB_POOL_DATA__=")
+        handle.write(body)
+        handle.write(";\n")
+    os.replace(tmp, path)
+
+
 def write_site_contracts(
     items: list[dict[str, Any]],
     known: dict[str, str],

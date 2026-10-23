@@ -130,10 +130,14 @@ export async function runSearch(mode){
     $('#sFoot').textContent = '正在加载更多…';
   }
   try{
-    const r = await fetch(SEARCH_API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Search-Key': SEARCH_KEY },
-      body: JSON.stringify({ q: query, sort: state.searchSort, lang: state.searchLang, page }),
+    const params = new URLSearchParams({
+      q: query,
+      sort: state.searchSort,
+      lang: state.searchLang,
+      page: String(page),
+    });
+    const r = await fetch(SEARCH_API + '?' + params.toString(), {
+      headers: { 'X-Search-Key': SEARCH_KEY },
       signal: ac.signal,
     });
     const j = await r.json().catch(() => ({}));

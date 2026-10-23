@@ -1,7 +1,7 @@
 import { CATS, DATA, LANG_COLORS, favs, state } from '../core/state.js';
 import { $, icon } from '../core/dom.js';
 import { escHtml, fmtRelTime, fmtStars } from '../core/format.js';
-import { parseQueryTokens, relevanceScore } from '../core/query.js';
+import { normText, parseQueryTokens, relevanceScore } from '../core/query.js';
 import { getView } from './preferences.js';
 import { syncSearchUrl } from '../core/search-url.js';
 
@@ -83,8 +83,8 @@ export function hl(s, query){
 }
 
 export function fuzzyMatch(d, q){
-  const hay = (d.name+' '+d.owner+' '+d.full_name+' '+(d.desc||'')+' '+(d.language||'')+' '+(d.categoryLabel||'')+' '+(d.topics||[]).join(' ')).toLowerCase();
-  const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = normText(d.name+' '+d.owner+' '+d.full_name+' '+(d.desc||'')+' '+(d.language||'')+' '+(d.categoryLabel||'')+' '+(d.topics||[]).join(' '));
+  const tokens = normText(q).split(/\s+/).filter(Boolean);
   return tokens.every(t => hay.includes(t));
 }
 
@@ -107,7 +107,7 @@ export function filterData(){
     if(filters.pushedDays!=null && !_withinDays(d.pushed_at, filters.pushedDays)) return false;
     if(filters.org && (d.owner||'').toLowerCase()!==filters.org.toLowerCase()) return false;
     if(filters.topic && !(d.topics||[]).some(t=>t.toLowerCase()===filters.topic.toLowerCase())) return false;
-    if(filters.inName && !words.every(w=>(d.name||'').toLowerCase().includes(w))) return false;
+    if(filters.inName && !words.every(w=>normText(d.name).includes(normText(w)))) return false;
     // topic 横切（点卡片 topic 标签设置）：跨类目过滤
     if(state.topic && !(d.topics||[]).some(t=>t.toLowerCase()===state.topic.toLowerCase())) return false;
     // 更新时间档
@@ -122,10 +122,10 @@ export function filterData(){
     if(words.length){
       if(filters.inDesc){
         // in:desc 已在上面钉了 name 词；这里要求描述也全含
-        if(!words.every(w=>(d.desc||'').toLowerCase().includes(w))) return false;
+        if(!words.every(w=>normText(d.desc).includes(normText(w)))) return false;
       }
-      const hay = (d.name+' '+d.owner+' '+d.full_name+' '+(d.desc||'')+' '+(d.language||'')+' '+(d.categoryLabel||'')+' '+(d.topics||[]).join(' ')).toLowerCase();
-      if(!words.every(t => hay.includes(t))) return false;
+      const hay = normText(d.name+' '+d.owner+' '+d.full_name+' '+(d.desc||'')+' '+(d.language||'')+' '+(d.categoryLabel||'')+' '+(d.topics||[]).join(' '));
+      if(!words.every(t => hay.includes(normText(t)))) return false;
     }
     return true;
   });

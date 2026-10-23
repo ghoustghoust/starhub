@@ -653,6 +653,9 @@ mark{background:var(--mark);color:inherit;border-radius:1px;padding:0 1px}
 }
 .s-tip .icon{width:15px;height:15px;flex:none;color:var(--star)}
 .s-tip.hidden{display:none}
+.s-tip.ok{background:var(--hover);border-color:var(--border);color:var(--muted)}
+.s-tip.ok .icon{color:var(--brand)}
+.s-clear-lang{height:30px;padding:0 14px;font-size:12px;margin-top:2px}
 .s-item{padding:13px 4px;border-bottom:1px solid var(--border2)}
 .s-item:last-child{border-bottom:0}
 .s-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}

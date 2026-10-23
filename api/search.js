@@ -25,7 +25,11 @@ const SORTS = new Set(['best-match', 'stars', 'updated']);
 const PER_PAGE = 30;
 const MAX_PAGE = 34; // 1000 / 30
 const TTL_SEARCH = 10 * 60 * 1000;
+const TTL_SEARCH_UNTRANSLATED = 2 * 60 * 1000;
 const TTL_TRANS = 60 * 60 * 1000;
+const MAX_TRANSLATE_TERMS = 6;
+const MAX_QUERY_LEN = 256;
+const CJK_RE = /[\u3400-\u9fff]/;
 const RATE_IP = 10;     // 每 IP 每分钟
 const RATE_GLOBAL = 25; // 全局每分钟
 
@@ -38,10 +42,10 @@ let rateGlobalTs = [];
 function cacheGet(map, key, ttl) {
   const hit = map.get(key);
   if (!hit) return undefined;
-  if (Date.now() - hit.t > ttl) { map.delete(key); return undefined; }
+  if (Date.now() - hit.t > (hit.ttl || ttl)) { map.delete(key); return undefined; }
   return hit.v;
 }
-function cacheSet(map, key, val) { map.set(key, { t: Date.now(), v: val }); }
+function cacheSet(map, key, val, ttl) { map.set(key, { t: Date.now(), v: val, ttl }); }
 
 const RATE_WINDOW = 60 * 1000;
 function rateLimited(ip) {
@@ -56,50 +60,141 @@ function rateLimited(ip) {
 }
 
 // 单词翻译：统一链（→en 方向：GTX→MyMemory，LLM 腿 prompt 硬编码译成中文故跳过），词级缓存 1h。
-// ⚠ 只缓存成功结果——失败（null）入缓存会把一次瞬时故障放大成 1 小时的
+// ⚠ 只缓存成功结果——失败入缓存会把一次瞬时故障放大成 1 小时的
 // "translated:false"（部署后首轮撞 GTX 间歇 429 实测复现）。失败下次重试。
 async function translateTerm(term) {
   const cached = cacheGet(transCache, term, TTL_TRANS);
   if (cached !== undefined) return cached;
-  const r = await translateWithFallback(term, { to: 'en' });
-  const engine = r ? r.engine : 'no-result';
-  const en = (r && r.zh) ? String(r.zh).trim() : null;
-  if (en) {
-    cacheSet(transCache, term, en);
-  } else {
-    console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'search_trans_fail', term: term.slice(0, 30), engine }));
+  try {
+    const r = await translateWithFallback(term, { to: 'en' });
+    const en = (r && r.zh) ? String(r.zh).trim().replace(/"/g, '').slice(0, 120) : '';
+    if (en) {
+      const hit = { en, engine: r.engine || 'unknown' };
+      cacheSet(transCache, term, hit, TTL_TRANS);
+      return hit;
+    }
+    console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'search_trans_fail', term: term.slice(0, 30), engine: r ? r.engine : 'no-result' }));
+  } catch (e) {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'search_trans_error', term: term.slice(0, 30) }));
   }
-  return en;
+  return null;
 }
 
-// 查询档位序列：total=0 才降下一档（见文件头注释）。
-// 每词的最佳形态 = 翻译命中用翻译、否则原词（英文词本身就是"翻译"）——
-// 避免纯英文多词输入掉进引号短语档（实测召回塌陷）。
-function buildQueryPlan(zh, enMap) {
-  const quote = s => /\s/.test(s) ? '"' + s + '"' : s;
-  const zhTerms = zh.split(/\s+/).filter(Boolean);
-  const best = zhTerms.map(t => enMap.get(t) || t);
-  const enTerms = zhTerms.map(t => enMap.get(t)).filter(Boolean);
+// GitHub 语法：限定符原样保留，只翻译自由文本里的中文词。
+// 否则「视频 language:Python」会把 language:Python 也送去翻译，既慢又可能被
+// 译成中文而让限定符失效。
+const QUALIFIER_RE = /^(-?)([a-z][a-z0-9-]{1,24}:)(?:"([^"]*)"|([^\s]+))/i;
+
+export function tokenizeSearchQuery(input) {
+  const s = String(input || '').trim();
+  const tokens = [];
+  let i = 0;
+  while (i < s.length) {
+    while (i < s.length && /\s/.test(s[i])) i++;
+    if (i >= s.length) break;
+    const rest = s.slice(i);
+    const q = rest.match(QUALIFIER_RE);
+    if (q) {
+      tokens.push({ kind: 'qualifier', raw: q[0], key: q[2].slice(0, -1).toLowerCase(), value: q[3] !== undefined ? q[3] : q[4], negated: q[1] === '-' });
+      i += q[0].length;
+      continue;
+    }
+    let negated = false;
+    if (s[i] === '-' && i + 1 < s.length) { negated = true; i++; }
+    if (s[i] === '"') {
+      const end = s.indexOf('"', i + 1);
+      if (end > i) {
+        const text = s.slice(i + 1, end).trim();
+        if (text) tokens.push({ kind: 'word', text, quoted: true, negated, raw: (negated ? '-' : '') + '"' + text + '"' });
+        i = end + 1;
+        continue;
+      }
+    }
+    let j = i;
+    while (j < s.length && !/\s/.test(s[j])) j++;
+    const text = s.slice(i, j);
+    if (text) tokens.push({ kind: 'word', text, quoted: false, negated, raw: (negated ? '-' : '') + text });
+    i = j;
+  }
+  return tokens;
+}
+
+function tokenQuery(token, text, { multiQuote = false } = {}) {
+  let body = String(text || '').trim();
+  if (!body) return '';
+  if (token.quoted || (multiQuote && /\s/.test(body))) body = '"' + body.replace(/"/g, '') + '"';
+  return (token.negated ? '-' : '') + body;
+}
+function quotePhrase(text) {
+  const s = String(text || '').trim();
+  return /\s/.test(s) ? '"' + s.replace(/"/g, '') + '"' : s;
+}
+function trimQuery(q) {
+  const s = String(q || '').replace(/\s+/g, ' ').trim();
+  if (s.length <= MAX_QUERY_LEN) return s;
+  const cut = s.slice(0, MAX_QUERY_LEN);
+  return cut.slice(0, Math.max(0, cut.lastIndexOf(' '))) || cut;
+}
+
+// 查询档位序列：total=0 才降下一档。
+// 多词先 AND 保精度，再用短语与 OR 兜底；限定符在每一档都原样带上。
+export function buildQueryPlan(input, enMap = new Map()) {
+  const tokens = tokenizeSearchQuery(input);
+  const words = tokens.filter(t => t.kind === 'word');
+  const suffix = tokens.filter(t => t.kind === 'qualifier').map(t => t.raw).join(' ');
+  if (!words.length) return suffix ? [trimQuery(suffix)] : [];
+
   const plans = [];
-  if (zhTerms.length <= 1) {
-    const z = zhTerms[0] || zh;
-    const e = enMap.get(z);
-    plans.push(e && e.toLowerCase() !== z.toLowerCase() ? quote(z) + ' OR ' + quote(e) : quote(z));
+  const add = (core) => {
+    const q = trimQuery((core + (suffix ? ' ' + suffix : '')).trim());
+    if (q && !plans.includes(q)) plans.push(q);
+  };
+  const prepared = words.map(t => {
+    const en = enMap.get(t.text) || '';
+    const changed = Boolean(en) && en.toLowerCase() !== t.text.toLowerCase() && !t.negated;
+    return { ...t, en: changed ? en : '', effective: changed ? en : t.text };
+  });
+
+  if (prepared.length === 1) {
+    const t = prepared[0];
+    const orig = tokenQuery(t, t.text, { multiQuote: true });
+    if (t.en) {
+      const en = tokenQuery(t, t.en, { multiQuote: true });
+      add(orig + ' OR ' + en);
+      add(en);
+    } else {
+      add(tokenQuery(t, t.effective, { multiQuote: true }));
+    }
+    add(orig);
     return plans;
   }
-  const hasTrans = enTerms.length > 0;
-  plans.push(best.join(' '));                                            // ① 逐词 AND（不加引号）
-  plans.push(quote(zh) + (enJoined(zhTerms, enMap) ? ' OR ' + quote(enJoined(zhTerms, enMap)) : '')); // ② 整串短语兜底
-  if (enTerms.length) plans.push(enTerms[0]);                            // ③ 仅英文主词
-  plans.push(zhTerms[0]);                                                // ④ 仅首个中文词
+
+  const best = prepared.map(t => tokenQuery(t, t.effective));
+  add(best.join(' ')); // ① 逐词 AND（不加引号，召回最大）
+  const anyNegated = prepared.some(t => t.negated);
+  if (!anyNegated) {
+    const origPhrase = quotePhrase(prepared.map(t => t.text).join(' '));
+    const enReady = prepared.every(t => t.en || !CJK_RE.test(t.text));
+    const enPhrase = enReady ? quotePhrase(prepared.map(t => t.en || t.text).join(' ')) : '';
+    add(origPhrase + (enPhrase && enPhrase !== origPhrase ? ' OR ' + enPhrase : '')); // ② 整串短语兜底
+  }
+  const orTerms = [...new Set(prepared.map(t => tokenQuery(t, t.effective, { multiQuote: true })))].slice(0, 4);
+  if (!anyNegated && orTerms.length > 1) add(orTerms.join(' OR ')); // ③ OR 回退，避免只搜首词导致召回塌陷
+  add(best[0]); // ④ 仅首个最佳词
+  add(tokenQuery(prepared[0], prepared[0].text, { multiQuote: true })); // ⑤ 仅首个原词
   return plans;
 }
-function enJoined(zhTerms, enMap) {
-  const parts = zhTerms.map(t => enMap.get(t)).filter(Boolean);
-  return parts.length === zhTerms.length ? parts.join(' ') : '';
-}
 
-export { buildQueryPlan };
+export function collectHighlightTerms(input, enMap = new Map()) {
+  const terms = [];
+  for (const t of tokenizeSearchQuery(input)) {
+    if (t.kind !== 'word' || t.negated) continue;
+    terms.push(t.text);
+    const en = enMap.get(t.text);
+    if (en && en.toLowerCase() !== t.text.toLowerCase()) terms.push(en);
+  }
+  return [...new Set(terms)].slice(0, 16);
+}
 
 // ── 低质/骗排名仓库判据（2026-10-08）────────────────────────────────
 // 只信 /search/repositories 自带字段 ⇒ 零额外请求、不建关键词表。
@@ -141,7 +236,13 @@ async function githubSearch(q, sort, page) {
 }
 
 // 422（查询语法）：去掉引号与多余空白后重试一次
-function sanitizeQ(q) { return q.replace(/"/g, '').replace(/\s+/g, ' ').trim(); }
+function sanitizeQ(q) { return trimQuery(q.replace(/"/g, '').replace(/\s+/g, ' ')); }
+
+function withLanguage(plan, lang) {
+  if (!lang) return plan;
+  if (/(^|\s)language:[^\s]+/i.test(plan)) return plan;
+  return trimQuery(plan + ' language:' + lang);
+}
 
 export default async function handler(req, res) {
   const allowed = applyCors(req, res, {
@@ -181,21 +282,38 @@ export default async function handler(req, res) {
   const page = Math.max(1, Math.min(parseInt(body.page, 10) || 1, MAX_PAGE));
 
   try {
-    const hasZh = /[\u4e00-\u9fff]/.test(zh);
-    const zhTerms = zh.split(/\s+/).filter(Boolean);
+    const wordTokens = tokenizeSearchQuery(zh).filter(t => t.kind === 'word');
+    const needsTranslation = wordTokens.some(t => CJK_RE.test(t.text));
     const enMap = new Map();
-    if (hasZh) {
-      for (const t of zhTerms) enMap.set(t, await translateTerm(t));
+    const engines = new Set();
+    if (needsTranslation) {
+      // 只翻中文词，英文词/限定符原样保留；同一词只翻一次，多词并行避免串行等待
+      const terms = [...new Set(wordTokens.filter(t => CJK_RE.test(t.text)).map(t => t.text))].slice(0, MAX_TRANSLATE_TERMS);
+      const results = await Promise.all(terms.map(async text => [text, await translateTerm(text)]));
+      for (const [text, hit] of results) {
+        if (hit && hit.en && hit.en.toLowerCase() !== text.toLowerCase()) {
+          enMap.set(text, hit.en);
+          if (hit.engine) engines.add(hit.engine);
+        }
+      }
     }
-    const translated = hasZh && [...enMap.values()].some(Boolean);
+    const translated = enMap.size > 0;
+    const meta = {
+      translated,
+      needs_translation: needsTranslation,
+      translation_engine: [...engines].join(',') || 'none',
+      translated_terms: [...enMap.values()],
+      highlight_terms: collectHighlightTerms(zh, enMap),
+      original_query: zh,
+    };
     const plans = buildQueryPlan(zh, enMap);
 
-    let data = null, usedQuery = null;
+    let data = null;
     for (const plan of plans) {
-      const query = plan + (lang ? ' language:' + lang : '');
-      const ck = query + '|' + sort + '|' + page;
+      const query = withLanguage(plan, lang);
+      const ck = query.trim().replace(/\s+/g, ' ').toLowerCase() + '|' + sort + '|' + page;
       const hit = cacheGet(searchCache, ck, TTL_SEARCH);
-      if (hit) { data = hit; usedQuery = query; break; }
+      if (hit) { data = hit; break; }
       let r = await githubSearch(query, sort, page);
       if (r.status === 422) {
         r = await githubSearch(sanitizeQ(query), sort, page);
@@ -212,7 +330,8 @@ export default async function handler(req, res) {
       const j = await r.json();
       if (j.total_count > 0 || plans.length === 1) {
         const raw = j.items || [];
-        let spamOut = 0;
+        let spamOut = 0, dedupOut = 0;
+        const seen = new Set();
         let items = raw.filter(x => {
           if (spamReason(x)) { spamOut++; return false; }
           return true;
@@ -226,12 +345,16 @@ export default async function handler(req, res) {
           updated_at: x.updated_at,
           html_url: x.html_url,
           topics: (x.topics || []).slice(0, 3),
-        }));
+        })).filter(x => {
+          if (!x.full_name || seen.has(x.full_name)) { dedupOut++; return false; }
+          seen.add(x.full_name);
+          return true;
+        });
         // 翻译不可用时的结果侧兜底：GitHub 对 CJK 分词过宽（原词直搜会匹配数万无关项），
         // 在返回页内做一次关键词包含过滤，把"完全无关"的条目剔掉
         let relevanceOut = 0;
-        if (!translated && hasZh) {
-          const words = zhTerms.map(t => t.toLowerCase());
+        if (!translated && needsTranslation) {
+          const words = wordTokens.map(t => t.text.toLowerCase());
           const before = items.length;
           items = items.filter(x => words.some(w =>
             ((x.desc || '') + ' ' + (x.full_name || '')).toLowerCase().includes(w)));
@@ -243,24 +366,24 @@ export default async function handler(req, res) {
         }
         data = {
           query,
-          translated,
+          ...meta,
           strategy: query,
           page,
           total: j.total_count,
           // 分页判据必须用原始条数：前端旧写法是 items.length === 30，
           // 服务端一过滤就会把「还有下一页」判成到底（那段兜底早就踩了这个坑）。
           raw_count: raw.length,
-          filtered_out: spamOut + relevanceOut,
+          filtered_out: spamOut + dedupOut + relevanceOut,
           items,
         };
-        cacheSet(searchCache, ck, data);
-        usedQuery = query;
+        // 翻译失败的结果只短暂缓存，翻译恢复后能尽快用上英文查询
+        cacheSet(searchCache, ck, data, (!translated && needsTranslation) ? TTL_SEARCH_UNTRANSLATED : TTL_SEARCH);
         break;
       }
       // total=0 → 降下一档
     }
     if (!data) {
-      res.status(200).json({ query: zh, translated, strategy: zh, page, total: 0, items: [] });
+      res.status(200).json({ query: zh, ...meta, strategy: zh, page, total: 0, items: [] });
       return;
     }
     res.status(200).json(data);

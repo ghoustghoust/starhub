@@ -43,6 +43,7 @@
 - 生产页面加载 esbuild 打出的单文件 `app.bundle.js`，带构建版本号；源模块仍保持分离，避免模块内部缓存导致旧 JS。
 - 管线已抽出 `sources/github.py`（star/trending/events/readme）、`enrich/embed/translate/llm/classify/summarize/desc`、`build/contracts/attention/trending/stars`、`render/index` 与 `taxonomy`；`fetch_and_build.py` 只剩配置、兜底页和 main 编排（约 319 行）。
 - 搜索体验一致性：显式「收藏内 / 全 GitHub」模式、URL 深链（q/mode/筛选）、全网结果收藏与复制、搜索建议（历史/topic/owner/language）、模式化提示与高亮修复。
+- 搜索质量增强：限定符与自由词分离，只翻译中文词并并行执行；多词查询增加 AND/短语/OR 回退；接口返回翻译状态与高亮词；前端修复英文查询误报翻译失败、重复搜索走 5 分钟客户端缓存、空态可直接清除语言过滤；本地相关度按精确名/前缀/词边界/topic 加权，并让 `-`/`_`/`.`/`/` 与空格等价。新增 `npm test` 覆盖查询计划与排序。
 - 下一步：最终打包/线上验收、文档与运维收尾。
 
 ## 1. 为什么要重构（因果链）

@@ -1,6 +1,6 @@
 {
  "schema_version": 2,
- "updated_at": "2026-10-23T01:45:14.217573Z",
+ "updated_at": "2026-10-23T01:57:30.213432Z",
  "map": {
   "AdamPlatin123/awesome-dsh-plugins": "agent",
   "ATH-MaaS/Pixelle-Video": "video",
@@ -338,7 +338,8 @@
   "Comfy-Org/ComfyUI": "tools",
   "XxHuberrr/Mineradio-paused": "tools",
   "cheaper-inference/OmniRoute": "coding",
-  "bestnite/skills": "tools"
+  "bestnite/skills": "tools",
+  "2951461586/GPT-Register-Tool": "assistant"
  },
  "labels": {
   "agent": "AI Agent & Skills",

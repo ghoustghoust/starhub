@@ -1,7 +1,7 @@
 {
  "schema_version": 2,
- "generated_at": "2026-10-23T04:29:58.364297Z",
- "updated": "2026-10-23 12:29",
+ "generated_at": "2026-10-23T05:55:22.114294Z",
+ "updated": "2026-10-23 13:55",
  "summary": {
   "text": ""
  },
@@ -14,7 +14,7 @@
     "html_url": "https://github.com/cloudflare/security-audit-skill",
     "desc": "用于多阶段安全审计的编码代理技能，具有独立验证、机器可读的结果",
     "language": "JavaScript",
-    "stars": 39890,
+    "stars": 40020,
     "stars_today": 2979,
     "delta": 2979,
     "reason": "今日涨星 +2979"
@@ -26,7 +26,7 @@
     "html_url": "https://github.com/DietrichGebert/ponytail",
     "desc": "让你的人工智能代理像房间里最懒的高级开发人员一样思考。最好的代码是你从未编写过的代码。",
     "language": "JavaScript",
-    "stars": 173773,
+    "stars": 173847,
     "stars_today": 1948,
     "delta": 1948,
     "reason": "今日涨星 +1948"
@@ -38,7 +38,7 @@
     "html_url": "https://github.com/stablyai/orca",
     "desc": "Orca 是与一组并行代理一起工作的 ADE。使用您自己的订阅运行任何编码代理。可在桌面、移动和 VPS 上使用。",
     "language": "TypeScript",
-    "stars": 102981,
+    "stars": 103038,
     "stars_today": 1689,
     "delta": 1689,
     "reason": "今日涨星 +1689"
@@ -50,7 +50,7 @@
     "html_url": "https://github.com/Graphify-Labs/graphify",
     "desc": "将任何代码库及其文档、SQL 架构、配置和 PDF 转换为可查询的知识图。适用于 Claude Code、Cursor、Codex 和 Gemini CLI 的 /graphify 技能：本地确定性 AST 解析，每条边均已解释，无向量存储。",
     "language": "Python",
-    "stars": 133160,
+    "stars": 133226,
     "stars_today": 1408,
     "delta": 1408,
     "reason": "今日涨星 +1408"
@@ -62,7 +62,7 @@
     "html_url": "https://github.com/mattpocock/skills",
     "desc": "面向实战工程师的技能集，直接来自作者的 .agents 目录。",
     "language": "Shell",
-    "stars": 301043,
+    "stars": 301110,
     "stars_today": 1104,
     "delta": 1104,
     "reason": "今日涨星 +1104"
@@ -74,7 +74,7 @@
     "html_url": "https://github.com/supabase/supabase",
     "desc": "Postgres 开发平台。 Supabase 为您提供专用的 Postgres 数据库来构建您的 Web、移动和 AI 应用程序。",
     "language": "TypeScript",
-    "stars": 113555,
+    "stars": 113582,
     "stars_today": 693,
     "delta": 693,
     "reason": "今日涨星 +693"
@@ -86,7 +86,7 @@
     "html_url": "https://github.com/Comfy-Org/ComfyUI",
     "desc": "功能强大的模块化扩散模型 GUI 与后端。",
     "language": "Python",
-    "stars": 142067,
+    "stars": 142088,
     "stars_today": 681,
     "delta": 681,
     "reason": "今日涨星 +681"
@@ -98,7 +98,7 @@
     "html_url": "https://github.com/Leonxlnx/taste-skill",
     "desc": "品味技能 - 给你的人工智能良好的品味。阻止人工智能产生无聊的、通用的斜坡",
     "language": "JavaScript",
-    "stars": 101211,
+    "stars": 101234,
     "stars_today": 630,
     "delta": 630,
     "reason": "今日涨星 +630"
@@ -110,7 +110,7 @@
     "html_url": "https://github.com/obra/superpowers",
     "desc": "面向 AI Agent 的技能框架与软件开发方法论。",
     "language": "Shell",
-    "stars": 303812,
+    "stars": 303845,
     "stars_today": 628,
     "delta": 628,
     "reason": "今日涨星 +628"
@@ -122,7 +122,7 @@
     "html_url": "https://github.com/tashfeenahmed/freellmapi",
     "desc": "OpenAI 兼容代理，聚合 28 家大模型免费额度（约 40 亿 token/月），支持智能路由、自动故障转移、密钥加密。",
     "language": "TypeScript",
-    "stars": 39692,
+    "stars": 39719,
     "stars_today": 625,
     "delta": 625,
     "reason": "今日涨星 +625"
@@ -134,7 +134,7 @@
     "html_url": "https://github.com/twentyhq/twenty",
     "desc": "Salesforce 的开放替代方案，专为 AI 设计。",
     "language": "TypeScript",
-    "stars": 59551,
+    "stars": 59556,
     "stars_today": 605,
     "delta": 605,
     "reason": "今日涨星 +605"
@@ -146,7 +146,7 @@
     "html_url": "https://github.com/pbakaus/impeccable",
     "desc": "使您的 AI 线束在设计上更加出色的设计语言。",
     "language": "Rust",
-    "stars": 85072,
+    "stars": 85103,
     "stars_today": 587,
     "delta": 587,
     "reason": "今日涨星 +587"
@@ -158,7 +158,7 @@
     "html_url": "https://github.com/headroomlabs-ai/headroom",
     "desc": "在工具输出、日志、文件和 RAG 块到达 LLM 之前对其进行压缩。编码代理的标记减少了 20%，JSON 的标记减少了 60-95%，答案相同。库、代理、MCP 服务器。",
     "language": "Python",
-    "stars": 77581,
+    "stars": 77591,
     "stars_today": 517,
     "delta": 517,
     "reason": "今日涨星 +517"
@@ -170,7 +170,7 @@
     "html_url": "https://github.com/shiyu-coder/Kronos",
     "desc": "Kronos：金融市场语言的基础模型",
     "language": "Python",
-    "stars": 43240,
+    "stars": 43249,
     "stars_today": 500,
     "delta": 500,
     "reason": "今日涨星 +500"
@@ -182,7 +182,7 @@
     "html_url": "https://github.com/vllm-project/vllm",
     "desc": "适用于法学硕士的高吞吐量和内存高效推理和服务引擎",
     "language": "Python",
-    "stars": 95170,
+    "stars": 95176,
     "stars_today": 440,
     "delta": 440,
     "reason": "今日涨星 +440"
@@ -194,7 +194,7 @@
     "html_url": "https://github.com/firecrawl/firecrawl",
     "desc": "大规模网页搜索、抓取与交互的上下文 API。",
     "language": "TypeScript",
-    "stars": 194361,
+    "stars": 194381,
     "stars_today": 424,
     "delta": 424,
     "reason": "今日涨星 +424"
@@ -206,7 +206,7 @@
     "html_url": "https://github.com/msitarzewski/agency-agents",
     "desc": "触手可及的完整 AI 团队：从前端高手到 Reddit 社区达人，每个智能体都是带人格、流程和可交付成果的专家。",
     "language": "Shell",
-    "stars": 163330,
+    "stars": 163341,
     "stars_today": 355,
     "delta": 355,
     "reason": "今日涨星 +355"
@@ -218,7 +218,7 @@
     "html_url": "https://github.com/citrolabs/ego-lite",
     "desc": "AI 代理运行浏览器自动化的最快浏览器，专为与您的 AI 代理（如 Codex 或 Claude Code）共享您登录的浏览器状态而构建，而不会打扰您。零成本，零配置。",
     "language": "JavaScript",
-    "stars": 18849,
+    "stars": 18867,
     "stars_today": 311,
     "delta": 311,
     "reason": "今日涨星 +311"
@@ -230,7 +230,7 @@
     "html_url": "https://github.com/anthropics/knowledge-work-plugins",
     "desc": "主要供知识工作者在 Claude Cowork 中使用的开源插件存储库",
     "language": "Python",
-    "stars": 31723,
+    "stars": 31749,
     "stars_today": 303,
     "delta": 303,
     "reason": "今日涨星 +303"
@@ -242,7 +242,7 @@
     "html_url": "https://github.com/bowenliang123/dsh-context",
     "desc": "The best DeepSeek Harness plugin for context insight and management, with context dashboard / browser / sidebar and context command, for context statistics, composition, breakdown, evolution details, agent teams, understanding how the context is made of, and how it evolves. 一站式 DeepSeek Harness 上下文可视化插件，Context 面板、浏览器、侧栏、命令，透视上下文组成、演进、压缩、多 Agent等。",
     "language": "TypeScript",
-    "stars": 3420,
+    "stars": 3427,
     "stars_today": 296,
     "delta": 296,
     "reason": "今日涨星 +296"
@@ -256,7 +256,7 @@
     "html_url": "https://github.com/openclaw/openclaw",
     "desc": "开源 AI 个人助手，跨任意操作系统与平台运行。",
     "language": "TypeScript",
-    "stars": 392799,
+    "stars": 392800,
     "created_at": "2025-11-24",
     "reason": "累计 39.3万星标"
    },
@@ -267,9 +267,9 @@
     "html_url": "https://github.com/morluto/rea",
     "desc": "使用代理对任何内容进行逆向工程，从应用程序行为到本机二进制文件。",
     "language": "TypeScript",
-    "stars": 367433,
+    "stars": 367842,
     "created_at": "2026-04-14",
-    "reason": "累计 36.7万星标"
+    "reason": "累计 36.8万星标"
    },
    {
     "name": "superpowers",
@@ -278,7 +278,7 @@
     "html_url": "https://github.com/obra/superpowers",
     "desc": "面向 AI Agent 的技能框架与软件开发方法论。",
     "language": "Shell",
-    "stars": 303812,
+    "stars": 303844,
     "created_at": "2025-10-09",
     "reason": "累计 30.4万星标"
    },
@@ -289,7 +289,7 @@
     "html_url": "https://github.com/affaan-m/ECC",
     "desc": "Agent 性能优化系统，整合技能、记忆、安全与代码研究。",
     "language": "JavaScript",
-    "stars": 286643,
+    "stars": 286674,
     "created_at": "2026-01-18",
     "reason": "累计 28.7万星标"
    },
@@ -300,7 +300,7 @@
     "html_url": "https://github.com/NousResearch/hermes-agent",
     "desc": "会随使用不断进化的自适应 AI Agent。",
     "language": "Python",
-    "stars": 256295,
+    "stars": 256307,
     "created_at": "2025-07-22",
     "reason": "累计 25.6万星标"
    },
@@ -311,7 +311,7 @@
     "html_url": "https://github.com/n8n-io/n8n",
     "desc": "公平代码的工作流自动化平台，原生集成 AI 能力。",
     "language": "TypeScript",
-    "stars": 208356,
+    "stars": 208355,
     "created_at": "2019-06-22",
     "reason": "累计 20.8万星标"
    },
@@ -322,7 +322,7 @@
     "html_url": "https://github.com/tensorflow/tensorflow",
     "desc": "Google 出品的开源机器学习框架。",
     "language": "C++",
-    "stars": 201192,
+    "stars": 201193,
     "created_at": "2015-11-07",
     "reason": "累计 20.1万星标"
    },
@@ -333,7 +333,7 @@
     "html_url": "https://github.com/firecrawl/firecrawl",
     "desc": "大规模网页搜索、抓取与交互的上下文 API。",
     "language": "TypeScript",
-    "stars": 194361,
+    "stars": 194380,
     "created_at": "2024-04-15",
     "reason": "累计 19.4万星标"
    },
@@ -344,7 +344,7 @@
     "html_url": "https://github.com/Significant-Gravitas/AutoGPT",
     "desc": "让 AI 普惠大众的自主智能体项目。",
     "language": "Python",
-    "stars": 187714,
+    "stars": 187713,
     "created_at": "2023-03-16",
     "reason": "累计 18.8万星标"
    },
@@ -355,7 +355,7 @@
     "html_url": "https://github.com/ollama/ollama",
     "desc": "本地一键运行 DeepSeek、Qwen、Gemma 等大模型。",
     "language": "Go",
-    "stars": 184360,
+    "stars": 184367,
     "created_at": "2023-06-26",
     "reason": "累计 18.4万星标"
    },
@@ -366,7 +366,7 @@
     "html_url": "https://github.com/f/prompts.chat",
     "desc": "精选 ChatGPT 提示词合集，支持自托管。",
     "language": "HTML",
-    "stars": 174057,
+    "stars": 174072,
     "created_at": "2022-12-05",
     "reason": "累计 17.4万星标"
    },
@@ -377,7 +377,7 @@
     "html_url": "https://github.com/DietrichGebert/ponytail",
     "desc": "让你的人工智能代理像房间里最懒的高级开发人员一样思考。最好的代码是你从未编写过的代码。",
     "language": "JavaScript",
-    "stars": 173773,
+    "stars": 173847,
     "created_at": "2026-06-12",
     "reason": "累计 17.4万星标"
    },
@@ -388,7 +388,7 @@
     "html_url": "https://github.com/huggingface/transformers",
     "desc": "Hugging Face 模型框架，覆盖文本、视觉、音频多模态。",
     "language": "Python",
-    "stars": 168006,
+    "stars": 168010,
     "created_at": "2018-10-29",
     "reason": "累计 16.8万星标"
    },
@@ -399,7 +399,7 @@
     "html_url": "https://github.com/AUTOMATIC1111/stable-diffusion-webui",
     "desc": "Stable Diffusion 的网页版图形界面。",
     "language": "Python",
-    "stars": 165106,
+    "stars": 165109,
     "created_at": "2022-08-22",
     "reason": "累计 16.5万星标"
    },
@@ -410,7 +410,7 @@
     "html_url": "https://github.com/langgenius/dify",
     "desc": "一站式构建 Agent 工作流与 RAG 管线的平台。",
     "language": "Python",
-    "stars": 159296,
+    "stars": 159299,
     "created_at": "2023-04-12",
     "reason": "累计 15.9万星标"
    },
@@ -432,7 +432,7 @@
     "html_url": "https://github.com/open-webui/open-webui",
     "desc": "友好的本地 AI 界面，支持 Ollama 与 OpenAI 接口。",
     "language": "Python",
-    "stars": 156506,
+    "stars": 156508,
     "created_at": "2023-10-06",
     "reason": "累计 15.7万星标"
    },
@@ -443,7 +443,7 @@
     "html_url": "https://github.com/langchain-ai/langchain",
     "desc": "面向智能体的工程化开发平台。",
     "language": "Python",
-    "stars": 148302,
+    "stars": 148305,
     "created_at": "2022-10-17",
     "reason": "累计 14.8万星标"
    },
@@ -454,7 +454,7 @@
     "html_url": "https://github.com/x1xhlol/system-prompts-and-models-of-ai-tools",
     "desc": "汇总各大 AI 编程工具的系统提示词与内部模型。",
     "language": null,
-    "stars": 144198,
+    "stars": 144200,
     "created_at": "2025-03-05",
     "reason": "累计 14.4万星标"
    },
@@ -465,7 +465,7 @@
     "html_url": "https://github.com/github/spec-kit",
     "desc": "帮助你入门「规格驱动开发」的工具集。",
     "language": "Python",
-    "stars": 142492,
+    "stars": 142494,
     "created_at": "2025-08-21",
     "reason": "累计 14.2万星标"
    }
@@ -478,9 +478,9 @@
     "html_url": "https://github.com/Alejandros17487/ai-jailbreaks",
     "desc": "AI 越狱：35 个可粘贴的 AI 越狱提示，适用于 25 多个前沿和开放重量模型 - 系统提示、AGENTS.md 规范和 Ollama 模型文件。专为人工智能安全研究和红队测试而构建。",
     "language": null,
-    "stars": 334,
+    "stars": 341,
     "created_at": "2026-10-21",
-    "reason": "近 7 天新建 · 334星标"
+    "reason": "近 7 天新建 · 341星标"
    },
    {
     "name": "ai-roadmap-2026",
@@ -489,9 +489,9 @@
     "html_url": "https://github.com/h9-tec/ai-roadmap-2026",
     "desc": "AI 路线图 2026：通过基础、LLM 工程、代理、评估和生产的初学者路径，提供经过验证的免费资源和每层一个迷你项目",
     "language": null,
-    "stars": 118,
+    "stars": 123,
     "created_at": "2026-10-21",
-    "reason": "近 7 天新建 · 118星标"
+    "reason": "近 7 天新建 · 123星标"
    }
   ]
  }

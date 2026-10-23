@@ -5,7 +5,6 @@ GitHub Star 收藏台 —— 自动更新脚本
 在 GitHub Actions 中每天运行：拉取 ghoustghoust 的 star 列表 → 智能分类 → 重新生成 index.html。
 仅依赖 Python 标准库，无需安装第三方包。
 """
-import hashlib
 import json
 import os
 import re
@@ -31,9 +30,12 @@ from starhub_pipeline.build.attention import (  # noqa: E402
 )
 from starhub_pipeline.build.contracts import write_site_contracts  # noqa: E402
 from starhub_pipeline.build.trending import TRENDING_BOARD, trending_board_payload  # noqa: E402
-from starhub_pipeline.enrich import llm  # noqa: E402
 from starhub_pipeline.enrich.classify import classify_repo as _classify_repo  # noqa: E402
 from starhub_pipeline.enrich.embed import embed_star_entries  # noqa: E402
+from starhub_pipeline.enrich.summarize import (  # noqa: E402
+    build_category_guides as _build_category_guides,
+    generate_ai_summary as _generate_ai_summary,
+)
 from starhub_pipeline.enrich.translate import has_cn, translate_to_zh as _translate_to_zh  # noqa: E402
 from starhub_pipeline.render.index import build_index_html  # noqa: E402
 from starhub_pipeline.sources.github import fetch_stars  # noqa: E402
@@ -55,8 +57,13 @@ def classify_repo(fn, desc, lang, topics, known):
     return _classify_repo(fn, desc, lang, topics, known, cats=CATS, fast=FAST)
 
 
-def _agnes_generate(system, user, max_tokens=300):
-    return llm.generate(system, user, max_tokens=max_tokens)
+def generate_ai_summary(rising):
+    return _generate_ai_summary(rising, fast=FAST)
+
+
+def build_category_guides(cats, known):
+    return _build_category_guides(cats, known, fast=FAST)
+
 
 def health_score(repo):
     """收藏健康分（github-search-mirror 四维借鉴，数据全部来自已拉取字段）：
@@ -92,60 +99,6 @@ def health_score(repo):
     return {"tier": tier, "stale": stale}
 
 
-
-
-_GUIDES_CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "category_guides.json")
-
-
-def build_category_guides(cats, known, cache_path=None):
-    """类目 AI 导览：每个类目按成员清单生成 2-3 句选型导览。
-    成员清单 md5 未变的类目直接吃 category_guides.json 缓存（13 次调用只在类目内容变化时发生）。
-    LLM 失败的类目跳过（guide 缺省，前端静默不渲染）；永不抛出、永不阻塞构建。"""
-    if FAST:
-        return {}
-    cache_path = cache_path or _GUIDES_CACHE_PATH
-    cache = {}
-    try:
-        if os.path.exists(cache_path):
-            with open(cache_path, encoding="utf-8") as f:
-                cache = json.load(f)
-    except Exception:  # noqa: BLE001
-        cache = {}
-    by_cat = {}
-    for fn, cat in (known or {}).items():
-        by_cat.setdefault(cat, []).append(fn)
-    changed = False
-    out = {}
-    for c in (cats or []):
-        key = c.get("key")
-        members = sorted(by_cat.get(key, []))
-        if not members:
-            continue
-        digest = hashlib.md5("\n".join(members).encode("utf-8")).hexdigest()
-        hit = cache.get(key)
-        if hit and hit.get("members_hash") == digest and hit.get("text"):
-            out[key] = hit["text"]
-            continue
-        sample = "、".join(m.replace("/", "/ ") for m in members[:25])
-        text = _agnes_generate(
-            "你是技术选型顾问。下面是一个 GitHub 收藏类目和它包含的仓库，"
-            "用不超过 120 字的中文写一段该类目的选型导览：这类工具适合什么场景、"
-            "挑选时看什么、如有明显代表项目可以点名（只点仓库名）。直接输出正文，不要标题和列表。",
-            "类目：%s\n包含仓库：%s" % (c.get("label", key), sample))
-        if text:
-            out[key] = text[:400]
-            cache[key] = {"members_hash": digest, "text": out[key]}
-            changed = True
-        time.sleep(0.8)
-    if changed:
-        try:
-            tmp = cache_path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(cache, f, ensure_ascii=False, indent=1)
-            os.replace(tmp, cache_path)
-        except Exception as e:  # noqa: BLE001
-            print("[guides] 缓存写回失败: %s" % e, file=sys.stderr)
-    return out
 
 
 # ==================== 每日 AI 排行榜 ====================
@@ -531,86 +484,6 @@ def build_trending(token, desc_zh):
 
     return {"rising": rising, "total": total, "new": new_repos,
             "source": "trending" if trend_rows else "snapshot"}
-
-
-def generate_ai_summary(rising_top10):
-    """调用 Agnes AI API 生成 AI 态势一句话摘要。失败返回 None（静默降级）。"""
-    if FAST:
-        return None
-    # 多 key 轮询：AGNES_API_KEY（主，可逗号分隔）+ AGNES_API_KEYS（逗号分隔附加）
-    # 必须先建池再判空：否则主 key 缺失/全逗号时会漏掉附加 key 或无任何输出地返回
-    keys = [k.strip() for k in os.environ.get("AGNES_API_KEY", "").split(",") if k.strip()]
-    keys += [k.strip() for k in os.environ.get("AGNES_API_KEYS", "").split(",") if k.strip()]
-    if not keys:
-        print("[AI摘要] 跳过: 未配置 AGNES_API_KEY / AGNES_API_KEYS", file=sys.stderr)
-        return None
-    if not rising_top10:
-        print("[AI摘要] 跳过: rising 列表为空", file=sys.stderr)
-        return None
-    lines = []
-    for p in rising_top10[:10]:
-        name = p.get("full_name", "")
-        delta = p.get("delta")
-        if delta is not None:
-            lines.append("%s (+%d)" % (name, delta))
-        else:
-            lines.append(name)
-    prompt = "用一句话（30字以内）概括今日 GitHub AI/开源生态态势，基于以下涨星项目：" + "、".join(lines)
-    payload = json.dumps({
-        "model": "agnes-2.5-flash",
-        "messages": [
-            {"role": "system", "content": "你是一个简洁的 AI 开源态势分析师，回答不超过30字。"},
-            {"role": "user", "content": prompt}
-        ],
-        "max_tokens": 200,
-        "temperature": 0.7,
-        # agnes-2.5-flash 是思考型模型：不关闭思考时 max_tokens 会被推理耗尽，content 为空
-        "chat_template_kwargs": {"enable_thinking": False},
-    }).encode("utf-8")
-    try:
-        for _ki, _key in enumerate(keys):
-            req = urllib.request.Request(
-                "https://apihub.agnes-ai.com/v1/chat/completions",
-                data=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": "Bearer " + _key,
-                    "User-Agent": "starhub-auto-update",
-                },
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=30) as r:
-                    data = json.loads(r.read().decode("utf-8"))
-                choices = data.get("choices") or []
-                if not choices:
-                    print("[AI摘要] 响应无 choices（key %d/%d）" % (_ki + 1, len(keys)), file=sys.stderr)
-                    continue
-                content = (choices[0].get("message", {}).get("content") or "").strip()
-            except urllib.error.HTTPError as e:
-                # 仅限流与上游故障值得换 key；认证类错误换 key 也是白烧
-                if e.code in (401, 403):
-                    print("[AI摘要] 密钥无效 HTTP %s，停止轮询" % e.code, file=sys.stderr)
-                    return None
-                if e.code == 429 or e.code >= 500:
-                    print("[AI摘要] HTTP %s（key %d/%d），换 key 重试" % (e.code, _ki + 1, len(keys)),
-                          file=sys.stderr)
-                    continue
-                print("[AI摘要] API 调用失败: HTTP %s" % e.code, file=sys.stderr)
-                return None
-            except (urllib.error.URLError, TimeoutError, ValueError) as e:
-                # 超时/DNS/JSON 解析失败都是可重试的瞬时故障，不能让它打死剩余 key
-                print("[AI摘要] 请求异常（key %d/%d）: %s" % (_ki + 1, len(keys), e), file=sys.stderr)
-                continue
-            if content and len(content) <= 100:
-                print("[AI摘要] %s" % content)
-                return content
-            # content 为空/超长：换 key 无意义，打印诊断后结束
-            print("[AI摘要] 响应不合格: content_len=%d finish_reason=%r usage=%s"
-                  % (len(content), choices[0].get("finish_reason"), data.get("usage")), file=sys.stderr)
-            break
-    except Exception as e:
-        print("[AI摘要] 失败: %s" % e, file=sys.stderr)
-    return None
 
 
 def _today_cn():

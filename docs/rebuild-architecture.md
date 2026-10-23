@@ -40,8 +40,8 @@
 - 新增 `deploy-api.yml`：API 文件变更时自动部署到 Vercel；Pages 仍由 `update.yml` 发布。
 - AI 晨报的内联 CSS/JS 已外置到 `assets/css/ai-daily.css` 与 `assets/js/ai-daily.js`，并带构建版本号；计算样式与旧版一致。
 - 主站脚本已拆为 `assets/js/core`（状态/DOM/查询/UI）、`assets/js/features`（收藏/搜索/榜单/动态/AI 动态）与 `assets/js/app.js`；共享数据仍走 boot 全局，后续可再包成 ESM。
-- 管线已抽出 `sources/github.py`、`enrich/embed.py`、`enrich/translate.py`、`enrich/llm.py`、`enrich/classify.py`；剩余 trending/render 仍待迁移。
-- 下一步：完成 trending/render 模块化，再决定前端 ESM 封装与全量验收。
+- 管线已抽出 `sources/github.py`、`enrich/embed.py`、`enrich/translate.py`、`enrich/llm.py`、`enrich/classify.py`、`enrich/summarize.py`、`build/contracts.py`、`build/attention.py`、`build/trending.py`、`render/index.py` 与 `taxonomy.py`；剩余 sources 的 trending/events/readme、build_trending、assemble_entries 与 main 待迁移。
+- 下一步：完成剩余管线模块化，再决定前端 ESM 封装与全量验收。
 
 ## 1. 为什么要重构（因果链）
 

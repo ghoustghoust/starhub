@@ -34,7 +34,9 @@
 - 线上验证：主站 134 项、更新时间 2026-10-23 08:56；AI 晨报 72 条、6 个分类；`rss-aggregator.html` 返回 404。
 - 已删除 RSS/每日洞察的代码、数据、API、测试与依赖；`api/_lib/translate.js` 保留给搜索复用。
 - Phase 4 起步：`config/site.json`、`pipeline/starhub_pipeline`（配置/状态/CLI）、`data/schema` 已落地；构建已导出 `data/stars.json`、`data/categories.json`、`data/trending.json`、`data/build-status.json`，`validate` 已接入工作流。
-- 下一步：共享设计系统与页面壳，然后依次模块化星标管线、主站、AI 晨报、自有 Vercel API。
+- 主站 CSS 已抽到 `assets/css/main.css`，主站脚本已抽到 `assets/js/main.js`，Pages 走外部资源；本地与线上首屏截图对比一致。
+- GitHub star 采集已抽到 `pipeline/starhub_pipeline/sources/github.py`，账号与 Pages 地址由 `config/site.json` 提供，不再硬编码。
+- 下一步：继续拆分搜索/筛选/榜单等功能模块，并迁移 AI 晨报与自有 Vercel API。
 
 ## 1. 为什么要重构（因果链）
 

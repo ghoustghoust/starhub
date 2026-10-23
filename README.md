@@ -7,6 +7,9 @@
 ## 仓库结构
 
 - `template.html` — 主站模板（数据用占位符）
+- `assets/` — 主站共享 CSS 与脚本
+- `config/site.json` — 站点身份、仓库与 Pages 配置
+- `pipeline/` — 新数据管线（配置、契约、CLI、来源适配与测试）
 - `fetch_and_build.py` — 构建入口：拉取 star → 分类 → 生成主站与 AI 晨报
 - `build_ai_daily.py` — AI 晨报生成器
 - `known_categories.json` — 已知项目分类映射（保持分类稳定，随运行自动增长）

@@ -22,11 +22,16 @@ for _stream in (sys.stdout, sys.stderr):
     except Exception:  # noqa: BLE001
         pass
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline"))
+from starhub_pipeline.config import site_value  # noqa: E402
+from starhub_pipeline.sources.github import fetch_stars  # noqa: E402
+
 # Fast path for CI while the refactored pipeline is being built: skip
 # translation/LLM/embedding enrichment instead of waiting on free endpoints.
 FAST = os.environ.get("STARHUB_FAST") == "1"
 
-USER = "ghoustghoust"
+USER = site_value("github_user", "ghoustghoust")
+PAGES_URL = site_value("pages_url", "https://ghoustghoust.github.io/starhub/")
 
 CATS = [
     {"key": "agent",     "label": "AI Agent & Skills",      "color": "#0550ae", "dark": "#4493f8"},
@@ -515,41 +520,6 @@ def build_category_guides(cats, known, cache_path=None):
     return out
 
 
-def fetch_stars(token=None):
-    """拉取全部 star。请求带 Accept: application/vnd.github.star+json 换取收藏时间：
-    响应元素从 repo dict 变成 {"starred_at": ..., "repo": {...}} 包装，这里拆包成
-    repo dict 并附 starred_at 键（ISO 串；取不到为 ""）。上游若忽略该头返回旧结构
-    （无包装），按原样保留并补 starred_at=""。失败返回 None（由 stars_ok 兜底）。"""
-    repos = []
-    page = 1
-    while True:
-        url = "https://api.github.com/users/%s/starred?per_page=100&page=%d" % (USER, page)
-        headers = _api_headers(token)
-        headers["Accept"] = "application/vnd.github.star+json"  # 覆盖默认 Accept
-        req = urllib.request.Request(url, headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                data = json.loads(r.read().decode("utf-8"))
-        except Exception as e:  # noqa: BLE001
-            print("拉取失败: %s" % e, file=sys.stderr)
-            return None
-        if not data:
-            break
-        for item in data:
-            if isinstance(item, dict) and isinstance(item.get("repo"), dict):
-                repo = dict(item["repo"])  # 拆包装层，main 的二级取值路径不变
-                repo["starred_at"] = item.get("starred_at") or ""
-            else:
-                repo = dict(item)  # 旧结构（无包装）：原样保留
-                repo.setdefault("starred_at", "")
-            repos.append(repo)
-        if len(data) < 100:
-            break
-        page += 1
-        time.sleep(0.5)
-    return repos
-
-
 # ==================== 每日 AI 排行榜 ====================
 AI_TOPICS = ["ai", "machine-learning", "deep-learning", "llm", "gpt", "agent"]
 AI_MIN_STARS = 500       # AI 项目池最小星标
@@ -562,7 +532,7 @@ BUILD_CONFIG_FILE = "build_config.json"
 # 限流场的首页兜底源：Pages 域（静态托管，不吃 GitHub API 的限流），实测首页 292 KB 左右，
 # 所以小于 40 KB 的一律不当"上一版首页"用 —— 把错误页/半截页当首页发出去，比缺件更糟：
 # 缺件至少会让 Stage 判失败并红，错误页却会被当成一次成功发布。
-PAGES_INDEX_URL = "https://ghoustghoust.github.io/starhub/index.html"
+PAGES_INDEX_URL = PAGES_URL.rstrip("/") + "/index.html"
 MIN_REAL_PAGE_BYTES = 40000
 PLACEHOLDER_INDEX = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
@@ -1479,7 +1449,7 @@ def main(mode="full"):
         pass
 
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    repos = fetch_stars(token)
+    repos = fetch_stars(token, USER)
     stars_ok = repos is not None
     if not stars_ok:
         print("::error::[Star] 拉取 star 失败（可能 API 限流）⇒ 首页改走兜底（见 write_index_fallback），"

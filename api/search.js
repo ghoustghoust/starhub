@@ -19,11 +19,7 @@
 //   GH_TOKEN 的 30 req/min 搜索配额可被恶意烧穿）。
 // 缓存：搜索结果内存缓存 10 分钟（key=查询|sort|page）；词级翻译缓存 1 小时。
 import { translateWithFallback } from './_lib/translate.js';
-
-const ALLOWED_ORIGINS = new Set([
-  'https://starhub-refresh.vercel.app',
-  'https://kwei168.github.io',
-]);
+import { applyCors, rejectMethod } from './_lib/http.js';
 
 const SORTS = new Set(['best-match', 'stars', 'updated']);
 const PER_PAGE = 30;
@@ -138,7 +134,7 @@ async function githubSearch(q, sort, page) {
       'Authorization': 'Bearer ' + process.env.GH_TOKEN,
       'Accept': 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent': 'starhub-refresh',
+      'User-Agent': 'starhub',
     },
     signal: AbortSignal.timeout(15000),
   });
@@ -148,16 +144,13 @@ async function githubSearch(q, sort, page) {
 function sanitizeQ(q) { return q.replace(/"/g, '').replace(/\s+/g, ' ').trim(); }
 
 export default async function handler(req, res) {
-  const origin = (req.headers['origin'] || '').toLowerCase();
-  const allowed = ALLOWED_ORIGINS.has(origin);
-  if (allowed) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Search-Key');
-    res.setHeader('Vary', 'Origin');
-  }
+  const allowed = applyCors(req, res, {
+    methods: 'POST, OPTIONS',
+    headers: 'Content-Type, X-Search-Key',
+    allowNoOrigin: true,
+  });
   if (req.method === 'OPTIONS') { res.status(allowed ? 204 : 403).end(); return; }
-  if (req.method !== 'POST') { res.status(405).json({ error: 'Method Not Allowed' }); return; }
+  if (req.method !== 'POST') { rejectMethod(res, 'POST, OPTIONS'); return; }
   if (!allowed) { res.status(403).json({ error: 'Forbidden' }); return; }
 
   const key = process.env.REFRESH_KEY;

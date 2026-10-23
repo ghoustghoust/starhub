@@ -1296,6 +1296,7 @@ def build_index_html(repos, cats, trending=None, feed=None, updated=None, ai_sum
             .replace("__CATS__", _safe_json(cats))
             .replace("__LANGS__", _safe_json(LANG_COLORS))
             .replace("__FAVS__", _safe_json(DEFAULT_FAVS))
+            .replace("__API_BASE__", site_value("api_base", ""))
             .replace("__TRENDING__", _safe_json(trending or {}))
             .replace("__FEED__", _safe_json(feed or []))
             .replace("__ATTENTION__", attention_html)

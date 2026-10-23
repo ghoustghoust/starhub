@@ -252,10 +252,12 @@ const DEFAULT_FAVS = __FAVS__;
 const STORE_KEY = 'wb_starhub_favs_v1';
 const THEME_KEY = 'wb_starhub_theme_v1';
 const VIEW_KEY = 'wb_starhub_view_v1';
+// API 基址由构建期 config/site.json 注入，页面不再写死部署域名。
+const API_BASE = '__API_BASE__';
 // 弱防护密钥：与 Vercel 环境变量 REFRESH_KEY 一致。静态站点源码公开，此值可被提取，
 // 真正防线是服务端 Origin 白名单（仅允许本站域名跨域）；此头用于拦截无头扫描器滥用
 const REFRESH_KEY = 'sk_starhub_refresh_20260828';
-const SEARCH_API = 'https://starhub-refresh.vercel.app/api/search';
+const SEARCH_API = API_BASE + '/api/search';
 // 全网搜索复用同一弱防护密钥（静态公开，隔离无意义）
 const SEARCH_KEY = REFRESH_KEY;
 const UPDATED = '__UPDATED__';

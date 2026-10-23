@@ -1,10 +1,10 @@
 /* StarHub main page logic (extracted from template.html). */
 // 实时关注动态：Vercel 代理聚合 GitHub Events API（近 24 小时），打开页面即拉取 + 每 30 分钟轮询
-const EVENTS_API = 'https://starhub-refresh.vercel.app/api/events';
+const EVENTS_API = API_BASE + '/api/events';
 // AI 动态流：AIHOT 公开 API v1（匿名只读、CORS 全开）+ 36氪/Redis 等资讯流（经 /api/news 代理，
 // 官方 RSS 有反爬、RSSHub 镜像 CORS 不合法故需服务端中转）；浏览器直连，切到该 Tab 时懒加载 + 30 分钟轮询
 const AIHOT_API = 'https://aihot.virxact.com/api/v1/items?mode=all&window=24h&limit=40';
-const NEWS_API = 'https://starhub-refresh.vercel.app/api/news';
+const NEWS_API = API_BASE + '/api/news';
 const AIHOT_CATS = { 'ai-models':['AI 模型','#2563eb'], 'ai-products':['AI 产品','#7c3aed'], industry:['行业动态','#0891b2'], paper:['论文','#d97706'], tip:['技巧观点','#dc2626'] };
 let feedUpdated = UPDATED;
 let feedLive = false;
@@ -1066,7 +1066,7 @@ function bindEvents(){
   $('#btnExport').onclick = exportJson;
   $('#btnImport').onclick = () => $('#fileInput').click();
   // Vercel Function 中转触发 GitHub Actions（GH_TOKEN 存于 Vercel 环境变量）
-  const REFRESH_API = 'https://starhub-refresh.vercel.app/api/refresh';
+  const REFRESH_API = API_BASE + '/api/refresh';
   let refreshCooldown = 0;
   $('#btnRefresh').onclick = async () => {
     const b = $('#btnRefresh');

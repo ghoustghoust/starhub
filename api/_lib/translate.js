@@ -1,4 +1,4 @@
-// Vercel Serverless Function：运行时翻译网关
+// 运行时翻译模块（供搜索 API 复用）
 // 降级链（快优先：GTX/MyMemory 1-3s，LLM 10-25s 仅作兜底）：
 //   Google GTX → MyMemory → Agnes(多key轮询) → OpenCode Zen(3模型轮询)
 //   + 全端点熔断（连续5次全败暂停5分钟）
@@ -8,10 +8,6 @@
 // 用法：POST /api/translate  { "texts": ["..."], "mode": "full"|"bulk" }
 //        → 200 { ok: true, engine: "agnes"|"zen"|"gtx"|"mymemory"|...", translations: ["..."] }
 // 防护：CORS 白名单；多密钥轮询；实例内存缓存 + 轻量限流 + 熔断
-const ALLOWED_ORIGINS = new Set([
-  'https://starhub-refresh.vercel.app',
-  'https://kwei168.github.io',
-]);
 
 const AGNES_URL = 'https://apihub.agnes-ai.com/v1/chat/completions';
 const SYSTEM_PROMPT = '你是翻译引擎。把用户输入翻译成简体中文，只输出译文，不要解释。';
@@ -275,63 +271,3 @@ async function mapPool(items, limit, fn) {
 // translated:false 且结果驴唇不对马嘴）。只加导出，行为零变化。
 export { translateWithFallback };
 
-export default async function handler(req, res) {
-  const origin = (req.headers['origin'] || '').toLowerCase();
-  if (ALLOWED_ORIGINS.has(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    res.setHeader('Vary', 'Origin');
-  }
-  if (req.method === 'OPTIONS') { res.status(ALLOWED_ORIGINS.has(origin) ? 204 : 403).end(); return; }
-  if (req.method !== 'POST') { res.status(405).json({ error: 'Method Not Allowed' }); return; }
-  if (!ALLOWED_ORIGINS.has(origin) && origin !== '') { res.status(403).json({ error: 'Forbidden' }); return; }
-
-  const mode = (req.body && req.body.mode === 'full') ? 'full' : 'bulk';
-  if (!AGNES_KEYS.length && !process.env.ZEN_API_KEY && !process.env.OPENCODE_KEY) {
-    res.status(500).json({ error: 'No translation engine configured' }); return;
-  }
-
-  const ip = (req.headers['x-real-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0].trim() || 'local';
-  if (rateLimited(ip)) { res.status(429).json({ error: 'Too Many Requests' }); return; }
-
-  const body = req.body || {};
-  const texts = Array.isArray(body.texts)
-    ? body.texts.filter((t) => typeof t === 'string' && t.trim())
-    : [];
-  if (!texts.length) { res.status(400).json({ error: 'texts must be a non-empty string array' }); return; }
-  if (texts.length > MAX_TEXTS) { res.status(400).json({ error: `texts limited to ${MAX_TEXTS} items per request` }); return; }
-
-  // 缓存命中的直接取用；未命中的走统一降级链
-  const diag = [];
-  const pending = [];
-  const results = await Promise.all(texts.map(async (t, idx) => {
-    const key = t.slice(0, 200);
-    const hit = getCache(key);
-    if (hit) return hit;
-    pending.push(idx);
-    return null;
-  }));
-
-  const concurrency = mode === 'full' ? AGNES_CONCURRENCY : GTX_CONCURRENCY;
-  // bulk 模式 Agnes 限额：防浏览器端大面积失败时打爆上游
-  const bulkLimit = mode === 'bulk' ? AGNES_FALLBACK_MAX : Infinity;
-  let agnesUsed = 0;
-  const engineCounts = {};
-
-  await mapPool(pending, concurrency, async (idx) => {
-    const t = texts[idx];
-    const { zh, engine } = await translateWithFallback(t);
-    if (zh) {
-      results[idx] = zh;
-      engineCounts[engine] = (engineCounts[engine] || 0) + 1;
-    } else {
-      diag.push(engine === 'blocked' ? 'circuit_breaker' : 'all_failed');
-    }
-  });
-
-  if (!results.some(Boolean)) { res.status(502).json({ error: 'All translations failed', mode, diag: [...new Set(diag)].slice(0, 5) }); return; }
-  for (let i = 0; i < results.length; i++) if (!results[i]) results[i] = '';
-  const engine = Object.keys(engineCounts).sort((a, b) => engineCounts[b] - engineCounts[a])[0] || 'fail';
-  res.status(200).json({ ok: true, engine, translations: results });
-}

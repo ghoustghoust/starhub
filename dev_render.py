@@ -70,6 +70,8 @@ def main():
     # Preview-only blocks are produced by fetch_and_build; keep the local
     # renderer from leaking raw placeholders into the page.
     template = template.replace("__AI_SUMMARY__", "").replace("__ATTENTION__", "")
+    api_base = json.load(open("config/site.json", encoding="utf-8")).get("site", {}).get("api_base", "")
+    template = template.replace("__API_BASE__", api_base)
 
     open(SRC, "w", encoding="utf-8").write(template)
     print("渲染完成：index.html 已由 template.html 重新生成")

@@ -1,6 +1,7 @@
 {
   "name": "starhub",
   "private": true,
+  "type": "module",
   "engines": {
     "node": ">=20"
   }

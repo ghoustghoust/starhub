@@ -24,11 +24,20 @@ for _stream in (sys.stdout, sys.stderr):
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline"))
 from starhub_pipeline.config import site_value  # noqa: E402
+from starhub_pipeline.build.attention import (  # noqa: E402
+    prune_star_state,
+    render_star_attention,
+    star_attention_items,
+)
+from starhub_pipeline.build.contracts import write_site_contracts  # noqa: E402
+from starhub_pipeline.build.trending import TRENDING_BOARD, trending_board_payload  # noqa: E402
 from starhub_pipeline.enrich import llm  # noqa: E402
 from starhub_pipeline.enrich.classify import classify_repo as _classify_repo  # noqa: E402
 from starhub_pipeline.enrich.embed import embed_star_entries  # noqa: E402
 from starhub_pipeline.enrich.translate import has_cn, translate_to_zh as _translate_to_zh  # noqa: E402
+from starhub_pipeline.render.index import build_index_html  # noqa: E402
 from starhub_pipeline.sources.github import fetch_stars  # noqa: E402
+from starhub_pipeline.taxonomy import CATS, FALLBACK_DESC  # noqa: E402
 
 # Fast path for CI while the refactored pipeline is being built: skip
 # translation/LLM/embedding enrichment instead of waiting on free endpoints.
@@ -48,39 +57,6 @@ def classify_repo(fn, desc, lang, topics, known):
 
 def _agnes_generate(system, user, max_tokens=300):
     return llm.generate(system, user, max_tokens=max_tokens)
-
-CATS = [
-    {"key": "agent",     "label": "AI Agent & Skills",      "color": "#0550ae", "dark": "#4493f8"},
-    {"key": "assistant", "label": "AI 助手 & 应用",         "color": "#1b7c83", "dark": "#39c5cf"},
-    {"key": "coding",    "label": "AI 编程 & 工具链",       "color": "#1a7f37", "dark": "#3fb950"},
-    {"key": "video",     "label": "AI 视频创作",            "color": "#cf222e", "dark": "#f85149"},
-    {"key": "content",   "label": "内容创作 & 排版",        "color": "#d33982", "dark": "#e577b2"},
-    {"key": "distill",   "label": "思维蒸馏 & 认知",        "color": "#8250df", "dark": "#a371f7"},
-    {"key": "learning",  "label": "学习 & 教程",            "color": "#b58400", "dark": "#d4a72c"},
-    {"key": "info",      "label": "资讯聚合 & 信息抓取",    "color": "#0969da", "dark": "#58a6ff"},
-    {"key": "tools",     "label": "效率工具",               "color": "#57606a", "dark": "#8b949e"},
-    {"key": "media",     "label": "影音 & IPTV",            "color": "#bf3989", "dark": "#db61a2"},
-    {"key": "finance",   "label": "金融 & 交易",            "color": "#c29700", "dark": "#e3b341"},
-    {"key": "business",  "label": "商业 · 一人公司与知产",  "color": "#d4600a", "dark": "#f0883e"},
-    {"key": "frontend",  "label": "前端 & 设计系统",        "color": "#0a7ea4", "dark": "#39a0c5"},
-]
-
-LANG_COLORS = {
-    "Python": "#3572A5", "TypeScript": "#3178c6", "JavaScript": "#f1e05a",
-    "HTML": "#e34c26", "Shell": "#89e051", "Go": "#00ADD8", "Java": "#b07219",
-    "Jupyter Notebook": "#DA5B0B", "Vue": "#41b883", "PowerShell": "#012456",
-    "CSS": "#563d7c", "C#": "#178600", "C++": "#f34b7d",
-}
-
-DEFAULT_FAVS = []
-
-# 已知的空描述项目，补充一句中文说明
-FALLBACK_DESC = {
-    "llazyl/TVBox": "TVBox 影视聚合播放器",
-    "q215613905/TVBoxOS": "TVBoxOS 影视播放系统",
-    "FongMi/TV": "基于 media3/ffmpeg/mpv 的开源影视播放器",
-}
-
 
 def health_score(repo):
     """收藏健康分（github-search-mirror 四维借鉴，数据全部来自已拉取字段）：
@@ -762,253 +738,6 @@ def fetch_following_events(token):
     return feed
 
 
-def _safe_json(obj):
-    # 转义 < 防止 </script> 注入：ensure_ascii=False 时 json.dumps 不转义 <、>，
-    # 数据内联进 <script> 块后浏览器会在第一个 </script> 处提前闭合标签执行任意 JS。
-    # \u003c 是合法 JSON 转义，json.loads 可还原，不破坏 dev_render.py 的提取流程。
-    return json.dumps(obj, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c")
-
-
-def _atomic_json_write(path, payload):
-    """Write a JSON contract atomically; a failed build must not truncate the
-    last usable snapshot."""
-    directory = os.path.dirname(path)
-    if directory:
-        os.makedirs(directory, exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, ensure_ascii=False, indent=1)
-        fh.write("\n")
-    os.replace(tmp, path)
-
-
-def _contract_item(item):
-    health = item.get("health")
-    entry = {
-        "id": item.get("full_name"),
-        "full_name": item.get("full_name"),
-        "html_url": item.get("html_url"),
-        "description": item.get("desc") or "",
-        "language": item.get("language"),
-        "stars": int(item.get("stars") or 0),
-        "forks": int(item.get("forks") or 0),
-        "license": item.get("license") or "",
-        "topics": item.get("topics") or [],
-        "pushed_at": item.get("pushed_at") or "",
-        "starred_at": item.get("starred_at") or "",
-        "category": item.get("category") or "",
-        "category_label": item.get("categoryLabel") or item.get("category") or "",
-        "note": item.get("note") or "",
-        "health": {
-            "level": health if isinstance(health, str) else "unknown",
-            "stale": bool(item.get("stale")),
-        },
-        "updated_today": bool(item.get("updated_today")),
-    }
-    if item.get("emb"):
-        entry["embedding"] = item["emb"]
-    return entry
-
-
-def _write_site_contracts(items, known, trending, summary_text, updated):
-    """Emit the refactor's data boundary. The legacy page keeps using inline
-    data; the new frontend reads these files directly."""
-    generated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    boards = trending or {}
-    _atomic_json_write("data/stars.json", {
-        "schema_version": 2,
-        "generated_at": generated_at,
-        "items": [_contract_item(item) for item in items],
-    })
-    _atomic_json_write("data/categories.json", {
-        "schema_version": 2,
-        "updated_at": generated_at,
-        "map": known,
-        "labels": {c["key"]: c["label"] for c in CATS},
-    })
-    _atomic_json_write("data/trending.json", {
-        "schema_version": 2,
-        "generated_at": generated_at,
-        "updated": updated,
-        "summary": {"text": summary_text or ""},
-        "boards": {
-            "rising": boards.get("rising", []),
-            "total": boards.get("total", []),
-            "new": boards.get("new", []),
-        },
-    })
-    _atomic_json_write("data/build-status.json", {
-        "schema_version": 2,
-        "last_success_at": generated_at,
-        "sources": {
-            "github": {"status": "ok", "item_count": len(items)},
-            "ai_daily": {"status": "unknown"},
-        },
-    })
-    print("[contracts] 写入 data/（stars=%d）" % len(items))
-
-
-# ==================== 首页顶部「未自动清理」提醒条 ====================
-# 来由（2026-10-04 实测）：known_categories.json 有 304 个键，而 GitHub 公开 starred 全集与
-# 线上 DATA 都是 293 条、双向零差 ⇒ 多出的 11 个是**旧名残留**（仓库改名/转移后真身 id 仍在
-# 收藏，或旧路径已消失），不是收藏缺失。判同一性只能用 repository id，名字只能当线索，
-# 所以这里只把"表里有、收藏里没有"如实列出来交给人判定：不猜结论，也不写"丢了"。
-#
-# 2026-10-12 角色变更（见下面 prune_star_state 的来由）：常态下旧名在算提醒之前就被剪掉了，
-# 所以这块从"每日常驻的待办清单"变成"剪枝门槛触发时的报警器"。文案随之改成异常口吻——
-# 它现在意味着"这一场收藏没拉全，所以没敢清理"，而不再是"请你去核对哪个仓库改名了"。
-# 禁止词表（tests/site_nav/test_star_attention_bar.py::LOST_WORDS）仍然成立：门槛触发时
-# 收藏也确实一条没少，少的只是拉取。
-ATTENTION_KIND_STAR_ORPHAN = "star_orphan"
-ATTENTION_TITLE = "分类表里有 %d 个名字不在当前收藏中——本场未自动清理（拉取条数低于门槛），请核对收藏是否完整拉到"
-ATTENTION_SAME_HINT = "同名候选（仅参考，同名不等于同一仓库）"
-# 页面层最多列几条：index.html 每场重写进 git，无上限的清单就是把体积增长留在历史里。
-ATTENTION_MAX_ROWS = 25
-
-# 剪枝门槛：当前收藏条数必须 ≥ 分类表键数 × 此比例，否则本场一个都不删。
-PRUNE_LIVE_MIN_RATIO = 0.8
-
-
-def prune_star_state(known, live_names):
-    """把分类表剪成当前收藏的投影：删掉不在 live_names 里的键，原地改，返回被删的键。
-
-    口径是用户 2026-10-12 的裁定：「取消关注这个行为本身就是删除，重新关注是另一个行为」。
-    改名与主动取关不必区分——处置相同，而重新关注回来的新名会照常走 classify_repo 重新分类
-    （实测 4 条改名仓库的新名都已自动分类并生成点评）。所以这里既不需要人工表，也不必去问
-    GitHub 某个旧名是改名还是消失，那条"不在 CI 里逐场探测 301/404"的界仍然成立。
-
-    唯一能删错人的路径是拉取缩水：表 344 键而分页只拉到 100 条 ⇒ 差集 244，照剪等于清空分类表，
-    下一场全量重烧 LLM。故空集与不足门槛一律不剪，且门槛不许严到永不生效（判据两头都钉）。
-    """
-    live = set(live_names)
-    if not live or len(live) < len(known) * PRUNE_LIVE_MIN_RATIO:
-        return []
-    dropped = sorted(fn for fn in known if fn not in live)
-    for fn in dropped:
-        del known[fn]
-    return dropped
-
-
-def star_attention_items(repos, known, notes=None, desc_zh=None):
-    """列「表里有而当前收藏没有」的旧名。
-
-    repos 传原始 API 响应或已组装条目都行（只取 full_name）；纯函数，不发网络、不做定性。
-    剪枝（见下面 prune_star_state）生效后这里常态为空：旧名在算提醒之前就被清掉了，只有门槛
-    拦下那一场会带内容，此时它的含义是"本场没敢清理"，不再是"请你判定哪个仓库改名了"。
-    """
-    notes = notes or {}
-    desc_zh = desc_zh or {}
-    live = {(r.get("full_name") or "") for r in repos}
-    live.discard("")
-    if not live:
-        # 收藏为空 = 拉取异常（正常路径下 fetch_stars 失败会让 stars_ok=False 而不发布首页，
-        # 但这里不能指望调用方）：此时「表−收藏」= 整张表，会把三百多个名字全报成待办 ——
-        # 那是比无警更糟的假警风暴，所以一律不报。
-        return []
-    by_base = {}
-    for fn in live:
-        by_base.setdefault(fn.split("/")[-1].lower(), []).append(fn)
-    items = []
-    for fn in sorted(set(known) - live):
-        base = fn.split("/")[-1].lower()
-        same = sorted(x for x in by_base.get(base, []) if x != fn)
-        items.append({
-            "kind": ATTENTION_KIND_STAR_ORPHAN,
-            "item": fn,
-            "hint": {
-                "category": known.get(fn) or "",
-                "has_note": bool((notes.get(fn) or "").strip()),
-                "has_desc": bool((desc_zh.get(fn) or "").strip()),
-                "same_base_name_live": same,
-            },
-        })
-    return items
-
-
-def render_star_attention(items):
-    """把提醒条目渲染成 HTML 片段；空清单返回空串，页面上不留任何节点。
-
-    折叠用原生 <details> ⇒ 零新增内联 JS（首页上次白屏就是内联 JS 少一个闭括号整段坏死，
-    这块能不用 JS 就不用）。名字一律转义：它们原样来自表键，既进文本也进 href。
-    """
-    if not items:
-        return ""
-    from html import escape as esc
-    shown = items[:ATTENTION_MAX_ROWS]
-    rest = len(items) - len(shown)
-    rows = []
-    for it in shown:
-        h = it.get("hint") or {}
-        name = it.get("item") or ""
-        bits = []
-        if h.get("category"):
-            bits.append("分类 " + str(h["category"]))
-        bits.append("点评" + ("有" if h.get("has_note") else "无"))
-        bits.append("中文简介" + ("有" if h.get("has_desc") else "无"))
-        same = h.get("same_base_name_live") or []
-        same_html = ""
-        if same:
-            same_html = ('<span class="attn-same">%s：%s</span>'
-                         % (esc(ATTENTION_SAME_HINT, quote=False),
-                            esc(", ".join(same), quote=False)))
-        rows.append('<li class="attn-row"><a class="attn-name" href="https://github.com/%s"'
-                    ' target="_blank" rel="noopener">%s</a>'
-                    '<span class="attn-meta">%s</span>%s</li>'
-                    % (esc(name), esc(name), esc(" · ".join(bits), quote=False), same_html))
-    more = ('<p class="attn-more">另有 %d 条未列出——清单再长下去会把体积写进每场重写的首页。</p>'
-            % rest) if rest else ""
-    return ('<details class="attn" data-attention="star">'
-            '<summary class="attn-sum">%s</summary>'
-            '<ul class="attn-list">%s</ul>%s'
-            '<p class="attn-note">本场未自动清理：拉到的收藏条数低于分类表门槛。'
-            '两种可能——某一页没拉全，或你一次取关了太多。核对 GitHub 收藏后重新构建即可收敛。'
-            '收藏条数另有对账，当前收藏与本页条目双向零差。</p>'
-            '</details>'
-            % (esc(ATTENTION_TITLE % len(items), quote=False), "".join(rows), more))
-
-
-TRENDING_BOARD = "trending_board.json"
-
-
-def trending_board_payload(trending, ai_summary_html, updated):
-    """排行榜数据出口的**单一形状**：{trending, ai_summary_html, updated}。
-
-    为什么单独一个函数：出口由 CI 写、由前端读、还要被 Stage 拷进制品——三处各拼一份
-    迟早分叉（运行时翻译判据就是为这种分叉补的）。这里不重算任何数据，榜单是
-    `build_trending()` 已经算好的结果，所以零 GitHub 配额。
-    """
-    return {"trending": trending or {}, "ai_summary_html": ai_summary_html or "",
-            "updated": updated or ""}
-
-
-def build_index_html(repos, cats, trending=None, feed=None, updated=None, ai_summary_html="",
-                     attention_html=""):
-    """把组装好的 star 条目渲染成完整 index.html 文本（纯字符串函数：不写文件、不发网络）。
-
-    repos 是 main 流程组装好的条目数组（含 desc/category/categoryLabel 等），不是原始
-    API 响应；cats 是 CATS。trending/feed/updated/ai_summary_html 由调用方注入，缺省渲染
-    空态 —— 快车道（fast_refresh）与重分类工具复用同一渲染出口，首页只有一种生成方式。
-    文件写出与 stars_ok 兜底判断留在 main（拉取失败不得用旧模板覆盖站点）。"""
-    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "template.html")
-    with open(template_path, encoding="utf-8") as fh:
-        template = fh.read()
-    if updated is None:
-        updated = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
-    asset_version = re.sub(r"\D", "", updated) or datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    return (template
-            .replace("__DATA__", _safe_json(repos))
-            .replace("__CATS__", _safe_json(cats))
-            .replace("__LANGS__", _safe_json(LANG_COLORS))
-            .replace("__FAVS__", _safe_json(DEFAULT_FAVS))
-            .replace("__API_BASE__", site_value("api_base", ""))
-            .replace("__ASSET_VERSION__", asset_version)
-            .replace("__TRENDING__", _safe_json(trending or {}))
-            .replace("__FEED__", _safe_json(feed or []))
-            .replace("__ATTENTION__", attention_html)
-            .replace("__UPDATED__", updated)
-            .replace("__AI_SUMMARY__", ai_summary_html or ""))
-
-
 def assemble_entries(repos, known, desc_zh, cat_label, token, notes=None):
     """把原始 star 响应组装成 DATA 条目数组（main 与快车道 fast_refresh 共用的唯一组装出口）。
 
@@ -1168,7 +897,7 @@ def main(mode="full"):
         json.dump(known, open("known_categories.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
         json.dump(desc_zh, open("descriptions_zh.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
         try:
-            _write_site_contracts(out, known, trending, ai_summary, updated)
+            write_site_contracts(out, known, trending, ai_summary, updated, cats=CATS)
         except Exception as e:  # noqa: BLE001
             print("[contracts] 写入失败: %s" % e, file=sys.stderr)
 

@@ -1,6 +1,6 @@
 {
  "schema_version": 2,
- "generated_at": "2026-10-23T01:26:33.456226Z",
+ "generated_at": "2026-10-23T01:29:39.675414Z",
  "items": [
   {
    "id": "cheaper-inference/OmniRoute",
@@ -8,7 +8,7 @@
    "html_url": "https://github.com/cheaper-inference/OmniRoute",
    "description": "Never stop coding. Free MIT AI gateway: one endpoint, 375 providers (150+ free), 1,400+ models Kimi, Claude, GPT, Gemini, GLM, DeepSeek, MiniMax. Works with Claude Code, Codex, Cursor, OpenCode, Cline & Copilot. Quota-aware auto-fallback, RTK+Caveman compression saves 15-95% tokens, MCP/A2A, Desktop/PWA. Built by 900+ contributors",
    "language": "TypeScript",
-   "stars": 79906,
+   "stars": 79907,
    "forks": 11638,
    "license": "MIT",
    "topics": [
@@ -230,8 +230,8 @@
    "html_url": "https://github.com/Ebony-Vinyl/dsh-our-free-model",
    "description": "在 dsh 里装上这个插件即可，无需登录、注册或填 API Key，就能使用包括 DeepSeek V4.1 Flash、Kimi K3 在内的前沿模型——完全免费，不限量。 All you do is install this plugin in dsh: no login, no sign-up, no API key — the frontier models are just there, DeepSeek V4.1 Flash and Kimi K3 among them. Completely free, with no usage cap.",
    "language": "JavaScript",
-   "stars": 36832,
-   "forks": 1057,
+   "stars": 36836,
+   "forks": 1058,
    "license": "MIT",
    "topics": [
     "ai-agents",
@@ -290,7 +290,7 @@
    "html_url": "https://github.com/coreyhaines31/marketingskills",
    "description": "Claude Code 和 AI 代理的营销技巧。 CRO、文案、SEO、分析和增长工程。",
    "language": "JavaScript",
-   "stars": 56060,
+   "stars": 56061,
    "forks": 8291,
    "license": "MIT",
    "topics": [
@@ -333,7 +333,7 @@
    "description": "用于自定义Claude AI工作流程的精选Claude技能、资源和工具列表",
    "language": "Python",
    "stars": 77697,
-   "forks": 9279,
+   "forks": 9280,
    "license": "",
    "topics": [
     "agent-skills",
@@ -371,8 +371,8 @@
    "html_url": "https://github.com/yetone/magpie",
    "description": "每个代理的模型。一处。来自菜单栏的 DeepSeek 上的 Codex、Kimi 上的 Claude Code。",
    "language": "Go",
-   "stars": 19551,
-   "forks": 1479,
+   "stars": 19552,
+   "forks": 1480,
    "license": "MIT",
    "topics": [
     "claude-code",
@@ -399,8 +399,8 @@
    "html_url": "https://github.com/morluto/rea",
    "description": "使用代理对任何内容进行逆向工程，从应用程序行为到本机二进制文件。",
    "language": "TypeScript",
-   "stars": 366424,
-   "forks": 91810,
+   "stars": 366440,
+   "forks": 91817,
    "license": "MIT",
    "topics": [
     "agent-skills",
@@ -494,7 +494,7 @@
    "html_url": "https://github.com/TencentCloud/Octop",
    "description": "更智能、自托管的人工智能助手——多用户、多代理。",
    "language": "Python",
-   "stars": 10728,
+   "stars": 10729,
    "forks": 1371,
    "license": "MIT",
    "topics": [
@@ -786,7 +786,7 @@
    "html_url": "https://github.com/Comfy-Org/ComfyUI",
    "description": "功能强大的模块化扩散模型 GUI 与后端。",
    "language": "Python",
-   "stars": 142018,
+   "stars": 142017,
    "forks": 16747,
    "license": "GPL-3.0",
    "topics": [
@@ -849,7 +849,7 @@
    "html_url": "https://github.com/larashero3-dotcom/writing-dna-skill",
    "description": "写作蒸馏器.skill｜蒸馏复刻任意写作风格的 agent skill | Writing DNA Distiller - distill and recreate any writing style as an agent skill",
    "language": null,
-   "stars": 2612,
+   "stars": 2613,
    "forks": 243,
    "license": "MIT",
    "topics": [
@@ -1031,7 +1031,7 @@
    "html_url": "https://github.com/foryourhealth111-pixel/Vibe-Skills",
    "description": "AI 代理的智能技能路由和工作流程编排 — +21.12 pp 奖励，在带有 DeepSeekV4Flash-VE 的 SkillsBench 上为 −29.6% 代币。",
    "language": "Python",
-   "stars": 3758,
+   "stars": 3759,
    "forks": 341,
    "license": "Apache-2.0",
    "topics": [
@@ -1454,7 +1454,7 @@
    "html_url": "https://github.com/anywhere-labs/dsh-desktop",
    "description": "为 DeepSeek Harness (DSH) 插件生态打造的现代化桌面端解决方案。万物皆「插件」，桌面本身也是「插件」。",
    "language": "TypeScript",
-   "stars": 32472,
+   "stars": 32473,
    "forks": 1493,
    "license": "MIT",
    "topics": [
@@ -1694,7 +1694,7 @@
    "html_url": "https://github.com/88lin/video_vip",
    "description": "全网VIP视频免费破解脚本，通过集成多个第三方解析接口，去除广告，解锁视频网站的会员限制，让用户享受免费的视频观看体验。适配PC+移动，支持爱奇艺、腾讯、优酷、芒果TV、bilibili等主流视频平台！脚本长期维护更新，完全免费",
    "language": "JavaScript",
-   "stars": 5676,
+   "stars": 5677,
    "forks": 560,
    "license": "",
    "topics": [
@@ -1832,7 +1832,7 @@
    "html_url": "https://github.com/zhaoxuya520/reverse-skill",
    "description": "Reverse Engineering / Authorized Penetration Testing / Security Research Skill Router Pack AI-powered routing + On-demand toolchain bootstrapping + Self-evolving knowledge base Supports Claude Code, Kiro, Cursor, Cline, and other AI coding clients 逆向/渗透/安全技能路由包 - AI 自动路由 + 按需自举工具链 + 自动进化经验库 | 支持 Claude Code / Kiro / Cursor / Cline 等代码 AI 客户端",
    "language": "PowerShell",
-   "stars": 43039,
+   "stars": 43040,
    "forks": 6320,
    "license": "MIT",
    "topics": [],
@@ -1914,7 +1914,7 @@
    "html_url": "https://github.com/521xueweihan/HelloGitHub",
    "description": ":octocat: 分享 GitHub 上有趣、入门级的开源项目。Share interesting, entry-level open source projects on GitHub.",
    "language": "Python",
-   "stars": 183749,
+   "stars": 183750,
    "forks": 13059,
    "license": "",
    "topics": [
@@ -2267,7 +2267,7 @@
    "html_url": "https://github.com/Lightricks/LTX-2",
    "description": "LTX-2音视频生成模型的官方Python推理和LoRA训练器包。",
    "language": "Python",
-   "stars": 9846,
+   "stars": 9847,
    "forks": 1562,
    "license": "NOASSERTION",
    "topics": [
@@ -3090,7 +3090,7 @@
    "html_url": "https://github.com/DavidHDev/react-bits",
    "description": "动画、交互式和完全可定制的React组件的开源集合，用于构建令人难忘的网站。",
    "language": "JavaScript",
-   "stars": 50006,
+   "stars": 50007,
    "forks": 2471,
    "license": "NOASSERTION",
    "topics": [
@@ -3357,7 +3357,7 @@
    "html_url": "https://github.com/farion1231/cc-switch",
    "description": "Claude Code、Codex、OpenCode、OpenClaw、Grok Build和Hermes Agent的跨平台桌面一体机助手。唯一官方网站： ccswitch.io",
    "language": "Rust",
-   "stars": 147692,
+   "stars": 147694,
    "forks": 9726,
    "license": "MIT",
    "topics": [
@@ -3399,7 +3399,7 @@
    "html_url": "https://github.com/tauri-apps/tauri",
    "description": "使用Web前端构建更小、更快、更安全的桌面和移动应用程序。",
    "language": "Rust",
-   "stars": 112128,
+   "stars": 112127,
    "forks": 4106,
    "license": "Apache-2.0",
    "topics": [
@@ -3547,7 +3547,7 @@
    "html_url": "https://github.com/hugohe3/ppt-master",
    "description": "AI 把文档或主题直接生成为原生 PPT，含原生形状、转场动画、图表表格、语音旁白，支持自定义模板。",
    "language": "Python",
-   "stars": 66023,
+   "stars": 66024,
    "forks": 5185,
    "license": "MIT",
    "topics": [

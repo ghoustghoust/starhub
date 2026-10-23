@@ -24,7 +24,10 @@ for _stream in (sys.stdout, sys.stderr):
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline"))
 from starhub_pipeline.config import site_value  # noqa: E402
+from starhub_pipeline.enrich import llm  # noqa: E402
+from starhub_pipeline.enrich.classify import classify_repo as _classify_repo  # noqa: E402
 from starhub_pipeline.enrich.embed import embed_star_entries  # noqa: E402
+from starhub_pipeline.enrich.translate import has_cn, translate_to_zh as _translate_to_zh  # noqa: E402
 from starhub_pipeline.sources.github import fetch_stars  # noqa: E402
 
 # Fast path for CI while the refactored pipeline is being built: skip
@@ -33,6 +36,18 @@ FAST = os.environ.get("STARHUB_FAST") == "1"
 
 USER = site_value("github_user", "ghoustghoust")
 PAGES_URL = site_value("pages_url", "https://ghoustghoust.github.io/starhub/")
+
+
+def translate_to_zh(text):
+    return _translate_to_zh(text, fast=FAST)
+
+
+def classify_repo(fn, desc, lang, topics, known):
+    return _classify_repo(fn, desc, lang, topics, known, cats=CATS, fast=FAST)
+
+
+def _agnes_generate(system, user, max_tokens=300):
+    return llm.generate(system, user, max_tokens=max_tokens)
 
 CATS = [
     {"key": "agent",     "label": "AI Agent & Skills",      "color": "#0550ae", "dark": "#4493f8"},
@@ -65,284 +80,6 @@ FALLBACK_DESC = {
     "q215613905/TVBoxOS": "TVBoxOS 影视播放系统",
     "FongMi/TV": "基于 media3/ffmpeg/mpv 的开源影视播放器",
 }
-
-
-def has_cn(s):
-    return bool(re.search(r"[\u4e00-\u9fff]", s or ""))
-
-
-# 翻译熔断：连续 5 次全端点失败后暂停翻译请求 5 分钟（避免上游故障时的请求风暴与构建拖长）
-_TRANS_FAIL_STREAK = 0
-_TRANS_BLOCK_UNTIL = 0.0
-
-
-def translate_to_zh(text):
-    """把英文简介翻译成中文；全部端点失败返回 None（保留原文）。
-    熔断保护：连续多次全端点失败后暂停请求，期间直接返回 None（调用方保留原文）。"""
-    global _TRANS_FAIL_STREAK, _TRANS_BLOCK_UNTIL
-    if FAST:
-        return None
-    if time.time() < _TRANS_BLOCK_UNTIL:
-        return None
-    if not text:
-        return None
-    # 端点 1：Google 翻译非官方接口
-    try:
-        params = urllib.parse.urlencode({"client": "gtx", "sl": "auto", "tl": "zh-CN", "dt": "t", "q": text})
-        req = urllib.request.Request(
-            "https://translate.googleapis.com/translate_a/single?" + params,
-            headers={"User-Agent": "Mozilla/5.0"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = json.loads(r.read().decode("utf-8"))
-        result = "".join(seg[0] for seg in data[0] if seg[0]).strip()
-        if result and has_cn(result):
-            _TRANS_FAIL_STREAK = 0
-            return result
-    except Exception:  # noqa: BLE001
-        pass
-    # 端点 2：MyMemory 免费接口
-    try:
-        params = urllib.parse.urlencode({"q": text, "langpair": "en|zh-CN"})
-        req = urllib.request.Request(
-            "https://api.mymemory.translated.net/get?" + params,
-            headers={"User-Agent": "Mozilla/5.0"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = json.loads(r.read().decode("utf-8"))
-        result = (data.get("responseData", {}).get("translatedText") or "").strip()
-        if result and has_cn(result) and "MYMEMORY WARNING" not in result:
-            _TRANS_FAIL_STREAK = 0
-            return result
-    except Exception:  # noqa: BLE001
-        pass
-    _TRANS_FAIL_STREAK += 1
-    if _TRANS_FAIL_STREAK >= 5:
-        _TRANS_BLOCK_UNTIL = time.time() + 300
-        print("[翻译熔断] 连续 %d 次全端点失败，暂停翻译请求 5 分钟" % _TRANS_FAIL_STREAK, file=sys.stderr)
-    return None
-
-
-def classify_new(fn, desc, lang, topics):
-    """对未知新项目做关键词规则分类（已有项目走 known_categories.json 保持稳定）。
-    规则要点：避免泛词子串误伤（如「蒸馏」「思维」「chat」），用语义更明确的短语。
-    点名式补丁词已删（查表与 LLM 接管）；末尾的 "agent" 仅代表"规则未命中"，
-    统一入口 classify_repo 会把它收口为默认 tools。"""
-    text = (fn + " " + (desc or "") + " " + " ".join(topics or [])).lower()
-    # 不再用裸 "quant"：它会子串误伤 quantization（NVIDIA/Model-Optimizer 实锤进 finance），
-    # 模型量化归入 coding；真·量化交易项目仍由 trading/金融/交易 等通用词覆盖。
-    if any(k in text for k in ["trading", "finance", "金融", "交易", "bloomberg"]):
-        return "finance"
-    if any(k in text for k in ["tvbox", "iptv", "直播", "电视", "crawler", "爬虫", "download", "下载",
-                               "translator", "翻译", "汉化", "网盘", "pan", "mpv", "userscript"]):
-        return "tools"
-    # 内容蒸馏类提前（如「把视频蒸馏成技能」类项目同时含视频/蒸馏字样，语义上属蒸馏）
-    if any(k in text for k in ["distill", "思维蒸馏", "知识蒸馏", "内容蒸馏", "蒸馏成", "蒸馏出", "蒸馏任何",
-                               "认知植入", "思维方式", "心智模型", "第一性", "first-principles",
-                               "方法论", "nuwa", "女娲", "cangjie", "仓颉", "文风"]):
-        return "distill"
-    # 视频创作类（画布/视频生成工具；置于 tools 之后，避免爬虫/下载器含「视频」字样误伤）
-    if any(k in text for k in ["video", "视频", "短剧", "drama", "film", "anime", "动漫",
-                               "movie", "montage", "hyperframe", "shot", "画布", "canvas"]):
-        return "video"
-    if any(k in text for k in ["open-design", "baoyu-design", "awesome-design", "design.md",
-                               "design-system", "design system", "frontend"]):
-        return "frontend"
-    if any(k in text for k in ["ppt", "powerpoint", "排版", "公众号", "wechat", "写作", "write",
-                               "typeset", "editor"]):
-        return "content"
-    if any(k in text for k in ["book", "书籍", "教程", "guide", "指南", "from-scratch", "llms",
-                               "learning", "入门", "weekly", "实践", "tutorial",
-                               "dive-into"]):
-        return "learning"
-    if any(k in text for k in ["code-review", "quantization", "中转", "coding", "编程"]):
-        return "coding"
-    if any(k in text for k in ["chatbot", "chatgpt", "assistant", "助手", "librechat", "astrbot",
-                               "workspace", "desktop", "agent-os"]):
-        return "assistant"
-    if any(k in text for k in ["opc", "one-person", "一人公司", "创业", "startup", "growth", "增长",
-                               "business", "软著", "copyright", "专利", "patent", "合规",
-                               "compliance", "legal"]):
-        return "business"
-    return "agent"
-
-
-# ==================== LLM 智能分类（Agnes，§8.14 key 池惯例）====================
-_LLM_API_URL = "https://apihub.agnes-ai.com/v1/chat/completions"
-_LLM_MODEL = "agnes-2.5-flash"
-_LLM_TIMEOUT_SEC = 30
-_NOTE_MAX_CHARS = 30
-
-# 13 类判定准则（2026-10-04 定版，用户裁决 FDE 归 learning/tools 两档）。
-# 背景：此前 prompt 只给 key=label 裸表，语义边界题（FDE/awesome 合集/书籍）方差极大——
-# 实测 FDE 15 仓散 8 类、awesome 14 仓散 7 类。注入准则后 classify_llm 与
-# tools/reclassify_all.py（同函数）两条路径共用同一把尺子。
-# 总原则：**内容形态优先于主题**——同一主题，可运行软件归能力类，资料归 learning，资讯归 info。
-_CAT_CRITERIA = """判定准则（与类目标签冲突时以本准则为准）：
-- agent：Agent 框架/运行时/编排/多智能体系统/MCP 服务端等【可运行软件】。Agent 主题的教程/书/清单不归此类。
-- coding：AI 编程助手/CLI 工具/开发工具链/脚手架/代码生成。
-- learning：教程/路线图/学习指南/实战手册/书籍/wiki/课程/面试题/知识库型 README。FDE、Agent、RAG 等任何主题的"学习资料"一律归此类。
-- info：资讯/周刊/Newsletter/博客/新闻聚合/资源导航/awesome 合集/导航站/书签集。
-- tools：通用效率工具/下载器/解析器/转换器/文件处理/浏览器插件等实用工具（不限 AI）。
-- assistant：面向最终用户的 AI 助手/聊天客户端/桌面或移动 AI 应用。
-- video：AI 视频生成/剪辑/数字人/口播/字幕/图像生成工作流（ComfyUI/SD/Flux）。
-- media：播客/音频/TTS/语音识别/音乐生成与处理。
-- content：内容创作与排版/写作辅助/公众号运营/文档排版/营销素材。
-- distill：思维模型/认知方法论/决策框架/个人知识管理/笔记方法。
-- business：一人公司/独立开发变现/商业化方法论/知识产权/出海。
-- finance：量化交易/投资/股票/加密货币/金融数据。
-- frontend：前端框架/组件库/设计系统/UI 工程。
-总裁决：①内容形态优先于主题（软件→能力类，资料→learning，资讯合集→info）；②awesome/合集/导航一律 info；③教程属性压过工具属性——讲"怎么用 X"的仓库跟 X 走，讲"怎么学 X"的归 learning。"""
-
-
-def _agnes_key_pool():
-    """AGNES_API_KEY（主，可逗号分隔）+ AGNES_API_KEYS（逗号分隔附加）合并成 key 池（去重保序）。"""
-    keys = [k.strip() for k in (os.environ.get("AGNES_API_KEY") or "").split(",") if k.strip()]
-    keys += [k.strip() for k in (os.environ.get("AGNES_API_KEYS") or "").split(",") if k.strip()]
-    pool, seen = [], set()
-    for k in keys:
-        if k not in seen:
-            seen.add(k)
-            pool.append(k)
-    return pool
-
-
-def _parse_llm_json(content):
-    """解析模型回复里的 JSON 对象；容忍 ```json 围栏与前后寒暄，失败返回 None。"""
-    if not content:
-        return None
-    text = content.strip()
-    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
-    if m:
-        text = m.group(1)
-    # 直接解析失败时退回正则抽最外层 {...}（容忍 JSON 前后的寒暄文字）
-    try:
-        obj = json.loads(text)
-        return obj if isinstance(obj, dict) else None
-    except Exception:  # noqa: BLE001
-        pass
-    start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end <= start:
-        return None
-    try:
-        obj = json.loads(text[start:end + 1])
-        return obj if isinstance(obj, dict) else None
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def classify_llm(fn, desc, lang, topics, cats):
-    """LLM 智能分类：成功返回 {"category": "<类目key>", "note": "<≤30字中文点评>"}，失败返回 None。
-
-    Agnes chat completions（URL/headers/payload 形状对齐 build_daily_insight 的 _LLM 惯例，
-    不 import 该文件）。单次尝试不重试不阻塞（构建侧熔断兜底由后续任务接入）：
-    - key 池先建后判空，池空直接 None、一个请求都不发；
-    - 429 换池内下一个 key（单轮轮转，全限流则 None）；
-    - 401/403 key 无效：换 key 无意义，立即停；
-    - payload 带 enable_thinking:false，要求模型只回 JSON，解析失败返回 None。"""
-    pool = _agnes_key_pool()
-    if not pool:
-        return None
-    valid_keys = {c["key"] for c in (cats or [])}
-    cats_desc = "；".join("%s=%s" % (c["key"], c["label"]) for c in (cats or []))
-    payload = {
-        "model": _LLM_MODEL,
-        "messages": [
-            {"role": "system", "content": (
-                "你是 GitHub 仓库分类器。根据仓库信息从给定类目中选一个最合适的类目key，"
-                "并用不超过%d字的中文给一句点评。只输出一个 JSON 对象，"
-                '格式：{"category": "<类目key>", "note": "<点评>"}，'
-                "禁止解释、禁止 markdown 代码块。可选类目key：%s\n%s"
-                % (_NOTE_MAX_CHARS, cats_desc, _CAT_CRITERIA))},
-            {"role": "user", "content": (
-                "仓库名：%s\n简介：%s\n主语言：%s\nTopics：%s"
-                % (fn, desc or "（无）", lang or "（未知）", "、".join(topics or []) or "（无）"))},
-        ],
-        "temperature": 0.2,
-        "max_tokens": 200,
-        "chat_template_kwargs": {"enable_thinking": False},
-    }
-    data = json.dumps(payload).encode("utf-8")
-    for key in pool:
-        req = urllib.request.Request(
-            _LLM_API_URL, data=data,
-            headers={"Content-Type": "application/json", "Authorization": "Bearer %s" % key},
-            method="POST")
-        try:
-            with urllib.request.urlopen(req, timeout=_LLM_TIMEOUT_SEC) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-            content = body["choices"][0]["message"]["content"] or ""
-        except urllib.error.HTTPError as exc:
-            if exc.code == 429:
-                continue  # 限流：换下一个 key（单轮，不等待）
-            if exc.code in (401, 403):
-                return None  # key 无效：直接停
-            print("[classify_llm] HTTP %s" % exc.code, file=sys.stderr)
-            return None
-        except Exception as e:  # noqa: BLE001
-            print("[classify_llm] 请求失败: %s" % e, file=sys.stderr)
-            return None
-        parsed = _parse_llm_json(content)
-        if parsed is None:
-            print("[classify_llm] 回复解析失败: %s" % (content[:80],), file=sys.stderr)
-            return None
-        cat = str(parsed.get("category") or "").strip()
-        if not cat or (valid_keys and cat not in valid_keys):
-            return None  # 类目 key 必须落在给定类目内，否则交给规则兜底
-        note = str(parsed.get("note") or "").strip()[:_NOTE_MAX_CHARS]
-        return {"category": cat, "note": note}
-    return None  # 池内所有 key 都被限流
-
-
-# LLM 分类熔断：连续失败暂停（与翻译熔断同款形状）——LLM 侧故障不得拖垮构建
-_LLM_FAIL_STREAK = 0
-_LLM_BLOCK_UNTIL = 0.0
-_LLM_FAIL_LIMIT = 3
-_LLM_COOLDOWN = 300
-
-
-def _llm_available():
-    """熔断窗口内返回 False（跳过 LLM 直走规则）。"""
-    return time.time() >= _LLM_BLOCK_UNTIL
-
-
-def _llm_record(ok):
-    """记录一次 LLM 分类成败；连续失败达限触发暂停，成功即清零。"""
-    global _LLM_FAIL_STREAK, _LLM_BLOCK_UNTIL
-    if ok:
-        _LLM_FAIL_STREAK = 0
-        return
-    _LLM_FAIL_STREAK += 1
-    if _LLM_FAIL_STREAK >= _LLM_FAIL_LIMIT:
-        _LLM_BLOCK_UNTIL = time.time() + _LLM_COOLDOWN
-        print("[LLM熔断] 连续 %d 次分类失败，暂停 LLM 分类 %d 分钟（期间走规则兜底）"
-              % (_LLM_FAIL_STREAK, _LLM_COOLDOWN // 60), file=sys.stderr)
-
-
-def classify_repo(fn, desc, lang, topics, known):
-    """统一分类入口（重分类工具与快车道复用）：查表 → LLM → 规则 → 默认 ("tools", "")。
-
-    - 查表命中直接返回（known_categories.json 的存量映射保持稳定，不烧 LLM）；
-    - LLM 结果采信条件：返回 dict 且 category 落在 CATS 内；
-    - 规则兜底用 classify_new，其 "agent" 返回仅代表"规则未命中"，这里按 SPEC T1
-      收口为默认 tools（agent 只能由查表/LLM 给出）；
-    - 任何异常不向上抛：单个仓库的分类失败绝不拖垮构建。"""
-    try:
-        cat = (known or {}).get(fn)
-        if cat:
-            return (cat, "")
-        if not FAST and _llm_available():
-            llm = classify_llm(fn, desc, lang, topics, CATS)
-            _llm_record(bool(llm and llm.get("category")))
-            if llm and llm.get("category"):
-                return (llm["category"], (llm.get("note") or "")[:_NOTE_MAX_CHARS])
-        cat = classify_new(fn, desc, lang, topics)
-        if cat != "agent":
-            return (cat, "")
-        return ("tools", "")
-    except Exception as e:  # noqa: BLE001
-        print("[classify_repo] %s 分类异常: %s" % (fn, e), file=sys.stderr)
-        return ("tools", "")
 
 
 def health_score(repo):
@@ -379,40 +116,6 @@ def health_score(repo):
     return {"tier": tier, "stale": stale}
 
 
-
-
-def _agnes_generate(system, user, max_tokens=300):
-    """通用 Agnes 生成（单轮 key 池轮转，形状与 classify_llm 一致）；失败返回 None。"""
-    pool = _agnes_key_pool()
-    if not pool:
-        return None
-    payload = {
-        "model": _LLM_MODEL,
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        "temperature": 0.4,
-        "max_tokens": max_tokens,
-        "chat_template_kwargs": {"enable_thinking": False},
-    }
-    data = json.dumps(payload).encode("utf-8")
-    for key in pool:
-        req = urllib.request.Request(
-            _LLM_API_URL, data=data,
-            headers={"Content-Type": "application/json", "Authorization": "Bearer %s" % key},
-            method="POST")
-        try:
-            with urllib.request.urlopen(req, timeout=_LLM_TIMEOUT_SEC) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-            content = body["choices"][0]["message"]["content"] or ""
-            return content.strip() or None
-        except urllib.error.HTTPError as exc:
-            if exc.code == 429:
-                continue
-            print("[agnes_generate] HTTP %s" % exc.code, file=sys.stderr)
-            return None
-        except Exception as e:  # noqa: BLE001
-            print("[agnes_generate] 请求失败: %s" % e, file=sys.stderr)
-            return None
-    return None
 
 
 _GUIDES_CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "category_guides.json")

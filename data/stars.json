@@ -1,6 +1,6 @@
 {
  "schema_version": 2,
- "generated_at": "2026-10-23T01:42:13.077020Z",
+ "generated_at": "2026-10-23T01:45:14.217573Z",
  "items": [
   {
    "id": "bestnite/skills",
@@ -251,7 +251,7 @@
    "html_url": "https://github.com/Ebony-Vinyl/dsh-our-free-model",
    "description": "在 dsh 里装上这个插件即可，无需登录、注册或填 API Key，就能使用包括 DeepSeek V4.1 Flash、Kimi K3 在内的前沿模型——完全免费，不限量。 All you do is install this plugin in dsh: no login, no sign-up, no API key — the frontier models are just there, DeepSeek V4.1 Flash and Kimi K3 among them. Completely free, with no usage cap.",
    "language": "JavaScript",
-   "stars": 36870,
+   "stars": 36877,
    "forks": 1059,
    "license": "MIT",
    "topics": [
@@ -353,7 +353,7 @@
    "html_url": "https://github.com/ComposioHQ/awesome-claude-skills",
    "description": "用于自定义Claude AI工作流程的精选Claude技能、资源和工具列表",
    "language": "Python",
-   "stars": 77696,
+   "stars": 77698,
    "forks": 9280,
    "license": "",
    "topics": [
@@ -392,8 +392,8 @@
    "html_url": "https://github.com/yetone/magpie",
    "description": "每个代理的模型。一处。来自菜单栏的 DeepSeek 上的 Codex、Kimi 上的 Claude Code。",
    "language": "Go",
-   "stars": 19560,
-   "forks": 1481,
+   "stars": 19563,
+   "forks": 1483,
    "license": "MIT",
    "topics": [
     "claude-code",
@@ -420,8 +420,8 @@
    "html_url": "https://github.com/morluto/rea",
    "description": "使用代理对任何内容进行逆向工程，从应用程序行为到本机二进制文件。",
    "language": "TypeScript",
-   "stars": 366506,
-   "forks": 91832,
+   "stars": 366521,
+   "forks": 91836,
    "license": "MIT",
    "topics": [
     "agent-skills",
@@ -1475,7 +1475,7 @@
    "html_url": "https://github.com/anywhere-labs/dsh-desktop",
    "description": "为 DeepSeek Harness (DSH) 插件生态打造的现代化桌面端解决方案。万物皆「插件」，桌面本身也是「插件」。",
    "language": "TypeScript",
-   "stars": 32474,
+   "stars": 32476,
    "forks": 1493,
    "license": "MIT",
    "topics": [
@@ -1526,7 +1526,7 @@
    "html_url": "https://github.com/Vincentwei1021/video-shotcraft",
    "description": "面向 Claude Code / Codex 的 AI 视频技能，用 Remotion 制作电影级产品视频，含 152 个镜头卡片与 209 个动效预览。",
    "language": "TypeScript",
-   "stars": 12999,
+   "stars": 13000,
    "forks": 1185,
    "license": "Apache-2.0",
    "topics": [
@@ -1823,7 +1823,7 @@
    "html_url": "https://github.com/d2l-ai/d2l-zh",
    "description": "《动手学深度学习》：面向中文读者、能运行、可讨论。中英文版被70多个国家的500多所大学用于教学。",
    "language": "Python",
-   "stars": 82036,
+   "stars": 82037,
    "forks": 12447,
    "license": "Apache-2.0",
    "topics": [
@@ -1874,7 +1874,7 @@
    "html_url": "https://github.com/RapidAI/RapidOCR",
    "description": "📄 出色的OCR多种编程语言工具包，基于ONNX Runtime、OpenVINO、MNN、PaddlePaddle、TensorRT和PyTorch。",
    "language": "Python",
-   "stars": 8277,
+   "stars": 8278,
    "forks": 757,
    "license": "Apache-2.0",
    "topics": [
@@ -1961,7 +1961,7 @@
    "html_url": "https://github.com/hiroi-sora/Umi-OCR",
    "description": "OCR software, free and offline. 开源、免费的离线OCR软件。支持截屏/批量导入图片，PDF文档识别，排除水印/页眉页脚，扫描/生成二维码。内置多国语言库。",
    "language": "Python",
-   "stars": 48105,
+   "stars": 48106,
    "forks": 4692,
    "license": "MIT",
    "topics": [
@@ -2012,7 +2012,7 @@
    "description": "一个先接住情绪、再分析关系并给出可执行策略的 Codex 恋爱军师，内置心理、法律、社会、人文、哲学、婚姻家庭与性学知识库，支持多元关系。",
    "language": "Python",
    "stars": 8427,
-   "forks": 856,
+   "forks": 855,
    "license": "MIT",
    "topics": [
     "ai-agent",
@@ -2502,8 +2502,8 @@
    "html_url": "https://github.com/qiye45/wechatDownload",
    "description": "微信公众号文章批量下载工具，支持评论、合集下载，支持保存html/mhtml/md/pdf/docx/csv文件，保存文章内图片、视频、音频文件，支持MCP/Skill调用",
    "language": "HTML",
-   "stars": 9845,
-   "forks": 1106,
+   "stars": 9846,
+   "forks": 1107,
    "license": "",
    "topics": [
     "download",
@@ -2982,8 +2982,8 @@
    "html_url": "https://github.com/anthropics/skills",
    "description": "座席技能的公共存储库",
    "language": "Python",
-   "stars": 183046,
-   "forks": 21678,
+   "stars": 183048,
+   "forks": 21679,
    "license": "",
    "topics": [
     "agent-skills"
@@ -3026,7 +3026,7 @@
    "html_url": "https://github.com/obra/superpowers",
    "description": "面向 AI Agent 的技能框架与软件开发方法论。",
    "language": "Shell",
-   "stars": 303761,
+   "stars": 303762,
    "forks": 27062,
    "license": "MIT",
    "topics": [
@@ -3149,7 +3149,7 @@
    "html_url": "https://github.com/Panniantong/Agent-Reach",
    "description": "让您的人工智能代理看到整个互联网。阅读和搜索Twitter、Reddit、YouTube、GitHub、Bilibili、XiaoHongShu —一个CLI ，无API费用。",
    "language": "Python",
-   "stars": 101036,
+   "stars": 101038,
    "forks": 8907,
    "license": "MIT",
    "topics": [
@@ -3188,7 +3188,7 @@
    "html_url": "https://github.com/shadcn-ui/ui",
    "description": "一组设计精美、易于访问的组件和代码分发平台。可与您最喜爱的框架配合使用。开源。开源代码。",
    "language": "TypeScript",
-   "stars": 126240,
+   "stars": 126242,
    "forks": 13277,
    "license": "MIT",
    "topics": [
@@ -3305,7 +3305,7 @@
    "html_url": "https://github.com/Wei-Shaw/sub2api",
    "description": "Sub2API 一站式开源中转服务，让 Claude、Openai 、Gemini、Grok订阅统一接入，支持拼车共享，更高效分摊成本，原生工具无缝使用。",
    "language": "Go",
-   "stars": 44616,
+   "stars": 44618,
    "forks": 9571,
    "license": "LGPL-3.0",
    "topics": [
@@ -3336,7 +3336,7 @@
    "html_url": "https://github.com/mattpocock/skills",
    "description": "面向实战工程师的技能集，直接来自作者的 .agents 目录。",
    "language": "Shell",
-   "stars": 300916,
+   "stars": 300918,
    "forks": 25289,
    "license": "MIT",
    "topics": [],
@@ -3378,7 +3378,7 @@
    "html_url": "https://github.com/farion1231/cc-switch",
    "description": "Claude Code、Codex、OpenCode、OpenClaw、Grok Build和Hermes Agent的跨平台桌面一体机助手。唯一官方网站： ccswitch.io",
    "language": "Rust",
-   "stars": 147701,
+   "stars": 147703,
    "forks": 9726,
    "license": "MIT",
    "topics": [
@@ -3568,7 +3568,7 @@
    "html_url": "https://github.com/hugohe3/ppt-master",
    "description": "AI 把文档或主题直接生成为原生 PPT，含原生形状、转场动画、图表表格、语音旁白，支持自定义模板。",
    "language": "Python",
-   "stars": 66033,
+   "stars": 66035,
    "forks": 5185,
    "license": "MIT",
    "topics": [
@@ -3621,8 +3621,8 @@
    "html_url": "https://github.com/Jermic/awesome-aiart-pics-prompts",
    "description": "🎨 精选 3000+ Gemini Nano Banana Pro 高质量提示词与生成案例 | 涵盖摄影、设计、艺术、营销等多领域 | 双语支持 | JSON 格式",
    "language": null,
-   "stars": 523,
-   "forks": 45,
+   "stars": 525,
+   "forks": 46,
    "license": "",
    "topics": [
     "ai-art-prompt-engineering",
@@ -3688,7 +3688,7 @@
    "html_url": "https://github.com/multica-ai/multica",
    "description": "将问题分配给Claude Code、Codex、Cursor和另外17个编码代理，如团队成员--开源和自托管。",
    "language": "Go",
-   "stars": 53585,
+   "stars": 53586,
    "forks": 7031,
    "license": "NOASSERTION",
    "topics": [],

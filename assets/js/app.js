@@ -1,5 +1,6 @@
-import { API_BASE, state } from './core/state.js';
+import { API_BASE, DATA, POOL_NAMES, favs, state } from './core/state.js';
 import { $ } from './core/dom.js';
+import { hydrateSearchState, syncSearchUrl } from './core/search-url.js';
 import { escHtml } from './core/format.js';
 import { copyRepoInfo, toast } from './core/ui.js';
 import { getTheme, applyTheme, getView, applyView } from './features/preferences.js';
@@ -20,6 +21,18 @@ function switchSideTab(tab){
   if(feed) feed.classList.toggle('on', tab === 'feed');
   if(ai) ai.classList.toggle('on', tab === 'aihot');
   if(tab === 'aihot') loadAihot();
+}
+
+function setSearchMode(mode, opts = {}){
+  state.searchMode = mode === 'global' ? 'global' : 'local';
+  document.querySelectorAll('#searchMode button').forEach(b => {
+    b.classList.toggle('on', b.dataset.mode === state.searchMode);
+    b.setAttribute('aria-selected', String(b.dataset.mode === state.searchMode));
+  });
+  if(state.searchMode === 'local') closeSearchModal();
+  renderSearchHint();
+  if(!opts.skipRender) renderList();
+  if(!opts.skipUrl) syncSearchUrl();
 }
 
 function bindEvents(){
@@ -51,60 +64,78 @@ function bindEvents(){
       }
     });
   });
-  // 搜索历史（localStorage 最近 8 条，datalist 原生下拉）
+  // 最近查询 + 常用 topic/owner/language，作为原生 datalist 建议
   const HIST_KEY = 'starhub_search_history';
   function loadHistory(){ try{ return JSON.parse(localStorage.getItem(HIST_KEY)||'[]'); }catch(e){ return []; } }
-  function renderHistoryDatalist(){
-    $('#qHistory').innerHTML = loadHistory().map(x=>'<option value="'+escHtml(x)+'">').join('');
+  function topValues(values, limit){
+    const counts = {};
+    values.forEach(v => { if(v) counts[v] = (counts[v]||0)+1; });
+    return Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,limit).map(x=>x[0]);
+  }
+  function rebuildSearchSuggestions(){
+    const history = loadHistory();
+    const topics = topValues(DATA.flatMap(d=>d.topics||[]), 5).map(t=>'topic:'+t);
+    const owners = topValues(DATA.map(d=>d.owner), 4).map(o=>'org:'+o);
+    const languages = topValues(DATA.map(d=>d.language), 4).map(l=>'language:'+l);
+    const suggestions = [...new Set([...history, ...topics, ...owners, ...languages])].slice(0,20);
+    $('#qHistory').innerHTML = suggestions.map(x=>'<option value="'+escHtml(x)+'">').join('');
   }
   function saveHistory(q){
     q = (q||'').trim();
     if(q.length < 2) return;
     const h = [q].concat(loadHistory().filter(x=>x!==q)).slice(0,8);
     try{ localStorage.setItem(HIST_KEY, JSON.stringify(h)); }catch(e){}
-    renderHistoryDatalist();
+    rebuildSearchSuggestions();
   }
-  renderHistoryDatalist();
+  rebuildSearchSuggestions();
 
   let _qTimer = null;
   $('#q').addEventListener('input', e => {
     state.q = e.target.value;
     $('#btnClear').style.display = state.q ? 'block':'none';
-    // 搜索即全局搜索：输入关键词时自动清空其它筛选，避免结果被挡住
-    if(state.q && (state.cat || state.lang || state.star !== 'all')){
-      state.cat = ''; state.lang = ''; state.star = 'all';
-      renderCats(); renderLangSel();
-      document.querySelectorAll('#starSel button').forEach(x=>x.classList.toggle('on', x.dataset.v==='all'));
-    }
     clearTimeout(_qTimer);
     _qTimer = setTimeout(() => {   // 120ms 防抖：条目增长后输入不至于每键全量重渲染
-      renderSearchHint(); renderList();
+      renderSearchHint();
+      if(state.searchMode === 'local') renderList();
       if(state.q.trim()) saveHistory(state.q);
+      syncSearchUrl();
     }, 120);
   });
   $('#q').addEventListener('keydown', e => {
-    if(e.key === 'Enter' && state.q.trim().length >= 2){ e.preventDefault(); openSearchModal(); }
+    if(e.key === 'Enter' && state.q.trim().length >= 2 && state.searchMode === 'global'){
+      e.preventDefault(); openSearchModal();
+    }
   });
-  $('#btnClear').onclick = () => { $('#q').value=''; state.q=''; $('#btnClear').style.display='none'; renderSearchHint(); renderList(); $('#q').focus(); };
-  $('#btnSearchAll').onclick = openSearchModal;
+  $('#btnClear').onclick = () => {
+    $('#q').value=''; state.q=''; state.searchQuery=''; $('#btnClear').style.display='none';
+    renderSearchHint(); renderList(); syncSearchUrl(); $('#q').focus();
+  };
+  $('#btnSearchAll').onclick = () => {
+    if(state.searchMode !== 'global') setSearchMode('global');
+    openSearchModal();
+  };
+  const modeBar = document.getElementById('searchMode');
+  if(modeBar) modeBar.addEventListener('click', e => {
+    const b = e.target.closest('[data-mode]'); if(b) setSearchMode(b.dataset.mode);
+  });
   $('#btnResetAll').onclick = () => {
-    state.q=''; state.cat=''; state.lang=''; state.star='all'; state.updated=''; state.topic='';
+    state.q=''; state.searchQuery=''; state.cat=''; state.lang=''; state.star='all'; state.updated=''; state.topic='';
     $('#q').value=''; $('#btnClear').style.display='none';
     const us = $('#updatedSel'); if(us) us.value='';
     renderSearchHint();
     renderCats(); renderLangSel();
     document.querySelectorAll('#starSel button').forEach(x=>x.classList.toggle('on', x.dataset.v==='all'));
-    renderList();
+    renderList(); syncSearchUrl();
   };
-  $('#langSel').addEventListener('change', e => { state.lang = e.target.value; renderList(); });
-  $('#sortSel').addEventListener('change', e => { state.sort = e.target.value; state.sortTouched = true; renderList(); });
+  $('#langSel').addEventListener('change', e => { state.lang = e.target.value; renderList(); syncSearchUrl(); });
+  $('#sortSel').addEventListener('change', e => { state.sort = e.target.value; state.sortTouched = true; renderList(); syncSearchUrl(); });
   const updatedSel = $('#updatedSel');
-  if(updatedSel) updatedSel.addEventListener('change', e => { state.updated = e.target.value; renderList(); });
+  if(updatedSel) updatedSel.addEventListener('change', e => { state.updated = e.target.value; renderList(); syncSearchUrl(); });
   $('#starSel').addEventListener('click', e => {
     const b = e.target.closest('button'); if(!b) return;
     state.star = b.dataset.v;
     document.querySelectorAll('#starSel button').forEach(x=>x.classList.toggle('on', x===b));
-    renderList();
+    renderList(); syncSearchUrl();
   });
   document.addEventListener('click', e => {
     const el = e.target.closest('[data-act]'); if(!el) return;
@@ -134,6 +165,31 @@ function bindEvents(){
   });
 
   window.addEventListener('resize', updateCatsMask);
+  const resultList = $('#sList');
+  if(resultList){
+    resultList.addEventListener('click', e => {
+      const btn = e.target.closest('[data-sact]'); if(!btn) return;
+      const fullName = btn.dataset.fn;
+      if(btn.dataset.sact === 'copy'){ if(fullName) copyRepoInfo(fullName, btn.dataset.url || ''); return; }
+      if(btn.dataset.sact === 'fav' && fullName){
+        toggleFav(fullName);
+        const pinned = favs.has(fullName), starred = POOL_NAMES.has(fullName);
+        btn.classList.toggle('on', pinned);
+        btn.textContent = pinned ? '★' : '☆';
+        const row = btn.closest('.s-item');
+        let badge = row ? row.querySelector('.s-badge') : null;
+        const label = pinned ? (starred ? '✓ 已 star · 置顶' : '★ 置顶') : (starred ? '✓ 已 star' : '');
+        if(row && !badge && label){
+          badge = document.createElement('span');
+          badge.className = 's-badge';
+          const name = row.querySelector('.s-name');
+          if(name) name.after(badge); else row.querySelector('.s-top')?.prepend(badge);
+        }
+        if(badge){ badge.textContent = label; badge.style.display = label ? '' : 'none'; }
+      }
+    });
+  }
+
   $('#btnExport').onclick = exportJson;
   $('#btnImport').onclick = () => $('#fileInput').click();
   // Vercel Function 中转触发 GitHub Actions（GH_TOKEN 存于 Vercel 环境变量）
@@ -258,11 +314,18 @@ if('IntersectionObserver' in window){
   }, {threshold:.4});
   io.observe($('#stTotal').parentElement.parentElement);
 }else{ state.counted = true; }
+hydrateSearchState();
 applyTheme(getTheme());
 applyView(getView());
 renderLangBar();
 renderCats();
 renderLangSel();
+$('#q').value = state.q;
+$('#btnClear').style.display = state.q ? 'block' : 'none';
+$('#langSel').value = state.lang;
+$('#sortSel').value = state.sort;
+const initialUpdated = $('#updatedSel'); if(initialUpdated) initialUpdated.value = state.updated;
+document.querySelectorAll('#starSel button').forEach(x=>x.classList.toggle('on', x.dataset.v === state.star));
 // 封面图 error 监听必须在 renderList 之前注册，否则首次渲染的图片加载错误会漏掉
 // 加 500ms 延迟确认 + 一次重试，避免 lazy/async 加载的瞬时误判
 document.addEventListener('error', e => {
@@ -284,6 +347,9 @@ refreshTrendingBoard(); // 排行榜走同源数据出口（内联那份只是�
 startFeedPolling(); // 每 30 分钟轮询（页面不可见时暂停）
 switchSideTab(state.sideTab);
 bindEvents();
+setSearchMode(state.searchMode, {skipRender: true, skipUrl: true});
+syncSearchUrl();
+if(state.searchMode === 'global' && state.q.trim().length >= 2) openSearchModal();
 /* back to top */
 (function(){
   var bt=document.getElementById('backTop');

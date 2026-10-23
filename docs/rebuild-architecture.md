@@ -42,6 +42,7 @@
 - 主站脚本已拆为 `assets/js/core`（状态/DOM/查询/UI/格式化）、`assets/js/features`（收藏/搜索/榜单/动态/AI 动态）与 `assets/js/app.js`，全部使用原生 ES Modules；数据通过 `window.__STARHUB_BOOT__` 注入。
 - 生产页面加载 esbuild 打出的单文件 `app.bundle.js`，带构建版本号；源模块仍保持分离，避免模块内部缓存导致旧 JS。
 - 管线已抽出 `sources/github.py`（star/trending/events/readme）、`enrich/embed/translate/llm/classify/summarize/desc`、`build/contracts/attention/trending/stars`、`render/index` 与 `taxonomy`；`fetch_and_build.py` 只剩配置、兜底页和 main 编排（约 319 行）。
+- 搜索体验一致性：显式「收藏内 / 全 GitHub」模式、URL 深链（q/mode/筛选）、全网结果收藏与复制、搜索建议（历史/topic/owner/language）、模式化提示与高亮修复。
 - 下一步：最终打包/线上验收、文档与运维收尾。
 
 ## 1. 为什么要重构（因果链）

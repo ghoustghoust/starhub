@@ -54,6 +54,7 @@ export const state = {
   topic: '',
   sortTouched: false,
   counted: false,
+  searchMode: 'local',
 };
 
 export const siteData = {

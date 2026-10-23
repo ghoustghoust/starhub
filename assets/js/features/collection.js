@@ -3,6 +3,7 @@ import { $, icon } from '../core/dom.js';
 import { escHtml, fmtRelTime, fmtStars } from '../core/format.js';
 import { parseQueryTokens, relevanceScore } from '../core/query.js';
 import { getView } from './preferences.js';
+import { syncSearchUrl } from '../core/search-url.js';
 
 /* Collection rendering, filters and cards. */
 // ---- 语言统计 ----
@@ -36,7 +37,7 @@ export function renderCats(){
   const all = document.createElement('button');
   all.className = 'cat' + (state.cat===''?' on':'');
   all.innerHTML = '<span class="dot"></span>全部 <span class="n">'+DATA.length+'</span>';
-  all.onclick = () => { state.cat=''; renderCats(); renderList(); };
+  all.onclick = () => { state.cat=''; renderCats(); renderList(); syncSearchUrl(); };
   cats.appendChild(all);
   CATS.forEach(c => {
     const n = DATA.filter(d=>d.category===c.key).length;
@@ -46,7 +47,7 @@ export function renderCats(){
     // 类目 AI 导览（构建时生成）：悬停即读，无需点进任何详情页
     if(c.guide) b.title = c.guide;
     b.innerHTML = '<span class="dot" style="background:'+catColor(c.key)+'"></span>'+c.label+' <span class="n">'+n+'</span>';
-    b.onclick = () => { state.cat = state.cat===c.key?'':c.key; renderCats(); renderList(); };
+    b.onclick = () => { state.cat = state.cat===c.key?'':c.key; renderCats(); renderList(); syncSearchUrl(); };
     cats.appendChild(b);
   });
   updateCatsMask();
@@ -66,11 +67,13 @@ export function renderLangSel(){
 }
 
 // ---- 模糊搜索 ----
-export function hl(s){
+export function hl(s, query){
   const t = escHtml(s);
-  if(!state.q) return t;
+  const activeQuery = query === undefined ? state.q : query;
+  if(!activeQuery) return t;
+  if(query === undefined && state.searchMode === 'global') return t;
   // 限定符（stars:>1k 等）不进高亮词表，只高亮普通关键词
-  const tokens = parseQueryTokens(state.q).words
+  const tokens = parseQueryTokens(activeQuery).words
     .map(x => escHtml(x).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
   if(!tokens.length) return t;
   tokens.sort((a,b)=>b.length-a.length);
@@ -92,7 +95,8 @@ export function _withinDays(pushed, days){
   return (Date.now()-t) <= days*864e5;
 }
 export function filterData(){
-  const {filters, words} = parseQueryTokens(state.q);
+  const localQuery = state.searchMode === 'global' ? '' : state.q;
+  const {filters, words} = parseQueryTokens(localQuery);
   let list = DATA.filter(d => {
     // 限定符过滤（stars:/forks:/language:/license:/pushed:/org:/topic:/in:）
     if(filters.starsMin!=null && !(d.stars>=filters.starsMin)) return false;

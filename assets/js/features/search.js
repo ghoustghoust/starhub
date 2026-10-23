@@ -3,6 +3,7 @@ import { $, icon } from '../core/dom.js';
 import { escHtml, fmtRelTime, fmtStars } from '../core/format.js';
 import { toast } from '../core/ui.js';
 import { filterData, hl } from './collection.js';
+import { syncSearchUrl } from '../core/search-url.js';
 
 const SEARCH_API = API_BASE + '/api/search';
 
@@ -15,35 +16,69 @@ let sEditing = false;
 let searchHasMore = false;
 let searchLoading = false;
 let searchLoaded = 0;
+let lastFocused = null;
+
+const searchModalEl = document.getElementById('searchModal');
+if(searchModalEl){
+  searchModalEl.addEventListener('keydown', e => {
+    if(e.key === 'Escape'){ closeSearchModal(); return; }
+    if(e.key !== 'Tab') return;
+    const focusable = [...searchModalEl.querySelectorAll('a[href],button:not([disabled]),input,select,[tabindex]:not([tabindex="-1"])')]
+      .filter(el => el.offsetParent !== null);
+    if(!focusable.length) return;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if(e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+    else if(!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+  });
+}
 
 export function renderSearchHint(){
   const btn = $('#btnSearchAll'), hint = $('#searchHint');
   const q = state.q.trim();
+  const isGlobal = state.searchMode === 'global';
   btn.classList.toggle('hidden', q.length < 2);
-  if(q.length < 2){ hint.innerHTML = ''; return; }
+  btn.textContent = isGlobal ? '搜索 GitHub' : '去 GitHub 搜';
+  btn.title = isGlobal ? '在整个 GitHub 中搜索（跨语言）' : '切到全 GitHub 搜索';
+  if(q.length < 2){
+    hint.innerHTML = isGlobal ? '输入至少 2 个字符后按 Enter 搜索整个 GitHub' : '在收藏中筛选；切到全 GitHub 可搜索整个站点';
+    return;
+  }
+  if(isGlobal){
+    hint.innerHTML = '按 Enter 或点击按钮，在 GitHub 全站搜索 <span class="n">' + escHtml(q) + '</span>';
+    return;
+  }
   const { faved, rest } = filterData();
-  hint.innerHTML = '收藏池匹配 <span class="n">' + (faved.length + rest.length) + '</span> 个 · 按 Enter 或点击按钮可搜索整个 GitHub（跨语言）';
+  hint.innerHTML = '收藏池匹配 <span class="n">' + (faved.length + rest.length) + '</span> 个 · 点「去 GitHub 搜」扩展';
 }
 
 
 export function openSearchModal(){
   state.searchQuery = state.q.trim();
   if(state.searchQuery.length < 2){ toast('请输入至少 2 个字符'); return; }
+  lastFocused = document.activeElement;
   $('#sTitleQ').textContent = state.searchQuery;
   const lang = $('#sLang');
   if(lang.options.length <= 1){
     lang.innerHTML = '<option value="">全部语言</option>' + SEARCH_LANGS.map(l => '<option value="'+l+'">'+l+'</option>').join('');
   }
+  lang.value = state.searchLang || '';
   document.querySelectorAll('#sTabs .trend-tab').forEach(x => x.classList.toggle('on', x.dataset.sort === state.searchSort));
   $('#searchModal').classList.add('open');
   // 立即显示原词，避免加载期间查询词框空白（翻译完成后再覆盖为真实查询词）
   $('#sQuery').textContent = state.searchQuery;
+  setTimeout(() => {
+    const close = $('#searchModal .close');
+    if(close) close.focus();
+  }, 0);
+  syncSearchUrl();
   runSearch('new');
 }
 
 export function closeSearchModal(){
   $('#searchModal').classList.remove('open');
   if(searchAbort){ searchAbort.abort(); searchAbort = null; }
+  if(lastFocused && typeof lastFocused.focus === 'function') lastFocused.focus();
+  lastFocused = null;
 }
 
 export async function runSearch(mode){
@@ -70,6 +105,7 @@ export async function runSearch(mode){
     if(r.ok){
       state.searchPage = page;
       renderSearchResults(j, mode === 'more');
+      syncSearchUrl();
     } else if(mode === 'more'){
       searchMoreFail();
     } else if(r.status === 503){
@@ -126,16 +162,23 @@ export function renderSearchResults(j, append){
   j.items.forEach(x => {
     const row = document.createElement('div');
     row.className = 's-item';
-    // 「或」而不是替换：池内 = 已 star 过（换浏览器也不丢）；favs = 在本页点过心（置顶语义，保留）。
-    const faved = favs.has(x.full_name) || POOL_NAMES.has(x.full_name);
+    const starred = POOL_NAMES.has(x.full_name);
+    const pinned = favs.has(x.full_name);
+    const badge = pinned ? (starred ? '✓ 已 star · 置顶' : '★ 置顶') : (starred ? '✓ 已 star' : '');
+    const fullName = escHtml(x.full_name || '');
+    const url = escHtml(x.html_url || '#');
     const topics = (x.topics || []).map(t => '<span class="s-tag">' + escHtml(t) + '</span>').join('');
     row.innerHTML =
       '<div class="s-top">' +
-        '<a class="s-name" href="' + escHtml(x.html_url || '#') + '" target="_blank" rel="noopener">' + hl(x.full_name || '') + '</a>' +
-        (faved ? '<span class="s-badge">✓ 已收藏</span>' : '') +
-        '<a class="s-open" href="' + escHtml(x.html_url || '#') + '" target="_blank" rel="noopener">' + icon.link + '打开</a>' +
+        '<a class="s-name" href="' + url + '" target="_blank" rel="noopener">' + hl(x.full_name || '', state.searchQuery) + '</a>' +
+        (badge ? '<span class="s-badge">' + badge + '</span>' : '') +
+        '<div class="s-actions">' +
+          '<button class="s-act' + (pinned ? ' on' : '') + '" data-sact="fav" data-fn="' + fullName + '" title="收藏置顶">' + (pinned ? '★' : '☆') + '</button>' +
+          '<button class="s-act" data-sact="copy" data-fn="' + fullName + '" data-url="' + url + '">复制</button>' +
+          '<a class="s-open" href="' + url + '" target="_blank" rel="noopener">' + icon.link + '打开</a>' +
+        '</div>' +
       '</div>' +
-      (x.desc ? '<div class="s-desc">' + hl(x.desc) + '</div>' : '') +
+      (x.desc ? '<div class="s-desc">' + hl(x.desc, state.searchQuery) + '</div>' : '') +
       '<div class="s-meta">' +
         (x.language ? '<span class="lg"><span class="c" style="background:' + (LANG_COLORS[x.language] || '#8b949e') + '"></span>' + escHtml(x.language) + '</span>' : '') +
         '<span>★ ' + fmtStars(x.stars || 0) + '</span>' +
@@ -170,7 +213,16 @@ export function editSearchQuery(){
     sEditing = false;
     const v = inp.value.trim();
     box.textContent = v || cur;
-    if(v && v !== cur){ state.searchQuery = v; runSearch('new'); }
+    if(v && v !== cur){
+      state.searchQuery = v;
+      state.q = v;
+      const heroInput = $('#q');
+      if(heroInput){ heroInput.value = v; $('#btnClear').style.display = 'block'; }
+      $('#sTitleQ').textContent = v;
+      renderSearchHint();
+      syncSearchUrl();
+      runSearch('new');
+    }
   };
   inp.addEventListener('keydown', e => {
     if(e.key === 'Enter'){ e.preventDefault(); done(); }

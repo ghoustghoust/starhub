@@ -80,9 +80,13 @@
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         </div>
         <div class="sh-t">
-          <h2>全网仓库搜索</h2>
-          <p>跨语言搜索整个 GitHub · 输入 <b>2 个字符</b> 即可搜全网</p>
+          <h2>搜索仓库</h2>
+          <p>收藏内检索，或切到全 GitHub 搜索整个站点</p>
         </div>
+      </div>
+      <div class="search-mode" id="searchMode" role="tablist" aria-label="搜索范围">
+        <button type="button" data-mode="local" class="on" role="tab" aria-selected="true">收藏内</button>
+        <button type="button" data-mode="global" role="tab" aria-selected="false">全 GitHub</button>
       </div>
       <div class="sh-row">
         <div class="search">
@@ -91,7 +95,7 @@
           <button class="clear" id="btnClear" aria-label="清空">×</button>
           <datalist id="qHistory"></datalist>
         </div>
-        <button class="btn primary hidden" id="btnSearchAll" title="在整个 GitHub 中搜索（跨语言）">搜全网</button>
+        <button class="btn primary hidden" id="btnSearchAll" title="切到全 GitHub 搜索">去 GitHub 搜</button>
         <div id="searchHint"></div>
       </div>
     </div>

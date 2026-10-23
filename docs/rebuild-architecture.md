@@ -36,7 +36,9 @@
 - Phase 4 起步：`config/site.json`、`pipeline/starhub_pipeline`（配置/状态/CLI）、`data/schema` 已落地；构建已导出 `data/stars.json`、`data/categories.json`、`data/trending.json`、`data/build-status.json`，`validate` 已接入工作流。
 - 主站 CSS 已抽到 `assets/css/main.css`，主站脚本已抽到 `assets/js/main.js`，Pages 走外部资源；本地与线上首屏截图对比一致。
 - GitHub star 采集已抽到 `pipeline/starhub_pipeline/sources/github.py`，账号与 Pages 地址由 `config/site.json` 提供，不再硬编码。
-- 下一步：继续拆分搜索/筛选/榜单等功能模块，并迁移 AI 晨报与自有 Vercel API。
+- 自有 Vercel API 已上线 `https://starhub-drab.vercel.app`：search/events/news/refresh 已验证；CORS 使用 `Vary: Origin` + `Cache-Control: no-store`；前端 `API_BASE` 构建期注入；静态资源带构建版本号避免 Pages 缓存旧 JS。
+- 新增 `deploy-api.yml`：API 文件变更时自动部署到 Vercel；Pages 仍由 `update.yml` 发布。
+- 下一步：继续拆分搜索/筛选/榜单等功能模块，并迁移 AI 晨报。
 
 ## 1. 为什么要重构（因果链）
 

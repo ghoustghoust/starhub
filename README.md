@@ -15,6 +15,7 @@
 - `known_categories.json` — 已知项目分类映射（保持分类稳定，随运行自动增长）
 - `docs/rebuild-architecture.md` — 重构架构与迁移计划
 - `.github/workflows/update.yml` — 每日构建、Pages 发布与数据回写
+- `.github/workflows/deploy-api.yml` — API 变更时自动部署到 Vercel
 
 `index.html` 与 `ai-daily.html` 是构建产物，由 Actions artifact 发布，不提交进 git。
 

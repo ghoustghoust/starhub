@@ -36,7 +36,7 @@
 - Phase 4 起步：`config/site.json`、`pipeline/starhub_pipeline`（配置/状态/CLI）、`data/schema` 已落地；构建已导出 `data/stars.json`、`data/categories.json`、`data/trending.json`、`data/build-status.json`，`validate` 已接入工作流。
 - 主站 CSS 已抽到 `assets/css/main.css`，主站脚本已抽到 `assets/js/main.js`，Pages 走外部资源；本地与线上首屏截图对比一致。
 - GitHub star 采集已抽到 `pipeline/starhub_pipeline/sources/github.py`，账号与 Pages 地址由 `config/site.json` 提供，不再硬编码。
-- 自有 Vercel API 已上线 `https://starhub-drab.vercel.app`：search/events/news/refresh 已验证；CORS 使用 `Vary: Origin` + `Cache-Control: no-store`；前端 `API_BASE` 构建期注入；静态资源带构建版本号避免 Pages 缓存旧 JS。
+- 自有 Vercel API 已上线，生产入口为 `https://starhub.ghoustlab.com`（Vercel 自定义域，静态路径 rewrite 到 Pages）：search/events/news/refresh 已验证；CORS 使用 `Vary: Origin` + `Cache-Control: no-store`，并按 Host 放行同源请求；前端 `API_BASE` 构建期注入；静态资源带构建版本号避免 Pages 缓存旧 JS。
 - 新增 `deploy-api.yml`：API 文件变更时自动部署到 Vercel；Pages 仍由 `update.yml` 发布。
 - AI 晨报的内联 CSS/JS 已外置到 `assets/css/ai-daily.css` 与 `assets/js/ai-daily.js`，并带构建版本号；计算样式与旧版一致。
 - 主站脚本已拆为 `assets/js/core`（状态/DOM/查询/UI/格式化）、`assets/js/features`（收藏/搜索/榜单/动态/AI 动态）与 `assets/js/app.js`，全部使用原生 ES Modules；数据通过 `window.__STARHUB_BOOT__` 注入。

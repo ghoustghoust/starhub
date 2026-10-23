@@ -35,4 +35,4 @@ python fetch_and_build.py
 
 ## 自定义域名
 
-在仓库 Settings → Pages 里设置自定义域名，并在 DNS 添加一条 CNAME 记录指向 `ghoustghoust.github.io`，再把域名填入 Pages 的 Custom domain 即可。
+生产入口是 Vercel 自定义域 `https://starhub.ghoustlab.com`：DNS 添加 CNAME 指向 `cname.vercel-dns.com`，在 Vercel 项目中绑定域名；`vercel.json` 将非 `/api/` 请求 rewrite 到 GitHub Pages，静态站与 API 因此同域。Pages 原地址仍可访问，跨域调用由 API 的 Origin 白名单放行。

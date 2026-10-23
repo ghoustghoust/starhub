@@ -6,6 +6,9 @@
     "api/news.js": { "maxDuration": 30 },
     "api/refresh.js": { "maxDuration": 10 }
   },
+  "rewrites": [
+    { "source": "/((?!api/).*)", "destination": "https://ghoustghoust.github.io/starhub/$1" }
+  ],
   "routes": [
     { "src": "/api/[^/]+\\.js", "status": 404 }
   ]

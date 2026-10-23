@@ -6,15 +6,27 @@
 
 ## 仓库结构
 
-- `index.html` — 工作台页面（脚本自动生成，Pages 入口）
-- `template.html` — 页面模板（数据用占位符）
-- `fetch_and_build.py` — 自动更新脚本：拉取 star → 分类 → 生成 index.html
+- `template.html` — 主站模板（数据用占位符）
+- `fetch_and_build.py` — 构建入口：拉取 star → 分类 → 生成主站与 AI 晨报
+- `build_ai_daily.py` — AI 晨报生成器
 - `known_categories.json` — 已知项目分类映射（保持分类稳定，随运行自动增长）
-- `.github/workflows/update.yml` — 每天定时运行的 GitHub Actions
+- `docs/rebuild-architecture.md` — 重构架构与迁移计划
+- `.github/workflows/update.yml` — 每日构建、Pages 发布与数据回写
+
+`index.html` 与 `ai-daily.html` 是构建产物，由 Actions artifact 发布，不提交进 git。
 
 ## 自动更新
 
-每天北京时间 09:00（UTC 01:00）自动运行，拉取最新 star 列表、智能分类、重新生成页面并提交，Pages 自动重新部署。也可在 Actions 页手动触发。
+每天北京时间 09:00（UTC 01:00）自动运行，拉取最新 star 列表、生成主站与 AI 晨报，通过 Actions artifact 发布到 GitHub Pages，并把分类/描述/榜单/晨报数据提交回仓库。也可在 Actions 页手动触发。
+
+## 本地构建
+
+```bash
+cp .env.example .env   # 填入 GH_TOKEN / GITHUB_TOKEN
+python fetch_and_build.py
+```
+
+构建产物为 `index.html` 与 `ai-daily.html`。CI 当前使用 `STARHUB_FAST=1` 跳过免费翻译端点的长重试；带缓存的增强管线在重构中恢复。
 
 ## 自定义域名
 

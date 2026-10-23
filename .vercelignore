@@ -1,3 +1,7 @@
+# ── 本地凭据（绝不进入部署包）──
+.env
+.env.*
+
 # ── 构建产物（GitHub Actions 生成，不进 Vercel）──
 rss_history.json
 rss_cache.json

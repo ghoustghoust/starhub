@@ -1,5 +1,13 @@
 __pycache__/
 *.pyc
+# 本地凭据（绝不提交）
+.env
+.env.*
+!.env.example
+
+# 构建产物：由 Actions artifact 发布，不提交
+/index.html
+/ai-daily.html
 .vercel/*
 !.vercel/project.json
 .vercel-tmp/

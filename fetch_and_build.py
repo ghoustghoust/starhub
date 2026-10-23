@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 GitHub Star 收藏台 —— 自动更新脚本
-在 GitHub Actions 中每天运行：拉取 Kwei168 的 star 列表 → 智能分类 → 重新生成 index.html。
+在 GitHub Actions 中每天运行：拉取 ghoustghoust 的 star 列表 → 智能分类 → 重新生成 index.html。
 仅依赖 Python 标准库，无需安装第三方包。
 """
 import hashlib
@@ -16,7 +16,17 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timedelta, timezone
 
-USER = "Kwei168"
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
+
+# Fast path for CI while the refactored pipeline is being built: skip
+# translation/LLM/embedding enrichment instead of waiting on free endpoints.
+FAST = os.environ.get("STARHUB_FAST") == "1"
+
+USER = "ghoustghoust"
 
 CATS = [
     {"key": "agent",     "label": "AI Agent & Skills",      "color": "#0550ae", "dark": "#4493f8"},
@@ -41,7 +51,7 @@ LANG_COLORS = {
     "CSS": "#563d7c", "C#": "#178600", "C++": "#f34b7d",
 }
 
-DEFAULT_FAVS = ["react/react", "github/spec-kit", "521xueweihan/HelloGitHub"]
+DEFAULT_FAVS = []
 
 # 已知的空描述项目，补充一句中文说明
 FALLBACK_DESC = {
@@ -64,6 +74,8 @@ def translate_to_zh(text):
     """把英文简介翻译成中文；全部端点失败返回 None（保留原文）。
     熔断保护：连续多次全端点失败后暂停请求，期间直接返回 None（调用方保留原文）。"""
     global _TRANS_FAIL_STREAK, _TRANS_BLOCK_UNTIL
+    if FAST:
+        return None
     if time.time() < _TRANS_BLOCK_UNTIL:
         return None
     if not text:
@@ -313,7 +325,7 @@ def classify_repo(fn, desc, lang, topics, known):
         cat = (known or {}).get(fn)
         if cat:
             return (cat, "")
-        if _llm_available():
+        if not FAST and _llm_available():
             llm = classify_llm(fn, desc, lang, topics, CATS)
             _llm_record(bool(llm and llm.get("category")))
             if llm and llm.get("category"):
@@ -396,6 +408,8 @@ def quantize_normalized(vec):
 def embed_star_entries(entries, batch=64):
     """对条目数组分批补 emb 键（int8 归一化向量，供前端语义搜索）。
     embedding 任一环节失败保持原数组不变（键缺省 = 前端退化纯关键词）。"""
+    if FAST:
+        return entries
     try:
         texts = [(e.get("desc") or e.get("full_name") or "")[:512] for e in entries]
         vecs = [None] * len(entries)
@@ -454,6 +468,8 @@ def build_category_guides(cats, known, cache_path=None):
     """类目 AI 导览：每个类目按成员清单生成 2-3 句选型导览。
     成员清单 md5 未变的类目直接吃 category_guides.json 缓存（13 次调用只在类目内容变化时发生）。
     LLM 失败的类目跳过（guide 缺省，前端静默不渲染）；永不抛出、永不阻塞构建。"""
+    if FAST:
+        return {}
     cache_path = cache_path or _GUIDES_CACHE_PATH
     cache = {}
     try:
@@ -546,7 +562,7 @@ BUILD_CONFIG_FILE = "build_config.json"
 # 限流场的首页兜底源：Pages 域（静态托管，不吃 GitHub API 的限流），实测首页 292 KB 左右，
 # 所以小于 40 KB 的一律不当"上一版首页"用 —— 把错误页/半截页当首页发出去，比缺件更糟：
 # 缺件至少会让 Stage 判失败并红，错误页却会被当成一次成功发布。
-PAGES_INDEX_URL = "https://kwei168.github.io/starhub/index.html"
+PAGES_INDEX_URL = "https://ghoustghoust.github.io/starhub/index.html"
 MIN_REAL_PAGE_BYTES = 40000
 PLACEHOLDER_INDEX = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
@@ -555,8 +571,7 @@ PLACEHOLDER_INDEX = """<!DOCTYPE html>
 <body style="font-family:system-ui,sans-serif;max-width:38em;margin:6rem auto;padding:0 1.2em;line-height:1.7">
 <h1 style="font-size:1.15rem">星标数据暂缺</h1>
 <p>本场构建拉取 GitHub 星标失败（多半是 API 限流），收藏列表沿用不到，因此这一页暂时没有内容。</p>
-<p>其余栏目不受影响：<a href="ai-daily.html">AI 晨报</a> ·
-<a href="rss-aggregator.html">RSS 收藏</a> · <a href="daily-insight-history.html">洞察历史</a>。</p>
+<p>其余栏目不受影响：<a href="ai-daily.html">AI 晨报</a>。</p>
 </body></html>
 """
 
@@ -922,6 +937,8 @@ def build_trending(token, desc_zh):
 
 def generate_ai_summary(rising_top10):
     """调用 Agnes AI API 生成 AI 态势一句话摘要。失败返回 None（静默降级）。"""
+    if FAST:
+        return None
     # 多 key 轮询：AGNES_API_KEY（主，可逗号分隔）+ AGNES_API_KEYS（逗号分隔附加）
     # 必须先建池再判空：否则主 key 缺失/全逗号时会漏掉附加 key 或无任何输出地返回
     keys = [k.strip() for k in os.environ.get("AGNES_API_KEY", "").split(",") if k.strip()]
@@ -1309,7 +1326,7 @@ def assemble_entries(repos, known, desc_zh, cat_label, token, notes=None):
         known[fn] = cat
         desc = (desc_zh.get(fn) or r.get("description") or FALLBACK_DESC.get(fn, "")).strip()
         # 无简介项目：从 README 提取一句简介，结果持久化到 desc_zh 避免重复抓取
-        if not desc and fn not in desc_zh:
+        if not FAST and not desc and fn not in desc_zh:
             summary = fetch_readme_summary(fn, token)
             if summary:
                 if not has_cn(summary):
@@ -1322,7 +1339,7 @@ def assemble_entries(repos, known, desc_zh, cat_label, token, notes=None):
         if desc:
             desc = " ".join(desc.split())
         # 新项目英文简介自动翻译为中文，并持久化到 desc_zh 避免重复翻译
-        if desc and not has_cn(desc) and fn not in desc_zh:
+        if not FAST and desc and not has_cn(desc) and fn not in desc_zh:
             translated = translate_to_zh(desc)
             if translated:
                 desc = translated
@@ -1463,26 +1480,6 @@ def main(mode="full"):
         build_ai_daily.main()
     except Exception as e:
         print("[AI晨报] 生成失败: %s" % e, file=sys.stderr)
-
-    # RSS 聚合页：生成 rss-aggregator.html（独立页面）
-    # 有意取舍（对抗性审查两轮确认）：RSS 失败只打 ::error:: 注解不改变退出码——
-    # stars/index/ai-daily 的提交与部署不应被 RSS 连坐；代价是 job 保持绿色，
-    # 靠红注解与下方 traceback 可见。若改为 sys.exit(1)，主流程数据也会丢失。
-    try:
-        import build_rss_aggregator
-        build_rss_aggregator.main(mode=mode)
-    except Exception:
-        import traceback
-        # ::error:: 注解让它出现在 Actions 摘要里——禁止"绿色成功但 RSS 产物缺失"的假成功
-        print("::error::[RSS聚合] 生成失败:\n%s" % traceback.format_exc(), file=sys.stderr)
-
-    # 每日深度洞察：RAG 管线（在 RSS 聚合之后，依赖 rss_history.json）
-    try:
-        import build_daily_insight
-        build_daily_insight.main()
-    except Exception:
-        import traceback
-        print("::error::[每日洞察] 生成失败:\n%s" % traceback.format_exc(), file=sys.stderr)
 
     print("更新完成：共 %d 个项目" % len(out))
 

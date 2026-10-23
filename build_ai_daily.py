@@ -20,6 +20,12 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
+
 RSS_URL = "https://aihot.virxact.com/feed.xml"  # API 失败时的降级回退
 API_URL = "https://aihot.virxact.com/api/v1/items"  # 公开 API v1，匿名只读
 OUT = "ai-daily.html"
@@ -766,6 +772,8 @@ def _translate_to_zh(text):
 
 def _tr(text):
     """英文文本 → 中文；已含中文或翻译失败时原样返回。相邻请求间隔 0.5s 防限流。"""
+    if os.environ.get("STARHUB_FAST") == "1":
+        return text
     if not text or _has_cn(text):
         _TRANS_STATS["skip"] += 1
         return text

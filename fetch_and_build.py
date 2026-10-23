@@ -1291,12 +1291,14 @@ def build_index_html(repos, cats, trending=None, feed=None, updated=None, ai_sum
         template = fh.read()
     if updated is None:
         updated = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
+    asset_version = re.sub(r"\D", "", updated) or datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     return (template
             .replace("__DATA__", _safe_json(repos))
             .replace("__CATS__", _safe_json(cats))
             .replace("__LANGS__", _safe_json(LANG_COLORS))
             .replace("__FAVS__", _safe_json(DEFAULT_FAVS))
             .replace("__API_BASE__", site_value("api_base", ""))
+            .replace("__ASSET_VERSION__", asset_version)
             .replace("__TRENDING__", _safe_json(trending or {}))
             .replace("__FEED__", _safe_json(feed or []))
             .replace("__ATTENTION__", attention_html)

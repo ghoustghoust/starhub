@@ -4,6 +4,7 @@
 
 只用于本地预览模板/样式改动；不参与 GitHub Actions 构建。
 """
+import datetime
 import json
 import re
 import sys
@@ -72,6 +73,7 @@ def main():
     template = template.replace("__AI_SUMMARY__", "").replace("__ATTENTION__", "")
     api_base = json.load(open("config/site.json", encoding="utf-8")).get("site", {}).get("api_base", "")
     template = template.replace("__API_BASE__", api_base)
+    template = template.replace("__ASSET_VERSION__", datetime.datetime.now().strftime("dev%Y%m%d%H%M%S"))
 
     open(SRC, "w", encoding="utf-8").write(template)
     print("渲染完成：index.html 已由 template.html 重新生成")

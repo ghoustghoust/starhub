@@ -48,6 +48,7 @@ jobs:
           test -s index.html
           test -s ai-daily.html
           test -s assets/css/main.css
+          test -s assets/js/main.js
           ! grep -q 'rss-aggregator' index.html
           ! grep -q 'daily-insight' ai-daily.html
 

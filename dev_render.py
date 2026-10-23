@@ -67,6 +67,10 @@ def main():
             raise SystemExit("template.html 中缺少占位符 %s" % placeholder)
         template = template.replace(placeholder, raw)
 
+    # Preview-only blocks are produced by fetch_and_build; keep the local
+    # renderer from leaking raw placeholders into the page.
+    template = template.replace("__AI_SUMMARY__", "").replace("__ATTENTION__", "")
+
     open(SRC, "w", encoding="utf-8").write(template)
     print("渲染完成：index.html 已由 template.html 重新生成")
 

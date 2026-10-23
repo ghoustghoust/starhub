@@ -38,7 +38,9 @@
 - GitHub star 采集已抽到 `pipeline/starhub_pipeline/sources/github.py`，账号与 Pages 地址由 `config/site.json` 提供，不再硬编码。
 - 自有 Vercel API 已上线 `https://starhub-drab.vercel.app`：search/events/news/refresh 已验证；CORS 使用 `Vary: Origin` + `Cache-Control: no-store`；前端 `API_BASE` 构建期注入；静态资源带构建版本号避免 Pages 缓存旧 JS。
 - 新增 `deploy-api.yml`：API 文件变更时自动部署到 Vercel；Pages 仍由 `update.yml` 发布。
-- 下一步：继续拆分搜索/筛选/榜单等功能模块，并迁移 AI 晨报。
+- AI 晨报的内联 CSS/JS 已外置到 `assets/css/ai-daily.css` 与 `assets/js/ai-daily.js`，并带构建版本号；计算样式与旧版一致。
+- 主站脚本已拆为 `assets/js/core`（状态/DOM/查询/UI）、`assets/js/features`（收藏/搜索/榜单/动态/AI 动态）与 `assets/js/app.js`；共享数据仍走 boot 全局，后续可再包成 ESM。
+- 下一步：最终功能/视觉验收、补齐自动化测试与文档。
 
 ## 1. 为什么要重构（因果链）
 

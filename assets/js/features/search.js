@@ -1,0 +1,184 @@
+/* Global GitHub search modal. */
+// ---- 全网仓库搜索 ----
+const SEARCH_LANGS = ['JavaScript','TypeScript','Python','Go','Rust','Java','C++','C','C#','Swift','Kotlin','Ruby','PHP','Shell','HTML','CSS','Dart','Lua'];
+const SEARCH_PER_PAGE = 30; // 与 api/search.js PER_PAGE 一致，用于判断是否还有下一页
+let searchAbort = null;
+let sEditing = false;
+let searchHasMore = false;
+let searchLoading = false;
+let searchLoaded = 0;
+
+function renderSearchHint(){
+  const btn = $('#btnSearchAll'), hint = $('#searchHint');
+  const q = state.q.trim();
+  btn.classList.toggle('hidden', q.length < 2);
+  if(q.length < 2){ hint.innerHTML = ''; return; }
+  const { faved, rest } = filterData();
+  hint.innerHTML = '收藏池匹配 <span class="n">' + (faved.length + rest.length) + '</span> 个 · 按 Enter 或点击按钮可搜索整个 GitHub（跨语言）';
+}
+
+function fmtRelTime(iso){
+  if(!iso) return '';
+  const t = new Date(iso).getTime();
+  if(isNaN(t)) return '';
+  const d = Date.now() - t;
+  const m = 60*1000, h = 60*m, day = 24*h;
+  if(d < h) return Math.max(1, Math.round(d/m)) + ' 分钟前';
+  if(d < day) return Math.round(d/h) + ' 小时前';
+  if(d < 30*day) return Math.round(d/day) + ' 天前';
+  if(d < 365*day) return Math.round(d/(30*day)) + ' 个月前';
+  return Math.round(d/(365*day)) + ' 年前';
+}
+
+function openSearchModal(){
+  state.searchQuery = state.q.trim();
+  if(state.searchQuery.length < 2){ toast('请输入至少 2 个字符'); return; }
+  $('#sTitleQ').textContent = state.searchQuery;
+  const lang = $('#sLang');
+  if(lang.options.length <= 1){
+    lang.innerHTML = '<option value="">全部语言</option>' + SEARCH_LANGS.map(l => '<option value="'+l+'">'+l+'</option>').join('');
+  }
+  document.querySelectorAll('#sTabs .trend-tab').forEach(x => x.classList.toggle('on', x.dataset.sort === state.searchSort));
+  $('#searchModal').classList.add('open');
+  // 立即显示原词，避免加载期间查询词框空白（翻译完成后再覆盖为真实查询词）
+  $('#sQuery').textContent = state.searchQuery;
+  runSearch('new');
+}
+
+function closeSearchModal(){
+  $('#searchModal').classList.remove('open');
+  if(searchAbort){ searchAbort.abort(); searchAbort = null; }
+}
+
+async function runSearch(mode){
+  if(searchLoading) return; // 防止并发（含滚动触发的加载更多）
+  searchLoading = true;
+  if(searchAbort) searchAbort.abort();
+  const ac = new AbortController(); searchAbort = ac;
+  const page = mode === 'more' ? state.searchPage + 1 : 1;
+  if(mode !== 'more'){
+    state.searchPage = 1;
+    searchLoaded = 0; searchHasMore = false;
+    renderSearchState('loading');
+  } else {
+    $('#sFoot').textContent = '正在加载更多…';
+  }
+  try{
+    const r = await fetch(SEARCH_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Search-Key': SEARCH_KEY },
+      body: JSON.stringify({ q: state.searchQuery, sort: state.searchSort, lang: state.searchLang, page }),
+      signal: ac.signal,
+    });
+    const j = await r.json().catch(() => ({}));
+    if(r.ok){
+      state.searchPage = page;
+      renderSearchResults(j, mode === 'more');
+    } else if(mode === 'more'){
+      searchMoreFail();
+    } else if(r.status === 503){
+      renderSearchState('error', '搜索太频繁，请稍后再试');
+    } else {
+      renderSearchState('error', (j.error || '搜索失败') + '（HTTP ' + r.status + '）');
+    }
+  }catch(e){
+    if(e.name !== 'AbortError'){
+      if(mode === 'more') searchMoreFail();
+      else renderSearchState('error', '网络错误，请检查连接后重试');
+    }
+  }
+  searchLoading = false;
+}
+
+function searchMoreFail(){
+  $('#sFoot').innerHTML = '加载更多失败，<button class="s-retry" id="sMoreRetry">点击重试</button>';
+  const rb = $('#sMoreRetry'); if(rb) rb.onclick = () => runSearch('more');
+}
+
+function renderSearchState(kind, msg){
+  const list = $('#sList'); $('#sFoot').textContent = '';
+  if(kind === 'loading'){
+    list.innerHTML = '<div class="s-loading"><span class="spinner"></span>正在搜索 GitHub 全网…</div>';
+  }else if(kind === 'empty'){
+    list.innerHTML = '<div class="s-state"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span>未找到相关仓库</span><span style="font-size:12px">试试缩短关键词、换英文词，或清除语言过滤</span></div>';
+  }else{
+    list.innerHTML = '<div class="s-state"><svg class="icon" viewBox="0 0 24 24"><path d="M12 9v4"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg><span>' + (msg || '搜索失败，请稍后重试') + '</span><button class="btn" id="sRetry">重试</button></div>';
+    const retry = $('#sRetry'); if(retry) retry.onclick = runSearch;
+  }
+}
+
+function renderSearchResults(j, append){
+  $('#sQuery').textContent = j.query || state.searchQuery;
+  const tip = $('#sTip');
+  if(j.translated === false){
+    tip.classList.remove('hidden');
+    tip.innerHTML = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>翻译服务暂不可用，已按原词搜索，结果可能缺少英文仓库';
+  } else {
+    tip.classList.add('hidden'); tip.innerHTML = '';
+  }
+  const list = $('#sList');
+  if(!append) list.innerHTML = '';
+  if(!j.items || !j.items.length){
+    if(!append){
+      renderSearchState('empty');
+      // total>0 却一条没剩下时，只报「未找到相关仓库」会把人支去换词——得说明是被屏蔽了
+      const fo = j.filtered_out || 0;
+      if(fo) $('#sFoot').textContent = '本页 ' + fo + ' 条结果已屏蔽（低质或不相关），试试换更具体的关键词';
+    }
+    return;
+  }
+  j.items.forEach(x => {
+    const row = document.createElement('div');
+    row.className = 's-item';
+    // 「或」而不是替换：池内 = 已 star 过（换浏览器也不丢）；favs = 在本页点过心（置顶语义，保留）。
+    const faved = favs.has(x.full_name) || POOL_NAMES.has(x.full_name);
+    const topics = (x.topics || []).map(t => '<span class="s-tag">' + escHtml(t) + '</span>').join('');
+    row.innerHTML =
+      '<div class="s-top">' +
+        '<a class="s-name" href="' + escHtml(x.html_url || '#') + '" target="_blank" rel="noopener">' + hl(x.full_name || '') + '</a>' +
+        (faved ? '<span class="s-badge">✓ 已收藏</span>' : '') +
+        '<a class="s-open" href="' + escHtml(x.html_url || '#') + '" target="_blank" rel="noopener">' + icon.link + '打开</a>' +
+      '</div>' +
+      (x.desc ? '<div class="s-desc">' + hl(x.desc) + '</div>' : '') +
+      '<div class="s-meta">' +
+        (x.language ? '<span class="lg"><span class="c" style="background:' + (LANG_COLORS[x.language] || '#8b949e') + '"></span>' + escHtml(x.language) + '</span>' : '') +
+        '<span>★ ' + fmtStars(x.stars || 0) + '</span>' +
+        '<span>' + fmtRelTime(x.updated_at) + ' 更新</span>' +
+        (topics ? '<span class="s-tags">' + topics + '</span>' : '') +
+      '</div>';
+    list.appendChild(row);
+  });
+  // 分页状态：已加载条数 + 是否还有下一页（滚动触发加载更多）
+  searchLoaded += (j.items || []).length;
+  const total = j.total || 0;
+  // 「还有下一页」看服务端原始条数，不能看过滤后的 items.length —— 后者一屏蔽就误判到底。
+  // 旧部署/旧缓存没这个字段时回退成 items.length，保持与改动前同形。
+  const rawCount = (typeof j.raw_count === 'number') ? j.raw_count : (j.items || []).length;
+  searchHasMore = rawCount === SEARCH_PER_PAGE && searchLoaded < Math.min(total, 1000);
+  const spamNote = j.filtered_out ? ' · 已屏蔽 ' + j.filtered_out + ' 条低质或不相关结果' : '';
+  $('#sFoot').textContent = (searchHasMore
+    ? '已显示 ' + searchLoaded + ' / 共 ' + Math.min(total, 1000) + ' 条 · 滚动加载更多'
+    : (total > 1000 ? '已显示前 ' + searchLoaded + ' 条（共 ' + total + ' 个结果，GitHub 最多返回前 1000 条）' : '已显示全部 ' + searchLoaded + ' 条')) + spamNote;
+}
+
+function editSearchQuery(){
+  if(sEditing) return;
+  sEditing = true;
+  const box = $('#sQuery');
+  const cur = box.textContent;
+  box.innerHTML = '<input class="s-q-input" id="sQInput" value="' + escHtml(cur) + '" spellcheck="false">';
+  const inp = $('#sQInput');
+  inp.focus(); inp.select();
+  const done = () => {
+    if(!sEditing) return;
+    sEditing = false;
+    const v = inp.value.trim();
+    box.textContent = v || cur;
+    if(v && v !== cur){ state.searchQuery = v; runSearch('new'); }
+  };
+  inp.addEventListener('keydown', e => {
+    if(e.key === 'Enter'){ e.preventDefault(); done(); }
+    else if(e.key === 'Escape'){ sEditing = false; box.textContent = cur; }
+  });
+  inp.addEventListener('blur', done);
+}

@@ -29,17 +29,23 @@ from starhub_pipeline.build.attention import (  # noqa: E402
     star_attention_items,
 )
 from starhub_pipeline.build.contracts import write_site_contracts  # noqa: E402
-from starhub_pipeline.build.trending import TRENDING_BOARD, trending_board_payload  # noqa: E402
-from starhub_pipeline.enrich.classify import classify_repo as _classify_repo  # noqa: E402
+from starhub_pipeline.build.stars import assemble_entries as _assemble_entries  # noqa: E402
+from starhub_pipeline.build.trending import (  # noqa: E402
+    TRENDING_BOARD,
+    build_trending as _build_trending,
+    trending_board_payload,
+)
 from starhub_pipeline.enrich.embed import embed_star_entries  # noqa: E402
 from starhub_pipeline.enrich.summarize import (  # noqa: E402
     build_category_guides as _build_category_guides,
     generate_ai_summary as _generate_ai_summary,
 )
-from starhub_pipeline.enrich.translate import has_cn, translate_to_zh as _translate_to_zh  # noqa: E402
 from starhub_pipeline.render.index import build_index_html  # noqa: E402
-from starhub_pipeline.sources.github import fetch_stars  # noqa: E402
-from starhub_pipeline.taxonomy import CATS, FALLBACK_DESC  # noqa: E402
+from starhub_pipeline.sources.github import (  # noqa: E402
+    fetch_following_events as _fetch_following_events,
+    fetch_stars,
+)
+from starhub_pipeline.taxonomy import CATS  # noqa: E402
 
 # Fast path for CI while the refactored pipeline is being built: skip
 # translation/LLM/embedding enrichment instead of waiting on free endpoints.
@@ -49,12 +55,17 @@ USER = site_value("github_user", "ghoustghoust")
 PAGES_URL = site_value("pages_url", "https://ghoustghoust.github.io/starhub/")
 
 
-def translate_to_zh(text):
-    return _translate_to_zh(text, fast=FAST)
-
-
-def classify_repo(fn, desc, lang, topics, known):
-    return _classify_repo(fn, desc, lang, topics, known, cats=CATS, fast=FAST)
+def assemble_entries(repos, known, descriptions, cat_label, token, notes=None):
+    return _assemble_entries(
+        repos,
+        known,
+        descriptions,
+        cat_label,
+        token,
+        notes=notes,
+        cats=CATS,
+        fast=FAST,
+    )
 
 
 def generate_ai_summary(rising):
@@ -65,43 +76,23 @@ def build_category_guides(cats, known):
     return _build_category_guides(cats, known, fast=FAST)
 
 
-def health_score(repo):
-    """收藏健康分（github-search-mirror 四维借鉴，数据全部来自已拉取字段）：
-    活跃度=pushed_at 距今（≤90 天 green / ≤365 yellow / 其余 red）、
-    安全=archived 直接 red、社区=stars+forks 降档、文档=desc+topics 降档。
-    缺 pushed_at 或解析异常 → unknown（不渲染徽章）；stale = 距今 >365 天。"""
-    now = datetime.now(timezone.utc)
-    try:
-        pushed = (repo.get("pushed_at") or "").strip()
-        if not pushed:
-            return {"tier": "unknown", "stale": False}
-        dt = datetime.fromisoformat(pushed.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        age_days = (now - dt).days
-    except Exception:  # noqa: BLE001
-        return {"tier": "unknown", "stale": False}
-    stale = age_days > 365
-    if age_days > 365:
-        tier = "red"
-    elif age_days > 90:
-        tier = "yellow"
-    else:
-        tier = "green"
-    if bool(repo.get("archived")):
-        return {"tier": "red", "stale": stale}
-    stars = repo.get("stargazers_count") or 0
-    forks = repo.get("forks") or 0
-    if stars < 50 and forks < 5 and tier != "red":
-        tier = "yellow" if tier == "green" else "red"
-    if not (repo.get("description") or "") and not (repo.get("topics") or []) and tier != "red":
-        tier = "yellow" if tier == "green" else "red"
-    return {"tier": tier, "stale": stale}
+def build_trending(token, descriptions):
+    return _build_trending(
+        token,
+        descriptions,
+        ai_topics=AI_TOPICS,
+        ai_min_stars=AI_MIN_STARS,
+        new_min_stars=NEW_MIN_STARS,
+        trend_top=TREND_TOP,
+        trend_max_stars=TREND_MAX_STARS,
+        fast=FAST,
+    )
 
 
+def fetch_following_events(token):
+    return _fetch_following_events(token, USER)
 
 
-# ==================== 每日 AI 排行榜 ====================
 AI_TOPICS = ["ai", "machine-learning", "deep-learning", "llm", "gpt", "agent"]
 AI_MIN_STARS = 500       # AI 项目池最小星标
 NEW_MIN_STARS = 50       # 新秀榜最小星标
@@ -205,477 +196,6 @@ def load_build_config():
             print("[配置] 字段 %s 非法，回退默认值" % key, file=sys.stderr)
         merged[key] = dv
     return merged
-
-
-def _api_headers(token):
-    h = {"Accept": "application/vnd.github+json", "User-Agent": "starhub-auto-update"}
-    if token:
-        h["Authorization"] = "Bearer " + token
-    return h
-
-
-def _search_repos(q, token, per_page=100, sort="stars"):
-    url = ("https://api.github.com/search/repositories?q=%s&sort=%s&order=desc&per_page=%d"
-           % (urllib.parse.quote(q), sort, per_page))
-    req = urllib.request.Request(url, headers=_api_headers(token))
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read().decode("utf-8")).get("items", [])
-
-
-def _pick(item):
-    return {
-        "name": item.get("name"),
-        "owner": (item.get("full_name") or "").split("/")[0],
-        "full_name": item.get("full_name"),
-        "html_url": item.get("html_url"),
-        "desc": " ".join((item.get("description") or "").split()),
-        "language": item.get("language"),
-        "stars": item.get("stargazers_count"),
-        "created_at": (item.get("created_at") or "")[:10],
-    }
-
-
-def fetch_ai_pool(token):
-    """多 topic 查询合并 AI 项目池（去重）。"""
-    pool = {}
-    for topic in AI_TOPICS:
-        try:
-            for item in _search_repos("topic:%s stars:>%d" % (topic, AI_MIN_STARS), token):
-                fn = item.get("full_name")
-                if fn and fn not in pool:
-                    pool[fn] = _pick(item)
-        except Exception as e:  # noqa: BLE001
-            print("[AI池 %s 失败] %s" % (topic, e), file=sys.stderr)
-        time.sleep(1)
-    return list(pool.values())
-
-
-def fetch_new_repos(token):
-    """新秀榜：最近 7 天新建的 AI 项目，按星标排序。"""
-    since = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
-    out = []
-    try:
-        for item in _search_repos("topic:ai created:>%s stars:>%d" % (since, NEW_MIN_STARS), token, per_page=TREND_TOP):
-            out.append(_pick(item))
-    except Exception as e:  # noqa: BLE001
-        print("[新秀榜失败] %s" % e, file=sys.stderr)
-    return out
-
-
-# ==================== README 简介兜底 ====================
-def _readme_first_sentence(text):
-    """从 README 原文提取第一句像样的简介（清洗 markdown 噪音），失败返回 None。"""
-    for ln in text.splitlines():
-        s = ln.strip()
-        if not s:
-            continue
-        # 跳过标题 / 代码块围栏 / 引用块（多为项目名或导航，无信息量）
-        if re.match(r"^#{1,6}\s", s) or s.startswith(("```", "~~~")) or s.startswith(">"):
-            continue
-        # 去掉图片、链接（保留链接文字）、行内代码、HTML 标签
-        s = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", s)
-        s = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", s)
-        s = re.sub(r"<[^>]+>", "", s)
-        s = re.sub(r"`[^`]*`", "", s)
-        # 去掉行内加粗/斜体标记（先于行首符号剥离，保证 **xxx** 成对匹配）
-        s = re.sub(r"\*\*([^*]+)\*\*", r"\1", s)
-        s = re.sub(r"\*([^*]+)\*", r"\1", s)
-        # 去掉行首列表符/强调符，压缩空白
-        s = re.sub(r"^[\s\-*+]+", "", s).strip()
-        s = re.sub(r"\s+", " ", s)
-        low = s.lower()
-        # 跳过徽章/导航/状态行等噪音
-        if any(k in low for k in ("img.shields.io", "badge", "build passing", "build status",
-                                  "license", "contributors", "中文", "english", "stars", "downloads")):
-            continue
-        if len(s) >= 10:
-            # 中等长度也收敛为第一句（README 首段常是多句长段）
-            if len(s) > 80:
-                for sep in (". ", "。", "！", "? "):
-                    idx = s.find(sep)
-                    if 10 < idx <= 150:
-                        return s[:idx].strip()
-            # 超长截断到 150 字符，优先在句子边界截断
-            if len(s) > 150:
-                cut = s[:150]
-                for sep in (". ", "。", "，", ", "):
-                    idx = cut.rfind(sep)
-                    if idx > 30:
-                        return cut[:idx].strip()
-                return cut.strip() + "…"
-            return s
-    return None
-
-
-def fetch_readme_summary(fn, token):
-    """无简介项目：抓 README 提取一句简介（失败/无 README 返回 None）。"""
-    url = "https://api.github.com/repos/%s/readme" % fn
-    headers = {"Accept": "application/vnd.github.raw", "User-Agent": "starhub-auto-update"}
-    if token:
-        headers["Authorization"] = "Bearer " + token
-    try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=20) as r:
-            raw = r.read(30000).decode("utf-8", errors="replace")
-    except Exception:  # noqa: BLE001
-        return None
-    summary = _readme_first_sentence(raw)
-    if summary:
-        time.sleep(1)  # 限流：GitHub 建议相邻请求间隔 ≥1s
-    return summary
-
-
-def _desc_zh(fn, desc, desc_zh):
-    """排行榜项目简介：优先缓存中文，未命中则翻译并回写。"""
-    if not desc:
-        return ""
-    if desc_zh.get(fn):
-        return desc_zh[fn]
-    if has_cn(desc):
-        desc_zh[fn] = desc
-        return desc
-    translated = translate_to_zh(desc)
-    if translated:
-        desc_zh[fn] = translated
-        return translated
-    return desc
-
-
-def _fmt_zh(n):
-    """星标数中文格式化：>=10000 显示「万」。"""
-    if n >= 10000:
-        return "%.1f万" % (n / 10000)
-    return str(n)
-
-
-# ==================== Trending 涨星榜（真实 stars today） ====================
-# 2026 年起 GitHub Trending 每页仅展示 7~20 个仓库，因此抓多语言页合并去重凑量
-TREND_LANG_PAGES = ["", "python", "typescript", "javascript", "rust", "go", "java",
-                    "c++", "c", "swift", "kotlin", "ruby", "php", "c#", "shell",
-                    "jupyter-notebook", "vue", "dart", "elixir", "haskell"]
-
-# AI 分类关键词（ 词边界匹配 full_name + 描述，命中即视为 AI 类项目）
-_AI_RE = re.compile(
-    r"\b(ai|ml|llm|llms|gpt|nlp|rag|agent|agents|agentic|llama|claude|openai|anthropic|"
-    r"gemini|copilot|diffusion|neural|transformer|chatbot|assistant|embedding|inference|"
-    r"genai|generative|vision|speech|voice|machine.?learning|deep.?learning|model|models)\b")
-
-
-def _is_ai_repo(fn, desc):
-    """Trending 项目是否属于 AI 分类（关键词过滤 name + 描述）。"""
-    return bool(_AI_RE.search((fn + " " + (desc or "")).lower()))
-
-
-def _parse_trending(html):
-    """解析 Trending 页单个语言维度的仓库卡片。"""
-    out = []
-    for b in re.findall(r'<article[^>]*class="[^"]*Box-row[^"]*"[\s\S]*?</article>', html):
-        m = re.search(r'<h2[^>]*>[\s\S]*?href="/([^"/]+/[^"/]+)"', b)
-        if not m:
-            continue
-        fn = m.group(1)
-        if fn.startswith("sponsors/"):  # 赞助商卡片，跳过
-            continue
-        s = re.search(r'([\d,]+)\s+stars?\s+today', b)
-        lang = re.search(r'itemprop="programmingLanguage"[^>]*>([^<]+)<', b)
-        d = re.search(r'<h2[\s\S]*?</h2>[\s\S]*?<p[^>]*>([\s\S]*?)</p>', b)
-        # 总星标：stargazers 链接内最后一个 </svg> 后的数字（2026 新版页面数字前有换行空格）
-        st = None
-        si = b.find('stargazers')
-        if si != -1:
-            ei = b.find('</a>', si)
-            if ei != -1:
-                m2 = re.search(r'</svg>\s*([\d,]+)', b[si:ei])
-                if m2:
-                    st = m2.group(1)
-        desc = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', '', d.group(1))).strip() if d else ""
-        owner, name = fn.split("/", 1)
-        out.append({
-            "name": name, "owner": owner, "full_name": fn,
-            "html_url": "https://github.com/" + fn,
-            "desc": desc, "language": lang.group(1) if lang else None,
-            "stars": int(st.replace(",", "")) if st else 0,
-            "stars_today": int(s.group(1).replace(",", "")) if s else 0,
-        })
-    return out
-
-
-def fetch_trending_daily(token=None):
-    """抓 GitHub Trending daily（多语言页合并去重）；全部失败返回 None 触发降级。"""
-    pool = {}
-    for lp in TREND_LANG_PAGES:
-        url = "https://github.com/trending/%s?since=daily" % lp
-        try:
-            req = urllib.request.Request(url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                               " (KHTML, like Gecko) Chrome/126.0 Safari/537.36"})
-            with urllib.request.urlopen(req, timeout=20) as r:
-                html = r.read().decode("utf-8", errors="replace")
-            for p in _parse_trending(html):
-                if p["full_name"] not in pool:
-                    pool[p["full_name"]] = p
-        except Exception as e:  # noqa: BLE001
-            print("[Trending %s 失败] %s" % (lp or "全部", e), file=sys.stderr)
-        time.sleep(0.5)
-    return list(pool.values()) if pool else None
-
-
-def build_trending(token, desc_zh):
-    snap = {}
-    try:
-        snap = json.load(open("trending_snapshot.json", encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        pass
-
-    pool = fetch_ai_pool(token)
-
-    # 总榜：按总星标排序
-    total = sorted(pool, key=lambda x: x["stars"], reverse=True)[:TREND_TOP]
-
-    # 涨星榜：优先 Trending daily 真实 stars today（AI 分类过滤）
-    rising = []
-    trend_rows = fetch_trending_daily(token)
-    if trend_rows:
-        rising = [p for p in trend_rows if _is_ai_repo(p["full_name"], p["desc"])]
-        rising.sort(key=lambda x: x["stars_today"], reverse=True)
-        rising = rising[:TREND_TOP]
-        for p in rising:
-            p["delta"] = p["stars_today"]  # 前端 delta 徽标直接展示 stars today
-    else:
-        # 降级：Trending 抓取失败，回退到快照差值模式（排除超巨头，只看有昨日基线的项目）
-        print("[涨星榜] Trending 抓取失败，降级为快照差值模式", file=sys.stderr)
-        for p in pool:
-            prev = snap.get(p["full_name"])
-            if prev is not None and p["stars"] <= TREND_MAX_STARS:
-                p["delta"] = p["stars"] - prev
-                rising.append(p)
-        rising.sort(key=lambda x: x["delta"], reverse=True)
-        rising = rising[:TREND_TOP]
-
-    # 首次运行无基线：涨星榜 fallback 到总榜，delta=None（页面显示"新上榜"）
-    if not rising:
-        rising = [dict(p, delta=None) for p in total]
-
-    # 新秀榜
-    new_repos = fetch_new_repos(token)
-
-    for p in rising + total + new_repos:
-        p["desc"] = _desc_zh(p["full_name"], p["desc"], desc_zh)
-
-    # 排名依据（中文说明）
-    for p in rising:
-        if p.get("delta") is not None:
-            p["reason"] = ("今日涨星 +%d" % p["delta"]) if p["delta"] >= 0 else ("今日涨星 %d" % p["delta"])
-        else:
-            p["reason"] = "新上榜 · %s星标" % _fmt_zh(p["stars"])
-    for p in total:
-        p["reason"] = "累计 %s星标" % _fmt_zh(p["stars"])
-    for p in new_repos:
-        p["reason"] = "近 7 天新建 · %s星标" % _fmt_zh(p["stars"])
-
-    # 快照覆盖为今日星标数（作为明日基线）；AI 池为空说明本次构建异常（限流/网络故障），
-    # 此时覆盖会清空全部基线且无法自愈，因此保留旧快照
-    if pool:
-        json.dump({p["full_name"]: p["stars"] for p in pool},
-                  open("trending_snapshot.json", "w", encoding="utf-8"),
-                  ensure_ascii=False, indent=1)
-    else:
-        print("[警告] AI 池为空，跳过快照更新，保留旧基线", file=sys.stderr)
-
-    return {"rising": rising, "total": total, "new": new_repos,
-            "source": "trending" if trend_rows else "snapshot"}
-
-
-def _today_cn():
-    """北京时间今天的日期字符串 YYYY-MM-DD。"""
-    return datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
-
-
-def _cn_dt(utc_str):
-    """UTC 时间字符串 → 北京时间 datetime（解析失败返回 None）。"""
-    if not utc_str:
-        return None
-    try:
-        return datetime.fromisoformat(utc_str.replace("Z", "+00:00")).astimezone(timezone(timedelta(hours=8)))
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def _cn_date(utc_str):
-    """UTC 时间字符串 → 北京时间日期 YYYY-MM-DD。"""
-    dt = _cn_dt(utc_str)
-    return dt.strftime("%Y-%m-%d") if dt else (utc_str[:10] if utc_str else "")
-
-
-def _cn_time(utc_str):
-    """UTC 时间字符串 → 北京时间 HH:MM。"""
-    dt = _cn_dt(utc_str)
-    return dt.strftime("%H:%M") if dt else (utc_str[11:16] if utc_str else "")
-
-
-def fetch_following(token):
-    """列出关注的账号 login 列表。"""
-    out = []
-    page = 1
-    while True:
-        url = "https://api.github.com/users/%s/following?per_page=100&page=%d" % (USER, page)
-        req = urllib.request.Request(url, headers=_api_headers(token))
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                data = json.loads(r.read().decode("utf-8"))
-        except Exception as e:  # noqa: BLE001
-            print("[关注列表失败] %s" % e, file=sys.stderr)
-            break
-        if not data:
-            break
-        out.extend(x.get("login") for x in data if x.get("login"))
-        if len(data) < 100:
-            break
-        page += 1
-        time.sleep(1)
-    return out
-
-
-def fetch_following_events(token):
-    """聚合关注账号动态（滚动 24 小时窗口）：新仓库 / star / 关注 / PR / 版本发布 / 公开仓库 / 提交更新。"""
-    now_cn = datetime.now(timezone(timedelta(hours=8)))
-    cutoff = now_cn - timedelta(hours=24)  # 滚动窗口：最近 24 小时
-    today = now_cn.strftime("%Y-%m-%d")
-    following = fetch_following(token)
-    feed = []
-    for user in following:
-        url = "https://api.github.com/users/%s/events/public?per_page=100&page=%%d" % user
-        for page in (1, 2):
-            req = urllib.request.Request(url % page, headers=_api_headers(token))
-            try:
-                with urllib.request.urlopen(req, timeout=30) as r:
-                    evs = json.loads(r.read().decode("utf-8"))
-            except Exception as e:  # noqa: BLE001
-                print("[事件拉取失败 %s] %s" % (user, e), file=sys.stderr)
-                break
-            if not evs:
-                break
-            for e in evs:
-                dt = _cn_dt(e.get("created_at"))
-                if dt is None or dt < cutoff:
-                    continue
-                d = dt.strftime("%Y-%m-%d")
-                t = e.get("type")
-                payload = e.get("payload") or {}
-                actor = (e.get("actor") or {}).get("login", "")
-                repo = (e.get("repo") or {}).get("name", "")
-                tm = dt.strftime("%H:%M")
-                day = "今天" if d == today else "昨天"
-                item = None
-                if t == "CreateEvent" and payload.get("ref_type") == "repository":
-                    item = {"kind": "repo", "actor": actor, "repo": repo, "time": tm, "day": day, "date": d,
-                            "url": "https://github.com/" + repo}
-                elif t == "WatchEvent" and payload.get("action") == "started":
-                    item = {"kind": "star", "actor": actor, "repo": repo, "time": tm, "day": day, "date": d,
-                            "url": "https://github.com/" + repo}
-                elif t == "FollowEvent":
-                    target = (payload.get("target") or {}).get("login", "")
-                    item = {"kind": "follow", "actor": actor, "target": target, "time": tm, "day": day, "date": d,
-                            "url": "https://github.com/" + target}
-                elif t == "PullRequestEvent" and payload.get("action") == "opened":
-                    pr = payload.get("pull_request") or {}
-                    item = {"kind": "pr", "actor": actor, "repo": repo,
-                            "title": (pr.get("title") or "")[:60],
-                            "url": pr.get("html_url", "https://github.com/" + repo),
-                            "time": tm, "day": day, "date": d}
-                elif t == "ReleaseEvent" and payload.get("action") == "published":
-                    release = payload.get("release") or {}
-                    item = {"kind": "release", "actor": actor, "repo": repo,
-                            "tag": release.get("tag_name", ""),
-                            "url": release.get("html_url", "https://github.com/" + repo + "/releases"),
-                            "time": tm, "day": day, "date": d}
-                elif t == "PublicEvent":
-                    item = {"kind": "public", "actor": actor, "repo": repo,
-                            "url": "https://github.com/" + repo,
-                            "time": tm, "day": day, "date": d}
-                elif t == "PushEvent":
-                    size = payload.get("size", 0)
-                    if size > 0:
-                        item = {"kind": "push", "actor": actor, "repo": repo, "size": size,
-                                "url": "https://github.com/" + repo + "/commits",
-                                "time": tm, "day": day, "date": d}
-                if item:
-                    feed.append(item)
-            # 事件按时间倒序返回：本页最早一条早于窗口起点则无需继续翻页
-            last_dt = _cn_dt((evs[-1].get("created_at") or ""))
-            if last_dt is None or last_dt < cutoff:
-                break
-            time.sleep(1)  # 限流：同一用户分页间 ≥1s，避免二级速率限制
-        time.sleep(0.5)  # 限流：不同用户间 ≥0.5s，防止连续请求触发 GitHub 二级速率限制 (403)
-    feed.sort(key=lambda x: (x.get("date", ""), x.get("time", "")), reverse=True)
-    return feed
-
-
-def assemble_entries(repos, known, desc_zh, cat_label, token, notes=None):
-    """把原始 star 响应组装成 DATA 条目数组（main 与快车道 fast_refresh 共用的唯一组装出口）。
-
-    行为与抽取前逐字一致：classify_repo 分类（查表不烧 LLM）→ 简介回退链
-    （缓存 → 描述 → FALLBACK_DESC → README 摘要）→ 空白归一 → 英文翻译并持久化
-    → health/stale → 注入 note/health/stale/starred_at。known/desc_zh 原地更新
-    （调用方负责写回持久化）。
-    notes = known_notes.json 的存量点评表：查表命中（存量仓主路径）时 classify_repo
-    恒返回 note=""，不回填它 T2 写库的 289 条点评就永远不会上线（2026-10-04 端到端
-    验收实锤）。LLM 新鲜点评优先，文件值只补空。"""
-    out = []
-    for r in repos:
-        fn = r.get("full_name")
-        if not fn:
-            continue
-        cat, note = classify_repo(fn, r.get("description"), r.get("language"), r.get("topics"), known)
-        if not note:
-            note = (notes or {}).get(fn) or ""
-        known[fn] = cat
-        desc = (desc_zh.get(fn) or r.get("description") or FALLBACK_DESC.get(fn, "")).strip()
-        # 无简介项目：从 README 提取一句简介，结果持久化到 desc_zh 避免重复抓取
-        if not FAST and not desc and fn not in desc_zh:
-            summary = fetch_readme_summary(fn, token)
-            if summary:
-                if not has_cn(summary):
-                    translated = translate_to_zh(summary)
-                    if translated:
-                        summary = translated
-                desc = summary
-                desc_zh[fn] = summary
-                print("[README简介] %s -> %s" % (fn, summary[:60]))
-        if desc:
-            desc = " ".join(desc.split())
-        # 新项目英文简介自动翻译为中文，并持久化到 desc_zh 避免重复翻译
-        if not FAST and desc and not has_cn(desc) and fn not in desc_zh:
-            translated = translate_to_zh(desc)
-            if translated:
-                desc = translated
-                desc_zh[fn] = translated
-                print("[翻译] %s -> %s" % (fn, translated[:60]))
-            else:
-                print("[翻译失败-保留原文] %s" % fn)
-        _hs = health_score(r)
-        out.append({
-            "id": fn,
-            "name": r.get("name"),
-            "owner": fn.split("/")[0],
-            "full_name": fn,
-            "html_url": r.get("html_url"),
-            "desc": desc,
-            "language": r.get("language"),
-            "stars": r.get("stargazers_count"),
-            "forks": r.get("forks") or 0,
-            "license": ((r.get("license") or {}).get("spdx_id") or ""),
-            "topics": r.get("topics", []),
-            "pushed_at": (r.get("pushed_at") or "")[:10],
-            "updated_today": _cn_date(r.get("pushed_at")) == _today_cn(),
-            "category": cat,
-            "categoryLabel": cat_label.get(cat, cat),
-            "note": note,
-            "health": _hs["tier"],
-            "stale": _hs["stale"],
-            "starred_at": r.get("starred_at") or "",
-        })
-    return out
 
 
 def main(mode="full"):

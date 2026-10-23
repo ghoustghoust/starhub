@@ -41,7 +41,7 @@ export function renderTrending(){
     const src = siteData.TRENDING && siteData.TRENDING.source;
     sub += src === 'trending' ? ' · GitHub Trending 今日涨星' : (src === 'snapshot' ? ' · 快照差值' : '');
   } else {
-    sub += ' · 收藏池统计';
+    sub += ' · Star 池统计';
   }
   $('#trendUpdated').textContent = sub;
   list.innerHTML = '';
@@ -62,7 +62,11 @@ export function renderTrending(){
 
 export function switchTrendTab(tab, scope){
   state.trendTab = tab;
-  document.querySelectorAll((scope || '#trendTabs') + ' .trend-tab').forEach(x=>x.classList.toggle('on', x.dataset.tab===tab));
+  document.querySelectorAll((scope || '#trendTabs') + ' .trend-tab').forEach(x=>{
+    const on = x.dataset.tab === tab;
+    x.classList.toggle('on', on);
+    x.setAttribute('aria-pressed', String(on));
+  });
   renderTrending();
 }
 

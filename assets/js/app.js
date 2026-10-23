@@ -1,11 +1,11 @@
-import { API_BASE, DATA, POOL_NAMES, REFRESH_KEY, THEME_KEY, VIEW_KEY, favs, state } from './core/state.js';
+import { API_BASE, DATA, POOL_NAMES, REFRESH_KEY, THEME_KEY, UPDATED, VIEW_KEY, favs, state } from './core/state.js';
 import { $ } from './core/dom.js';
 import { hydrateSearchState, syncSearchUrl } from './core/search-url.js';
 import { escHtml } from './core/format.js';
 import { copyRepoInfo, toast } from './core/ui.js';
 import { getTheme, applyTheme, getView, applyView } from './features/preferences.js';
 import { renderLangBar, renderCats, renderLangSel, renderList, updateCatsMask } from './features/collection.js';
-import { renderSearchHint, openSearchModal, closeSearchModal, runSearch, editSearchQuery } from './features/search.js';
+import { renderSearchHint, openSearchModal, closeSearchModal, runSearch, editSearchQuery, applySearchQuery } from './features/search.js';
 import { renderTrending, switchTrendTab, renderTrendingFull, openTrendModal, closeTrendModal } from './features/trending.js';
 import { renderFeed, refreshFeed, refreshTrendingBoard } from './features/feed.js';
 import { loadAihot, loadAihotMore, startFeedPolling } from './features/ai-feed.js';
@@ -15,7 +15,11 @@ import { toggleFav, exportJson, importJson } from './features/favorites.js';
 // ---- 事件绑定 ----
 function switchSideTab(tab){
   state.sideTab = tab;
-  document.querySelectorAll('.side-tab').forEach(x => x.classList.toggle('on', x.dataset.side === tab));
+  document.querySelectorAll('.side-tab').forEach(x => {
+    const on = x.dataset.side === tab;
+    x.classList.toggle('on', on);
+    x.setAttribute('aria-pressed', String(on));
+  });
   const trending = $('.trending'), feed = $('.feed'), ai = $('#aihotWrap');
   if(trending) trending.classList.toggle('on', tab === 'trend');
   if(feed) feed.classList.toggle('on', tab === 'feed');
@@ -27,7 +31,7 @@ function setSearchMode(mode, opts = {}){
   state.searchMode = mode === 'global' ? 'global' : 'local';
   document.querySelectorAll('#searchMode button').forEach(b => {
     b.classList.toggle('on', b.dataset.mode === state.searchMode);
-    b.setAttribute('aria-selected', String(b.dataset.mode === state.searchMode));
+    b.setAttribute('aria-pressed', String(b.dataset.mode === state.searchMode));
   });
   if(state.searchMode === 'local') closeSearchModal();
   renderSearchHint();
@@ -118,23 +122,53 @@ function bindEvents(){
   if(modeBar) modeBar.addEventListener('click', e => {
     const b = e.target.closest('[data-mode]'); if(b) setSearchMode(b.dataset.mode);
   });
+  document.querySelectorAll('.search-examples [data-example]').forEach(b => {
+    b.addEventListener('click', () => {
+      const value = b.dataset.example || '';
+      state.q = value; state.searchQuery = value;
+      const input = $('#q');
+      if(input){ input.value = value; $('#btnClear').style.display = value ? 'block' : 'none'; input.focus(); }
+      if(state.searchMode === 'global'){ openSearchModal(); return; }
+      renderSearchHint(); renderList(); syncSearchUrl();
+    });
+  });
   $('#btnResetAll').onclick = () => {
     state.q=''; state.searchQuery=''; state.cat=''; state.lang=''; state.star='all'; state.updated=''; state.topic='';
+    state.sort='stars-desc'; state.sortTouched=false; state.searchLang=''; state.searchSort='best-match';
+    state.renderLimit=200;
     $('#q').value=''; $('#btnClear').style.display='none';
     const us = $('#updatedSel'); if(us) us.value='';
+    const sortSel = $('#sortSel'); if(sortSel) sortSel.value='stars-desc';
+    const sLang = $('#sLang'); if(sLang) sLang.value='';
+    setSearchMode('local', {skipRender:true, skipUrl:true});
     renderSearchHint();
     renderCats(); renderLangSel();
-    document.querySelectorAll('#starSel button').forEach(x=>x.classList.toggle('on', x.dataset.v==='all'));
+    document.querySelectorAll('#starSel button').forEach(x=>{
+      const on = x.dataset.v === 'all';
+      x.classList.toggle('on', on);
+      x.setAttribute('aria-pressed', String(on));
+    });
     renderList(); syncSearchUrl();
   };
   $('#langSel').addEventListener('change', e => { state.lang = e.target.value; renderList(); syncSearchUrl(); });
-  $('#sortSel').addEventListener('change', e => { state.sort = e.target.value; state.sortTouched = true; renderList(); syncSearchUrl(); });
+  $('#sortSel').addEventListener('change', e => {
+    state.sort = e.target.value;
+    if(state.sort === 'relevant' && !state.q.trim()){
+      state.sort = 'stars-desc';
+      e.target.value = 'stars-desc';
+      toast('相关度排序会在输入关键词后生效');
+    }
+    state.sortTouched = true; renderList(); syncSearchUrl();
+  });
   const updatedSel = $('#updatedSel');
   if(updatedSel) updatedSel.addEventListener('change', e => { state.updated = e.target.value; renderList(); syncSearchUrl(); });
   $('#starSel').addEventListener('click', e => {
     const b = e.target.closest('button'); if(!b) return;
     state.star = b.dataset.v;
-    document.querySelectorAll('#starSel button').forEach(x=>x.classList.toggle('on', x===b));
+    document.querySelectorAll('#starSel button').forEach(x=>{
+      x.classList.toggle('on', x===b);
+      x.setAttribute('aria-pressed', String(x===b));
+    });
     renderList(); syncSearchUrl();
   });
   document.addEventListener('click', e => {
@@ -164,6 +198,13 @@ function bindEvents(){
     }
   });
 
+  document.addEventListener('keydown', e => {
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    const tag = e.target.closest?.('[data-act="topictag"], [data-act="orgtag"]');
+    if(!tag) return;
+    e.preventDefault();
+    tag.click();
+  });
   window.addEventListener('resize', updateCatsMask);
   const resultList = $('#sList');
   if(resultList){
@@ -171,11 +212,24 @@ function bindEvents(){
       const btn = e.target.closest('[data-sact]'); if(!btn) return;
       const fullName = btn.dataset.fn;
       if(btn.dataset.sact === 'copy'){ if(fullName) copyRepoInfo(fullName, btn.dataset.url || ''); return; }
+      if(btn.dataset.sact === 'local' && fullName){
+        state.q = fullName; state.searchQuery = fullName;
+        const input = $('#q'); if(input){ input.value = fullName; $('#btnClear').style.display = 'block'; }
+        setSearchMode('local');
+        toast('已在 Star 池中定位');
+        return;
+      }
+      if(btn.dataset.sact === 'topic' && btn.dataset.topic){
+        applySearchQuery('topic:' + btn.dataset.topic);
+        return;
+      }
       if(btn.dataset.sact === 'fav' && fullName){
         toggleFav(fullName);
         const pinned = favs.has(fullName), starred = POOL_NAMES.has(fullName);
         btn.classList.toggle('on', pinned);
         btn.textContent = pinned ? '★' : '☆';
+        btn.setAttribute('aria-pressed', String(pinned));
+        btn.setAttribute('aria-label', pinned ? '取消置顶' : '置顶到本页');
         const row = btn.closest('.s-item');
         let badge = row ? row.querySelector('.s-badge') : null;
         const label = pinned ? (starred ? '✓ 已 star · 置顶' : '★ 置顶') : (starred ? '✓ 已 star' : '');
@@ -242,7 +296,10 @@ function bindEvents(){
   $('#sTabs').addEventListener('click', e => {
     const b = e.target.closest('[data-sort]'); if(!b) return;
     state.searchSort = b.dataset.sort;
-    document.querySelectorAll('#sTabs .trend-tab').forEach(x => x.classList.toggle('on', x === b));
+    document.querySelectorAll('#sTabs .trend-tab').forEach(x => {
+      x.classList.toggle('on', x === b);
+      x.setAttribute('aria-pressed', String(x === b));
+    });
     runSearch('new');
   });
   $('#sLang').addEventListener('change', e => { state.searchLang = e.target.value; runSearch('new'); });
@@ -295,6 +352,10 @@ function bindEvents(){
 // 统计数字滚动动效：仅在首次进入视口时触发一次
 
 function countUp(el, target, dur){
+  if(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+    el.textContent = target;
+    return;
+  }
   dur = dur || 700;
   const t0 = performance.now();
   const step = now => {
@@ -344,8 +405,15 @@ if(window.__STARHUB_POOL_ERROR__){
   const empty = $('#empty'), hint = $('#emptyHint'), grid = $('#grid');
   if(grid) grid.innerHTML = '';
   if(empty) empty.style.display = 'block';
-  if(hint) hint.textContent = '收藏数据加载失败，请刷新页面重试';
-  toast('收藏数据加载失败，请刷新重试');
+  if(hint) hint.textContent = 'Star 池数据加载失败，请刷新页面重试';
+  toast('Star 池数据加载失败，请刷新重试');
+}
+const footUpdated = $('#footUpdated'), footTotal = $('#footTotal'), footStale = $('#footStale');
+if(footUpdated) footUpdated.textContent = UPDATED || '未知';
+if(footTotal) footTotal.textContent = String(DATA.length);
+if(footStale && UPDATED){
+  const stamp = new Date(UPDATED.replace(' ', 'T') + ':00+08:00').getTime();
+  if(Number.isFinite(stamp) && Date.now() - stamp > 36 * 3600 * 1000) footStale.hidden = false;
 }
 renderTrending();
 renderFeed();

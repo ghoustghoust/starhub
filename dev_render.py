@@ -67,6 +67,12 @@ def main() -> None:
         datetime.datetime.now().strftime("dev%Y%m%d%H%M%S"),
     )
     template = template.replace("__AI_SUMMARY__", "").replace("__ATTENTION__", "")
+    try:
+        config = json.loads(Path("config/site.json").read_text(encoding="utf-8"))
+        repo = config.get("site", {}).get("repository", "ghoustghoust/starhub")
+    except Exception:
+        repo = "ghoustghoust/starhub"
+    template = template.replace("__REPO_URL__", "https://github.com/" + repo)
     # 旧首页的 DATA 是内联数组：移除外置资源标签，继续用内联数据预览。
     if re.search(r"\bDATA\s*:\s*\[", boot):
         template = re.sub(r'\s*<link rel="preload" as="script" href="data/pool\.js\?v=[^"]*">', "", template)

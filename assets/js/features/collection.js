@@ -36,6 +36,7 @@ export function renderCats(){
   const cats = $('#cats'); cats.innerHTML='';
   const all = document.createElement('button');
   all.className = 'cat' + (state.cat===''?' on':'');
+  all.setAttribute('aria-pressed', String(state.cat === ''));
   all.innerHTML = '<span class="dot"></span>全部 <span class="n">'+DATA.length+'</span>';
   all.onclick = () => { state.cat=''; renderCats(); renderList(); syncSearchUrl(); };
   cats.appendChild(all);
@@ -44,6 +45,7 @@ export function renderCats(){
     if(!n) return;
     const b = document.createElement('button');
     b.className = 'cat' + (state.cat===c.key?' on':'');
+    b.setAttribute('aria-pressed', String(state.cat === c.key));
     // 类目 AI 导览（构建时生成）：悬停即读，无需点进任何详情页
     if(c.guide) b.title = c.guide;
     b.innerHTML = '<span class="dot" style="background:'+catColor(c.key)+'"></span>'+c.label+' <span class="n">'+n+'</span>';
@@ -130,9 +132,16 @@ export function filterData(){
     return true;
   });
   // 相关性打分（q 非空时），供 relevant 排序档与语义扩展使用
-  if(words.length) list.forEach(d => { d._score = relevanceScore(d, words); });
-  // q 非空且用户未手动选过排序档 → 自动按相关度（显式选择过的用户不被打扰）
-  const effSort = (words.length && !state.sortTouched) ? 'relevant' : state.sort;
+  if(words.length){
+    list.forEach(d => { d._score = relevanceScore(d, words); });
+  } else {
+    list.forEach(d => { d._score = undefined; });
+  }
+  // q 非空且用户未手动选过排序档 → 自动按相关度（显式选择过的用户不被打扰）；
+  // 清空关键词后若还停在 relevant，回落到星标排序，避免用上一次的残留分数。
+  const effSort = words.length
+    ? (!state.sortTouched ? 'relevant' : state.sort)
+    : (state.sort === 'relevant' ? 'stars-desc' : state.sort);
   const cmp = {
     'relevant': (a,b)=>(b._score||0)-(a._score||0) || b.stars-a.stars,
     'starred': (a,b)=>(b.starred_at||'').localeCompare(a.starred_at||''),
@@ -167,7 +176,7 @@ export function filterData(){
   }
   const faved = list.filter(d=>favs.has(d.full_name));
   const rest = list.filter(d=>!favs.has(d.full_name));
-  return { faved, rest, semantic };
+  return { faved, rest, semantic, effSort };
 }
 
 export function catColor(key){
@@ -209,17 +218,17 @@ export function buildCard(d, isFav){
   const noteLine = d.note ? '<div class="note-line" title="AI 一句话点评">✦ '+hl(d.note)+'</div>' : '';
   const semBadge = d._sem ? '<span class="sem-badge" title="按向量相似度扩展召回">语义相关</span>' : '';
   const topicTags = (d.topics||[]).slice(0,3).map(t =>
-    '<span class="tp" data-act="topictag" data-topic="'+escHtml(t)+'" title="筛选该 topic">'+escHtml(t)+'</span>').join('');
+    '<span class="tp" role="button" tabindex="0" data-act="topictag" data-topic="'+escHtml(t)+'" title="筛选该 topic">'+escHtml(t)+'</span>').join('');
   div.innerHTML =
     '<a class="cover" href="'+d.html_url+'" target="_blank" rel="noopener" tabindex="-1" aria-hidden="true">' +
-      '<img class="cover-img" src="'+coverSrc+'" alt="" loading="lazy" decoding="async">' +
+      '<img class="cover-img" src="'+coverSrc+'" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">' +
       '<span class="cover-fallback" aria-hidden="true"><span class="mono-mark">'+escHtml((d.name||'#').charAt(0))+'</span></span>' +
       (d.updated_today ? '<span class="badge-update cover-badge">今日更新</span>' : '') +
     '</a>' +
-    '<button class="fav'+(isFav?' on':'')+'" data-act="fav" title="收藏/取消收藏">'+(isFav?icon.starFilled:icon.star)+'</button>' +
+    '<button class="fav'+(isFav?' on':'')+'" data-act="fav" aria-label="'+(isFav?'取消置顶':'置顶到本页')+'" aria-pressed="'+(isFav?'true':'false')+'" title="置顶到本页（不会改变 GitHub Star）">'+(isFav?icon.starFilled:icon.star)+'</button>' +
     '<div class="body">' +
       '<div class="top"><div class="id">' +
-        '<div class="owner-line"><span class="owner" data-act="orgtag" data-org="'+escHtml(d.owner)+'" title="筛选该作者">'+escHtml(d.owner)+'</span>' +
+        '<div class="owner-line"><span class="owner" role="button" tabindex="0" data-act="orgtag" data-org="'+escHtml(d.owner)+'" title="筛选该作者">'+escHtml(d.owner)+'</span>' +
           (isFav ? '<span class="pin-chip">置顶</span>' : '') +
         '</div>' +
         '<a class="name" href="'+d.html_url+'" target="_blank" rel="noopener">'+hl(d.name)+'</a>' +
@@ -251,7 +260,7 @@ export function buildRow(d, isFav){
   const catColorVal = catColor(d.category);
   const desc = d.desc || '暂无简介';
   div.innerHTML =
-    '<button class="fav'+(isFav?' on':'')+'" data-act="fav" title="收藏/取消收藏">'+(isFav?icon.starFilled:icon.star)+'</button>' +
+    '<button class="fav'+(isFav?' on':'')+'" data-act="fav" aria-label="'+(isFav?'取消置顶':'置顶到本页')+'" aria-pressed="'+(isFav?'true':'false')+'" title="置顶到本页（不会改变 GitHub Star）">'+(isFav?icon.starFilled:icon.star)+'</button>' +
     '<div class="nm"><span class="owner">'+escHtml(d.owner)+'</span>' +
       '<a class="name" href="'+d.html_url+'" target="_blank" rel="noopener">'+hl(d.name)+'</a></div>' +
     '<span class="dsc" title="'+escHtml(desc)+'">'+hl(desc)+'</span>' +
@@ -270,7 +279,9 @@ export function buildRow(d, isFav){
 const RENDER_STEP = 200;
 
 export function renderList(){
-  const { faved, rest, semantic } = filterData();
+  const { faved, rest, semantic, effSort } = filterData();
+  const sortSelect = $('#sortSel');
+  if(sortSelect && sortSelect.value !== effSort) sortSelect.value = effSort;
   // 语义扩展条目追加在结果尾部（带"语义相关"角标，_sem 由 buildCard 渲染）
   const semBadged = (semantic||[]).map(d=>{ const c=Object.assign({},d); c._sem=true; return c; });
   const allRest = rest.concat(semBadged);

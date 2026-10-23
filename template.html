@@ -4,14 +4,32 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>GitHub Star 收藏台 · ghoustghoust</title>
+<meta name="description" content="StarHub：按分类浏览 ghoustghoust 的 GitHub Star 收藏，并支持全 GitHub 仓库搜索、中文查询翻译与本地置顶。">
+<meta name="theme-color" content="#faf9f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161412" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://starhub.ghoustlab.com/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23b45309'/%3E%3Cpath d='M16 5l3.1 6.3 6.9 1-5 4.9 1.2 6.9L16 20.9l-6.2 3.2 1.2-6.9-5-4.9 6.9-1L16 5z' fill='%23fffdf9'/%3E%3C/svg%3E">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="StarHub">
+<meta property="og:title" content="GitHub Star 收藏台 · ghoustghoust">
+<meta property="og:description" content="按分类浏览 GitHub Star 收藏，支持全 GitHub 仓库搜索、中文查询翻译与本地置顶。">
+<meta property="og:url" content="https://starhub.ghoustlab.com/">
+<meta property="og:locale" content="zh_CN">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="GitHub Star 收藏台 · ghoustghoust">
+<meta name="twitter:description" content="按分类浏览 GitHub Star 收藏，支持全 GitHub 仓库搜索、中文查询翻译与本地置顶。">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700;900&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700;900&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700;900&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700;900&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"></noscript>
 <link rel="stylesheet" href="assets/css/main.css?v=__ASSET_VERSION__">
 <link rel="preload" as="script" href="data/pool.js?v=__ASSET_VERSION__">
 <script>try{var _t=localStorage.getItem('wb_starhub_theme_v1')||(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.dataset.theme=_t;}catch(e){}</script>
 </head>
 <body>
+<a class="skip-link" href="#grid">跳到收藏列表</a>
+<h1 class="sr-only">GitHub Star 收藏台 · ghoustghoust</h1>
 <header>
   <div class="hd">
     <div class="logo">
@@ -57,11 +75,11 @@
     <div class="acts">
       <button class="btn" id="btnView" title="切换列表/卡片视图" aria-label="切换视图"><svg class="icon" id="viewIcon" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></button>
       <button class="btn" id="btnTheme" title="切换明暗主题" aria-label="切换主题"><svg class="icon" id="themeIcon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></button>
-      <button class="btn" id="btnExport" title="导出备份">
+      <button class="btn" id="btnExport" title="导出本地置顶备份（不包含 GitHub Star 数据）">
         <svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         <span>导出</span>
       </button>
-      <button class="btn" id="btnImport" title="导入恢复">
+      <button class="btn" id="btnImport" title="导入本地置顶备份">
         <svg class="icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         <span>导入</span>
       </button>
@@ -82,33 +100,40 @@
         </div>
         <div class="sh-t">
           <h2>搜索仓库</h2>
-          <p>收藏内检索，或切到全 GitHub 搜索整个站点</p>
+          <p>在你的 Star 池内检索，或切到全 GitHub 搜索整个站点</p>
         </div>
       </div>
-      <div class="search-mode" id="searchMode" role="tablist" aria-label="搜索范围">
-        <button type="button" data-mode="local" class="on" role="tab" aria-selected="true">收藏内</button>
-        <button type="button" data-mode="global" role="tab" aria-selected="false">全 GitHub</button>
+      <div class="search-mode" id="searchMode" role="group" aria-label="搜索范围">
+        <button type="button" data-mode="local" class="on" aria-pressed="true">Star 池内</button>
+        <button type="button" data-mode="global" aria-pressed="false">全 GitHub</button>
       </div>
       <div class="sh-row">
         <div class="search">
           <svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input id="q" type="search" list="qHistory" placeholder="关键词 / 语法：stars:>1k · topic:rag · org:acme · license:mit…" autocomplete="off">
+          <input id="q" type="search" list="qHistory" aria-label="搜索 Star 池或 GitHub 仓库" placeholder="关键词 / 语法：stars:>1k · topic:rag · org:acme · license:mit…" autocomplete="off">
           <button class="clear" id="btnClear" aria-label="清空">×</button>
           <datalist id="qHistory"></datalist>
         </div>
         <button class="btn primary hidden" id="btnSearchAll" title="切到全 GitHub 搜索">去 GitHub 搜</button>
-        <div id="searchHint"></div>
+        <div id="searchHint" aria-live="polite"></div>
+      </div>
+      <div class="search-examples" aria-label="搜索示例">
+        <span>试试</span>
+        <button type="button" data-example="AI Agent">AI Agent</button>
+        <button type="button" data-example="topic:rag">topic:rag</button>
+        <button type="button" data-example="stars:>1k language:Python">stars:>1k</button>
+        <button type="button" data-example="org:openai">org:openai</button>
       </div>
     </div>
   </section>
   <div class="main">
   __ATTENTION__
-  <h2 class="main-title">我的收藏</h2>
+  <h2 class="main-title">Star 池</h2>
   <div class="stats">
-    <div class="stat"><span class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span><div><div class="v" id="stTotal">0</div><div class="l">收藏项目总数</div></div></div>
+    <div class="stat"><span class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span><div><div class="v" id="stTotal">0</div><div class="l">Star 项目总数</div></div></div>
     <div class="stat"><span class="ic"><svg viewBox="0 0 24 24"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.83z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg></span><div><div class="v" id="stCats">0</div><div class="l">分类</div></div></div>
     <div class="stat"><span class="ic"><svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></span><div><div class="v" id="stLangs">0</div><div class="l">编程语言</div></div></div>
-    <div class="stat"><span class="ic gold"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span><div><div class="v" id="stFav">0</div><div class="l">我的收藏（置顶）</div></div></div>
+    <div class="stat"><span class="ic gold"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span><div><div class="v" id="stFav">0</div><div class="l">本地置顶</div></div></div>
   </div>
 
   <div class="langbar">
@@ -121,31 +146,31 @@
 
   <div class="toolbar">
     <div class="sel">
-      <select id="langSel"><option value="">全部语言</option></select>
+      <select id="langSel" aria-label="按编程语言筛选"><option value="">全部语言</option></select>
     </div>
     <div class="sel">
-      <select id="sortSel">
+      <select id="sortSel" aria-label="排序方式">
         <option value="stars-desc"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> 星标从高到低</option>
         <option value="stars-asc"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> 星标从低到高</option>
         <option value="relevant">相关度（搜索时）</option>
-        <option value="starred">最近收藏</option>
+        <option value="starred">最近 Star</option>
         <option value="recent">最近更新</option>
         <option value="name">名称 A-Z</option>
       </select>
     </div>
     <div class="sel">
-      <select id="updatedSel">
+      <select id="updatedSel" aria-label="按更新时间筛选">
         <option value="">任意时间更新</option>
         <option value="week">本周有更新</option>
         <option value="month">本月有更新</option>
       </select>
     </div>
-    <div class="starsel" id="starSel">
-      <button data-v="all" class="on">全部星标</button>
-      <button data-v="lt1k">&lt;1k</button>
-      <button data-v="1k10k">1k-10k</button>
-      <button data-v="10k100k">10k-100k</button>
-      <button data-v="gt100k">&gt;100k</button>
+    <div class="starsel" id="starSel" role="group" aria-label="按星标数量筛选">
+      <button data-v="all" class="on" aria-pressed="true">全部星标</button>
+      <button data-v="lt1k" aria-pressed="false">&lt;1k</button>
+      <button data-v="1k10k" aria-pressed="false">1k-10k</button>
+      <button data-v="10k100k" aria-pressed="false">10k-100k</button>
+      <button data-v="gt100k" aria-pressed="false">&gt;100k</button>
     </div>
   </div>
 
@@ -154,14 +179,15 @@
   <div id="pinnedWrap" style="display:none">
     <div class="sec-title">
       <svg class="icon filled" viewBox="0 0 24 24"><path d="M12 2l2.9 6.3 6.9.6-5.2 4.6 1.6 6.8L12 16.9 5.8 20.3l1.6-6.8L2.2 8.9l6.9-.6L12 2z"/></svg>
-      我的收藏 · 置顶
+      本地置顶
       <span class="n" style="color:var(--muted);font-weight:400" id="pinnedCount"></span>
+      <span class="pin-hint">仅保存在当前浏览器，不会改变 GitHub Star</span>
     </div>
     <div class="pinned" id="pinned"></div>
   </div>
 
   <div class="sec-title" id="listTitle" style="margin-top:20px">全部项目 <span class="n" style="color:var(--muted);font-weight:400" id="listCount"></span></div>
-  <main class="grid" id="grid"></main>
+  <main class="grid" id="grid" tabindex="-1"></main>
   <div class="load-more-wrap" id="loadMoreWrap" style="display:none">
     <button class="btn" id="loadMoreBtn">显示更多</button>
   </div>
@@ -175,18 +201,18 @@
   </div><!-- /main -->
   <aside class="side">
     <div class="side-tabs">
-      <button class="side-tab on" data-side="trend">每日排行榜</button>
-      <button class="side-tab" data-side="feed">关注动态</button>
-      <button class="side-tab" data-side="aihot">AI 动态</button>
+      <button class="side-tab on" data-side="trend" aria-pressed="true">每日排行榜</button>
+      <button class="side-tab" data-side="feed" aria-pressed="false">关注动态</button>
+      <button class="side-tab" data-side="aihot" aria-pressed="false">AI 动态</button>
     </div>
     <div class="trending on">
       <h2>每日 AI 排行榜</h2>
       <div class="trend-sub" id="trendUpdated"></div>
       <div id="aiSummarySlot">__AI_SUMMARY__</div>
       <div class="trend-tabs" id="trendTabs">
-        <button class="trend-tab on" data-tab="rising">涨星榜</button>
-        <button class="trend-tab" data-tab="total">总星标榜</button>
-        <button class="trend-tab" data-tab="new">新秀榜</button>
+        <button class="trend-tab on" data-tab="rising" aria-pressed="true">涨星榜</button>
+        <button class="trend-tab" data-tab="total" aria-pressed="false">总星标榜</button>
+        <button class="trend-tab" data-tab="new" aria-pressed="false">新秀榜</button>
       </div>
       <div class="trend-list" id="trendList"></div>
       <button class="trend-more" id="trendMore">查看完整 Top20</button>
@@ -206,6 +232,15 @@
   </aside>
 </div>
 
+<footer class="site-foot">
+  <div class="foot-in">
+    <span>StarHub · 数据更新于 <b id="footUpdated">—</b> · <span id="footTotal">—</span> 个 Star</span>
+    <span class="foot-stale" id="footStale" hidden>数据可能已过期</span>
+    <span class="foot-note">本地置顶只保存在当前浏览器</span>
+    <a id="footRepo" href="__REPO_URL__" target="_blank" rel="noopener">源码 / 数据</a>
+  </div>
+</footer>
+
 <div class="modal" id="trendModal" role="dialog" aria-modal="true" aria-label="完整排行榜">
   <div class="panel">
     <div class="m-hd">
@@ -213,9 +248,9 @@
       <button class="close" data-close aria-label="关闭">×</button>
     </div>
     <div class="m-tabs" id="mTrendTabs">
-      <button class="trend-tab on" data-tab="rising">涨星榜</button>
-      <button class="trend-tab" data-tab="total">总星标榜</button>
-      <button class="trend-tab" data-tab="new">新秀榜</button>
+      <button class="trend-tab on" data-tab="rising" aria-pressed="true">涨星榜</button>
+      <button class="trend-tab" data-tab="total" aria-pressed="false">总星标榜</button>
+      <button class="trend-tab" data-tab="new" aria-pressed="false">新秀榜</button>
     </div>
     <div class="m-list" id="mTrendList"></div>
   </div>
@@ -233,20 +268,37 @@
         <button id="sEditQ" title="编辑查询词后重新搜索">编辑</button>
       </div>
       <div class="s-lang">
-        <select id="sLang" title="按语言过滤结果"><option value="">全部语言</option></select>
+        <select id="sLang" aria-label="按语言过滤结果" title="按语言过滤结果"><option value="">全部语言</option></select>
+      </div>
+      <div class="s-lang">
+        <select id="sStars" aria-label="按星标过滤结果">
+          <option value="">全部星标</option>
+          <option value=">100">100+</option>
+          <option value=">1000">1k+</option>
+          <option value=">10000">1w+</option>
+          <option value=">100000">10w+</option>
+        </select>
+      </div>
+      <div class="s-lang">
+        <select id="sUpdated" aria-label="按更新时间过滤结果">
+          <option value="">任意时间</option>
+          <option value=">7d">近 7 天</option>
+          <option value=">30d">近 30 天</option>
+        </select>
       </div>
     </div>
+    <div class="s-syntax">语法：stars:>1k · language:Python · topic:rag · org:owner · 支持引号短语</div>
     <div class="m-tabs" id="sTabs">
-      <button class="trend-tab on" data-sort="best-match">相关度</button>
-      <button class="trend-tab" data-sort="stars">最多星标</button>
-      <button class="trend-tab" data-sort="updated">最近更新</button>
+      <button class="trend-tab on" data-sort="best-match" aria-pressed="true">相关度</button>
+      <button class="trend-tab" data-sort="stars" aria-pressed="false">最多星标</button>
+      <button class="trend-tab" data-sort="updated" aria-pressed="false">最近更新</button>
     </div>
-    <div class="s-tip hidden" id="sTip"></div>
+    <div class="s-tip hidden" id="sTip" role="status"></div>
     <div class="m-list" id="sList"></div>
-    <div class="s-foot" id="sFoot"></div>
+    <div class="s-foot" id="sFoot" role="status" aria-live="polite"></div>
   </div>
 </div>
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 <input type="file" id="fileInput" accept=".json" style="display:none">
 <button id="backTop" class="back-top" aria-label="返回顶部" title="返回顶部">
   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg>

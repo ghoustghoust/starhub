@@ -36,8 +36,10 @@ def build_index_html(
     asset_version = re.sub(r"\D", "", updated) or datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     if api_base is None:
         api_base = site_value("api_base", "")
+    repo_url = "https://github.com/" + site_value("repository", "ghoustghoust/starhub")
     return (
-        template.replace("__CATS__", safe_json(cats))
+        template.replace("__REPO_URL__", repo_url)
+        .replace("__CATS__", safe_json(cats))
         .replace("__LANGS__", safe_json(LANG_COLORS))
         .replace("__FAVS__", safe_json(DEFAULT_FAVS))
         .replace("__API_BASE__", api_base)

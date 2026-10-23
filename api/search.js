@@ -342,7 +342,8 @@ export default async function handler(req, res) {
     const plans = buildQueryPlan(zh, enMap);
 
     let data = null;
-    for (const plan of plans) {
+    for (let planIndex = 0; planIndex < plans.length; planIndex++) {
+      const plan = plans[planIndex];
       const query = withLanguage(plan, lang);
       const ck = query.trim().replace(/\s+/g, ' ').toLowerCase() + '|' + sort + '|' + page;
       const hit = cacheGet(searchCache, ck, TTL_SEARCH);
@@ -400,6 +401,7 @@ export default async function handler(req, res) {
         data = {
           query,
           ...meta,
+          relaxed: planIndex > 0,
           strategy: query,
           page,
           total: j.total_count,
@@ -417,7 +419,7 @@ export default async function handler(req, res) {
     }
     if (!data) {
       if (isGet) setPublicCache(res, (needsTranslation && !translated) ? CDN_TTL_UNTRANSLATED : CDN_TTL, 60);
-      res.status(200).json({ query: zh, ...meta, strategy: zh, page, total: 0, items: [] });
+      res.status(200).json({ query: zh, ...meta, relaxed: false, strategy: zh, page, total: 0, items: [] });
       return;
     }
     if (isGet) {

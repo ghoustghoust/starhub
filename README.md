@@ -33,6 +33,8 @@ python fetch_and_build.py
 
 构建产物为 `index.html`、`ai-daily.html` 与 `data/pool.js`（收藏池，已忽略提交、随 Pages 发布）。CI 当前使用 `STARHUB_FAST=1` 跳过免费翻译端点的长重试；带缓存的增强管线在重构中恢复。
 
+「本地置顶」只写入当前浏览器的 localStorage，不会修改 GitHub Star；换浏览器或清缓存后可用「导出 / 导入」备份恢复。
+
 ## 自定义域名
 
 生产入口是 Vercel 自定义域 `https://starhub.ghoustlab.com`：DNS 添加 CNAME 指向 `cname.vercel-dns.com`，在 Vercel 项目中绑定域名；`vercel.json` 将非 `/api/` 请求 rewrite 到 GitHub Pages，静态站与 API 因此同域。Pages 原地址仍可访问，跨域调用由 API 的 Origin 白名单放行。

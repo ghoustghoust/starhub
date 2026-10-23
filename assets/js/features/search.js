@@ -41,6 +41,51 @@ function hasLanguageFilter(){
 function stripLanguageFilter(q){
   return String(q||'').replace(/(^|\s)-?language:[^\s]+/gi, ' ').replace(/\s+/g, ' ').trim();
 }
+function stripQualifier(q, key){
+  return String(q||'').replace(new RegExp('(^|\\s)-?' + key + ':[^\\s]+', 'gi'), ' ').replace(/\s+/g, ' ').trim();
+}
+function readQualifier(q, key){
+  const m = String(q||'').match(new RegExp('(?:^|\\s)' + key + ':([^\\s]+)', 'i'));
+  return m ? m[1] : '';
+}
+function syncSearchFilters(){
+  const stars = $('#sStars'), updated = $('#sUpdated');
+  if(stars){
+    const value = readQualifier(state.searchQuery, 'stars');
+    stars.value = [...stars.options].some(o => o.value === value) ? value : '';
+  }
+  if(updated){
+    const value = readQualifier(state.searchQuery, 'pushed');
+    updated.value = [...updated.options].some(o => o.value === value) ? value : '';
+  }
+}
+export function applySearchQuery(query){
+  const next = String(query || '').trim();
+  sEditing = false;
+  state.searchQuery = next;
+  state.q = next;
+  const hero = $('#q');
+  if(hero){ hero.value = next; $('#btnClear').style.display = next ? 'block' : 'none'; }
+  const title = $('#sTitleQ'); if(title) title.textContent = next;
+  const shown = $('#sQuery'); if(shown) shown.textContent = next;
+  syncSearchFilters();
+  renderSearchHint();
+  syncSearchUrl();
+  if($('#searchModal') && $('#searchModal').classList.contains('open') && next.length >= 2) runSearch('new');
+}
+function applyQualifierFilters(){
+  let q = stripQualifier(state.searchQuery, 'stars');
+  const stars = $('#sStars')?.value || '';
+  if(stars) q = (q + ' stars:' + stars).trim();
+  q = stripQualifier(q, 'pushed');
+  const updated = $('#sUpdated')?.value || '';
+  if(updated) q = (q + ' pushed:' + updated).trim();
+  applySearchQuery(q);
+}
+const sStarsEl = document.getElementById('sStars');
+const sUpdatedEl = document.getElementById('sUpdated');
+if(sStarsEl) sStarsEl.addEventListener('change', applyQualifierFilters);
+if(sUpdatedEl) sUpdatedEl.addEventListener('change', applyQualifierFilters);
 
 const searchModalEl = document.getElementById('searchModal');
 if(searchModalEl){
@@ -64,7 +109,7 @@ export function renderSearchHint(){
   btn.textContent = isGlobal ? '搜索 GitHub' : '去 GitHub 搜';
   btn.title = isGlobal ? '在整个 GitHub 中搜索（跨语言）' : '切到全 GitHub 搜索';
   if(q.length < 2){
-    hint.innerHTML = isGlobal ? '输入至少 2 个字符后按 Enter 搜索整个 GitHub' : '在收藏中筛选；切到全 GitHub 可搜索整个站点';
+    hint.innerHTML = isGlobal ? '输入至少 2 个字符后按 Enter 搜索整个 GitHub' : '在 Star 池内筛选；切到全 GitHub 可搜索整个站点';
     return;
   }
   if(isGlobal){
@@ -72,7 +117,7 @@ export function renderSearchHint(){
     return;
   }
   const { faved, rest } = filterData();
-  hint.innerHTML = '收藏池匹配 <span class="n">' + (faved.length + rest.length) + '</span> 个 · 点「去 GitHub 搜」扩展';
+  hint.innerHTML = 'Star 池内匹配 <span class="n">' + (faved.length + rest.length) + '</span> 个 · 点「去 GitHub 搜」扩展';
 }
 
 
@@ -86,7 +131,12 @@ export function openSearchModal(){
     lang.innerHTML = '<option value="">全部语言</option>' + SEARCH_LANGS.map(l => '<option value="'+l+'">'+l+'</option>').join('');
   }
   lang.value = state.searchLang || '';
-  document.querySelectorAll('#sTabs .trend-tab').forEach(x => x.classList.toggle('on', x.dataset.sort === state.searchSort));
+  syncSearchFilters();
+  document.querySelectorAll('#sTabs .trend-tab').forEach(x => {
+    const on = x.dataset.sort === state.searchSort;
+    x.classList.toggle('on', on);
+    x.setAttribute('aria-pressed', String(on));
+  });
   $('#searchModal').classList.add('open');
   // 立即显示原词，避免加载期间查询词框空白（翻译完成后再覆盖为真实查询词）
   $('#sQuery').textContent = state.searchQuery;
@@ -244,13 +294,18 @@ export function renderSearchResults(j, append){
     const badge = pinned ? (starred ? '✓ 已 star · 置顶' : '★ 置顶') : (starred ? '✓ 已 star' : '');
     const fullName = escHtml(x.full_name || '');
     const url = escHtml(x.html_url || '#');
-    const topics = (x.topics || []).map(t => '<span class="s-tag">' + escHtml(t) + '</span>').join('');
+    const rawName = x.full_name || '';
+    const topics = (x.topics || []).map(t => '<button type="button" class="s-tag" data-sact="topic" data-topic="' + escHtml(t) + '" title="搜索该 topic">' + escHtml(t) + '</button>').join('');
+    const localAction = starred
+      ? '<button class="s-act" data-sact="local" data-fn="' + fullName + '">在池中查看</button>'
+      : '';
     row.innerHTML =
       '<div class="s-top">' +
-        '<a class="s-name" href="' + url + '" target="_blank" rel="noopener">' + hl(x.full_name || '', highlightQuery) + '</a>' +
+        '<a class="s-name" href="' + url + '" target="_blank" rel="noopener">' + hl(rawName, highlightQuery) + '</a>' +
         (badge ? '<span class="s-badge">' + badge + '</span>' : '') +
         '<div class="s-actions">' +
-          '<button class="s-act' + (pinned ? ' on' : '') + '" data-sact="fav" data-fn="' + fullName + '" title="收藏置顶">' + (pinned ? '★' : '☆') + '</button>' +
+          '<button class="s-act' + (pinned ? ' on' : '') + '" data-sact="fav" data-fn="' + fullName + '" aria-pressed="' + (pinned ? 'true' : 'false') + '" aria-label="' + (pinned ? '取消置顶' : '置顶到本页') + '" title="置顶到本页（不会改变 GitHub Star）">' + (pinned ? '★' : '☆') + '</button>' +
+          localAction +
           '<button class="s-act" data-sact="copy" data-fn="' + fullName + '" data-url="' + url + '">复制</button>' +
           '<a class="s-open" href="' + url + '" target="_blank" rel="noopener">' + icon.link + '打开</a>' +
         '</div>' +
@@ -272,7 +327,8 @@ export function renderSearchResults(j, append){
   const rawCount = (typeof j.raw_count === 'number') ? j.raw_count : (j.items || []).length;
   searchHasMore = rawCount === SEARCH_PER_PAGE && searchLoaded < Math.min(total, 1000);
   const spamNote = j.filtered_out ? ' · 已屏蔽 ' + j.filtered_out + ' 条低质或不相关结果' : '';
-  $('#sFoot').textContent = (searchHasMore
+  const relaxedNote = j.relaxed ? '已放宽为任一关键词 · ' : '';
+  $('#sFoot').textContent = relaxedNote + (searchHasMore
     ? '已显示 ' + searchLoaded + ' / 共 ' + Math.min(total, 1000) + ' 条 · 滚动加载更多'
     : (total > 1000 ? '已显示前 ' + searchLoaded + ' 条（共 ' + total + ' 个结果，GitHub 最多返回前 1000 条）' : '已显示全部 ' + searchLoaded + ' 条')) + spamNote;
 }
@@ -296,6 +352,7 @@ export function editSearchQuery(){
       const heroInput = $('#q');
       if(heroInput){ heroInput.value = v; $('#btnClear').style.display = 'block'; }
       $('#sTitleQ').textContent = v;
+      syncSearchFilters();
       renderSearchHint();
       syncSearchUrl();
       runSearch('new');

@@ -37,7 +37,7 @@ export function syncSearchUrl() {
 
   const query = state.q.trim();
   if (query) params.set('q', query);
-  params.set('mode', state.searchMode);
+  if (state.searchMode === 'global') params.set('mode', 'global');
 
   if (state.cat) params.set('cat', state.cat);
   if (state.lang) params.set('lang', state.lang);

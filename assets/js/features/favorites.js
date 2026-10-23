@@ -6,10 +6,10 @@ export function toggleFav(fullName) {
   if (!fullName) return;
   if (favs.has(fullName)) {
     favs.delete(fullName);
-    toast('已取消收藏');
+    toast('已取消置顶');
   } else {
     favs.add(fullName);
-    toast('已收藏并置顶');
+    toast('已置顶到本页');
   }
   saveFavs();
   renderList();
@@ -36,7 +36,7 @@ export function exportJson() {
   anchor.download = 'starhub-backup-' + new Date().toISOString().slice(0, 10) + '.json';
   anchor.click();
   URL.revokeObjectURL(anchor.href);
-  toast('已导出备份（收藏 ' + favs.size + ' 项）');
+  toast('已导出本地置顶备份（' + favs.size + ' 项）');
 }
 
 export function importJson(event) {
@@ -54,7 +54,7 @@ export function importJson(event) {
         .forEach((fullName) => favs.add(fullName));
       saveFavs();
       renderList();
-      toast('已恢复收藏 ' + favs.size + ' 项');
+      toast('已恢复本地置顶 ' + favs.size + ' 项');
     } catch {
       toast('导入失败：文件格式不正确');
     }

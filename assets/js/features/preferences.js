@@ -12,6 +12,8 @@ export function getTheme() {
 
 export function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
+  const toggle = $('#btnTheme');
+  if (toggle) toggle.setAttribute('aria-pressed', String(theme === 'dark'));
   const element = $('#themeIcon');
   if (!element) return;
   element.innerHTML = theme === 'dark'
@@ -36,6 +38,8 @@ export function getView() {
 export function applyView(view) {
   currentView = view === 'list' ? 'list' : 'card';
   document.body.classList.toggle('view-list', currentView === 'list');
+  const toggle = $('#btnView');
+  if (toggle) toggle.setAttribute('aria-pressed', String(currentView === 'list'));
   const element = $('#viewIcon');
   if (!element) return;
   element.innerHTML = currentView === 'list'

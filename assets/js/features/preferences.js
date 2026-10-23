@@ -19,19 +19,26 @@ export function applyTheme(theme) {
     : '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
 }
 
+// 内存态优先：localStorage 被隐私模式/策略拦截时，写入会静默失败。
+// 如果 getView 每次都回读存储，按钮会一直算出 card→list，表现为“切过去回不来”。
+let currentView = null;
+
 export function getView() {
+  if (currentView === 'list' || currentView === 'card') return currentView;
   try {
-    return localStorage.getItem(VIEW_KEY) || 'card';
+    currentView = localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'card';
   } catch {
-    return 'card';
+    currentView = 'card';
   }
+  return currentView;
 }
 
 export function applyView(view) {
-  document.body.classList.toggle('view-list', view === 'list');
+  currentView = view === 'list' ? 'list' : 'card';
+  document.body.classList.toggle('view-list', currentView === 'list');
   const element = $('#viewIcon');
   if (!element) return;
-  element.innerHTML = view === 'list'
+  element.innerHTML = currentView === 'list'
     ? '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>'
     : '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>';
 }

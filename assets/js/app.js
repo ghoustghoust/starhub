@@ -1,4 +1,4 @@
-import { API_BASE, DATA, POOL_NAMES, favs, state } from './core/state.js';
+import { API_BASE, DATA, POOL_NAMES, REFRESH_KEY, THEME_KEY, VIEW_KEY, favs, state } from './core/state.js';
 import { $ } from './core/dom.js';
 import { hydrateSearchState, syncSearchUrl } from './core/search-url.js';
 import { escHtml } from './core/format.js';

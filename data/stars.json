@@ -1,6 +1,6 @@
 {
  "schema_version": 2,
- "generated_at": "2026-10-23T04:23:59.904083Z",
+ "generated_at": "2026-10-23T04:29:58.364297Z",
  "items": [
   {
    "id": "2951461586/GPT-Register-Tool",
@@ -253,7 +253,7 @@
    "html_url": "https://github.com/goodseafly/how-to-make-work-pay",
    "description": "教你把工资、加班费和没休完的年假一分不少地要回来，社保断了怎么接、工伤生育怎么办；被针对、被调岗、被裁时知道怎么走、怎么不留尾巴。576 条建议，每条写明花掉什么、换回什么、证据有多硬，来源只引官方文件原文和研究文献。",
    "language": "HTML",
-   "stars": 414,
+   "stars": 415,
    "forks": 32,
    "license": "NOASSERTION",
    "topics": [
@@ -283,7 +283,7 @@
    "html_url": "https://github.com/Ebony-Vinyl/dsh-our-free-model",
    "description": "在 dsh 里装上这个插件即可，无需登录、注册或填 API Key，就能使用包括 DeepSeek V4.1 Flash、Kimi K3 在内的前沿模型——完全免费，不限量。 All you do is install this plugin in dsh: no login, no sign-up, no API key — the frontier models are just there, DeepSeek V4.1 Flash and Kimi K3 among them. Completely free, with no usage cap.",
    "language": "JavaScript",
-   "stars": 37217,
+   "stars": 37222,
    "forks": 1069,
    "license": "MIT",
    "topics": [
@@ -315,7 +315,7 @@
    "html_url": "https://github.com/maboloshi/github-chinese",
    "description": "GitHub 汉化插件，GitHub 中文化界面。 (GitHub Translation To Chinese)",
    "language": "JavaScript",
-   "stars": 36342,
+   "stars": 36345,
    "forks": 2027,
    "license": "GPL-3.0",
    "topics": [
@@ -424,7 +424,7 @@
    "html_url": "https://github.com/yetone/magpie",
    "description": "每个代理的模型。一处。来自菜单栏的 DeepSeek 上的 Codex、Kimi 上的 Claude Code。",
    "language": "Go",
-   "stars": 19684,
+   "stars": 19686,
    "forks": 1495,
    "license": "MIT",
    "topics": [
@@ -452,8 +452,8 @@
    "html_url": "https://github.com/morluto/rea",
    "description": "使用代理对任何内容进行逆向工程，从应用程序行为到本机二进制文件。",
    "language": "TypeScript",
-   "stars": 367400,
-   "forks": 92048,
+   "stars": 367433,
+   "forks": 92054,
    "license": "MIT",
    "topics": [
     "agent-skills",
@@ -547,7 +547,7 @@
    "html_url": "https://github.com/TencentCloud/Octop",
    "description": "更智能、自托管的人工智能助手——多用户、多代理。",
    "language": "Python",
-   "stars": 10756,
+   "stars": 10757,
    "forks": 1375,
    "license": "MIT",
    "topics": [
@@ -689,7 +689,7 @@
    "html_url": "https://github.com/Neet-Nestor/Telegram-Media-Downloader",
    "description": "即使群组限制下载，该脚本也允许您从 Telegram 网络下载图像和视频。",
    "language": "JavaScript",
-   "stars": 6206,
+   "stars": 6207,
    "forks": 609,
    "license": "GPL-3.0",
    "topics": [
@@ -717,7 +717,7 @@
    "html_url": "https://github.com/KKKKhazix/AIHOT",
    "description": "一个自己找热点、自己写日报的网站框架。把信源和精选标准换成你的，它就是你的行业热点站。",
    "language": "TypeScript",
-   "stars": 8456,
+   "stars": 8457,
    "forks": 2022,
    "license": "MIT",
    "topics": [
@@ -839,7 +839,7 @@
    "html_url": "https://github.com/Comfy-Org/ComfyUI",
    "description": "功能强大的模块化扩散模型 GUI 与后端。",
    "language": "Python",
-   "stars": 142065,
+   "stars": 142067,
    "forks": 16754,
    "license": "GPL-3.0",
    "topics": [
@@ -1507,7 +1507,7 @@
    "html_url": "https://github.com/anywhere-labs/dsh-desktop",
    "description": "为 DeepSeek Harness (DSH) 插件生态打造的现代化桌面端解决方案。万物皆「插件」，桌面本身也是「插件」。",
    "language": "TypeScript",
-   "stars": 32518,
+   "stars": 32519,
    "forks": 1494,
    "license": "MIT",
    "topics": [
@@ -1747,7 +1747,7 @@
    "html_url": "https://github.com/88lin/video_vip",
    "description": "全网VIP视频免费破解脚本，通过集成多个第三方解析接口，去除广告，解锁视频网站的会员限制，让用户享受免费的视频观看体验。适配PC+移动，支持爱奇艺、腾讯、优酷、芒果TV、bilibili等主流视频平台！脚本长期维护更新，完全免费",
    "language": "JavaScript",
-   "stars": 5752,
+   "stars": 5753,
    "forks": 571,
    "license": "",
    "topics": [
@@ -1906,7 +1906,7 @@
    "html_url": "https://github.com/RapidAI/RapidOCR",
    "description": "📄 出色的OCR多种编程语言工具包，基于ONNX Runtime、OpenVINO、MNN、PaddlePaddle、TensorRT和PyTorch。",
    "language": "Python",
-   "stars": 8280,
+   "stars": 8279,
    "forks": 757,
    "license": "Apache-2.0",
    "topics": [
@@ -1967,7 +1967,7 @@
    "html_url": "https://github.com/521xueweihan/HelloGitHub",
    "description": ":octocat: 分享 GitHub 上有趣、入门级的开源项目。Share interesting, entry-level open source projects on GitHub.",
    "language": "Python",
-   "stars": 183778,
+   "stars": 183779,
    "forks": 13062,
    "license": "",
    "topics": [
@@ -2044,7 +2044,7 @@
    "description": "一个先接住情绪、再分析关系并给出可执行策略的 Codex 恋爱军师，内置心理、法律、社会、人文、哲学、婚姻家庭与性学知识库，支持多元关系。",
    "language": "Python",
    "stars": 8435,
-   "forks": 855,
+   "forks": 856,
    "license": "MIT",
    "topics": [
     "ai-agent",
@@ -2279,7 +2279,7 @@
    "html_url": "https://github.com/calesthio/OpenMontage",
    "description": "全球首个开源智能体视频制作系统：12 条生产流水线、100+ 工具、700+ 技能文件，把 AI 编码助手变成完整视频工作室。",
    "language": "Python",
-   "stars": 70943,
+   "stars": 70945,
    "forks": 9170,
    "license": "AGPL-3.0",
    "topics": [
@@ -2580,7 +2580,7 @@
    "html_url": "https://github.com/nexu-io/open-design",
    "description": "开源的 Claude Design 替代品：本地优先桌面应用，让编码智能体成为设计引擎（原型、落地页、看板、幻灯片、图片视频），支持 20+ CLI。",
    "language": "TypeScript",
-   "stars": 103402,
+   "stars": 103403,
    "forks": 11836,
    "license": "Apache-2.0",
    "topics": [
@@ -3014,7 +3014,7 @@
    "html_url": "https://github.com/anthropics/skills",
    "description": "座席技能的公共存储库",
    "language": "Python",
-   "stars": 183084,
+   "stars": 183085,
    "forks": 21684,
    "license": "",
    "topics": [
@@ -3058,7 +3058,7 @@
    "html_url": "https://github.com/obra/superpowers",
    "description": "面向 AI Agent 的技能框架与软件开发方法论。",
    "language": "Shell",
-   "stars": 303811,
+   "stars": 303812,
    "forks": 27067,
    "license": "MIT",
    "topics": [
@@ -3143,7 +3143,7 @@
    "html_url": "https://github.com/DavidHDev/react-bits",
    "description": "动画、交互式和完全可定制的React组件的开源集合，用于构建令人难忘的网站。",
    "language": "JavaScript",
-   "stars": 50018,
+   "stars": 50017,
    "forks": 2473,
    "license": "NOASSERTION",
    "topics": [
@@ -3181,7 +3181,7 @@
    "html_url": "https://github.com/Panniantong/Agent-Reach",
    "description": "让您的人工智能代理看到整个互联网。阅读和搜索Twitter、Reddit、YouTube、GitHub、Bilibili、XiaoHongShu —一个CLI ，无API费用。",
    "language": "Python",
-   "stars": 101077,
+   "stars": 101080,
    "forks": 8909,
    "license": "MIT",
    "topics": [
@@ -3278,7 +3278,7 @@
     "word",
     "xlsx"
    ],
-   "pushed_at": "2026-10-20",
+   "pushed_at": "2026-10-23",
    "starred_at": "2026-06-10T09:00:21Z",
    "category": "coding",
    "category_label": "AI 编程 & 工具链",
@@ -3287,7 +3287,7 @@
     "level": "green",
     "stale": false
    },
-   "updated_today": false
+   "updated_today": true
   },
   {
    "id": "BigPizzaV3/CodexPlusPlus",
@@ -3295,7 +3295,7 @@
    "html_url": "https://github.com/BigPizzaV3/CodexPlusPlus",
    "description": "An enhanced tool for CodexApp, striving to make Codex better to use and more comfortable 一个CodexApp的增强工具，努力让Codex变得更好用更舒服",
    "language": "Rust",
-   "stars": 32502,
+   "stars": 32503,
    "forks": 2091,
    "license": "AGPL-3.0",
    "topics": [],
@@ -3368,8 +3368,8 @@
    "html_url": "https://github.com/mattpocock/skills",
    "description": "面向实战工程师的技能集，直接来自作者的 .agents 目录。",
    "language": "Shell",
-   "stars": 301038,
-   "forks": 25300,
+   "stars": 301042,
+   "forks": 25302,
    "license": "MIT",
    "topics": [],
    "pushed_at": "2026-10-22",
@@ -3389,7 +3389,7 @@
    "html_url": "https://github.com/javaht/claude-desktop-zh-cn",
    "description": "Claude桌面中文补丁（ macOS和Windows ）",
    "language": "PowerShell",
-   "stars": 7867,
+   "stars": 7868,
    "forks": 367,
    "license": "MIT",
    "topics": [],
@@ -3452,7 +3452,7 @@
    "html_url": "https://github.com/tauri-apps/tauri",
    "description": "使用Web前端构建更小、更快、更安全的桌面和移动应用程序。",
    "language": "Rust",
-   "stars": 112129,
+   "stars": 112130,
    "forks": 4106,
    "license": "Apache-2.0",
    "topics": [
@@ -3509,7 +3509,7 @@
    "html_url": "https://github.com/op7418/guizang-ppt-skill",
    "description": "AI 智能体技能：生成精美 HTML 幻灯片（电子杂志与瑞士风布局），含图片提示词、社交封面与 WebGL/低功耗演示运行时。",
    "language": "HTML",
-   "stars": 28470,
+   "stars": 28471,
    "forks": 1967,
    "license": "AGPL-3.0",
    "topics": [
@@ -3600,7 +3600,7 @@
    "html_url": "https://github.com/hugohe3/ppt-master",
    "description": "AI 把文档或主题直接生成为原生 PPT，含原生形状、转场动画、图表表格、语音旁白，支持自定义模板。",
    "language": "Python",
-   "stars": 66154,
+   "stars": 66163,
    "forks": 5201,
    "license": "MIT",
    "topics": [

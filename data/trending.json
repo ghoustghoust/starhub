@@ -1,7 +1,7 @@
 {
  "schema_version": 2,
- "generated_at": "2026-10-23T06:26:44.865554Z",
- "updated": "2026-10-23 14:26",
+ "generated_at": "2026-10-23T06:30:33.101927Z",
+ "updated": "2026-10-23 14:30",
  "summary": {
   "text": ""
  },
@@ -14,7 +14,7 @@
     "html_url": "https://github.com/cloudflare/security-audit-skill",
     "desc": "用于多阶段安全审计的编码代理技能，具有独立验证、机器可读的结果",
     "language": "JavaScript",
-    "stars": 40082,
+    "stars": 40089,
     "stars_today": 2979,
     "delta": 2979,
     "reason": "今日涨星 +2979"
@@ -26,7 +26,7 @@
     "html_url": "https://github.com/DietrichGebert/ponytail",
     "desc": "让你的人工智能代理像房间里最懒的高级开发人员一样思考。最好的代码是你从未编写过的代码。",
     "language": "JavaScript",
-    "stars": 173892,
+    "stars": 173899,
     "stars_today": 1948,
     "delta": 1948,
     "reason": "今日涨星 +1948"
@@ -38,7 +38,7 @@
     "html_url": "https://github.com/stablyai/orca",
     "desc": "Orca 是与一组并行代理一起工作的 ADE。使用您自己的订阅运行任何编码代理。可在桌面、移动和 VPS 上使用。",
     "language": "TypeScript",
-    "stars": 103074,
+    "stars": 103077,
     "stars_today": 1689,
     "delta": 1689,
     "reason": "今日涨星 +1689"
@@ -50,7 +50,7 @@
     "html_url": "https://github.com/Graphify-Labs/graphify",
     "desc": "将任何代码库及其文档、SQL 架构、配置和 PDF 转换为可查询的知识图。适用于 Claude Code、Cursor、Codex 和 Gemini CLI 的 /graphify 技能：本地确定性 AST 解析，每条边均已解释，无向量存储。",
     "language": "Python",
-    "stars": 133263,
+    "stars": 133266,
     "stars_today": 1408,
     "delta": 1408,
     "reason": "今日涨星 +1408"
@@ -62,7 +62,7 @@
     "html_url": "https://github.com/mattpocock/skills",
     "desc": "面向实战工程师的技能集，直接来自作者的 .agents 目录。",
     "language": "Shell",
-    "stars": 301131,
+    "stars": 301133,
     "stars_today": 1104,
     "delta": 1104,
     "reason": "今日涨星 +1104"
@@ -86,7 +86,7 @@
     "html_url": "https://github.com/Comfy-Org/ComfyUI",
     "desc": "功能强大的模块化扩散模型 GUI 与后端。",
     "language": "Python",
-    "stars": 142099,
+    "stars": 142100,
     "stars_today": 681,
     "delta": 681,
     "reason": "今日涨星 +681"
@@ -98,7 +98,7 @@
     "html_url": "https://github.com/Leonxlnx/taste-skill",
     "desc": "品味技能 - 给你的人工智能良好的品味。阻止人工智能产生无聊的、通用的斜坡",
     "language": "JavaScript",
-    "stars": 101253,
+    "stars": 101256,
     "stars_today": 630,
     "delta": 630,
     "reason": "今日涨星 +630"
@@ -110,7 +110,7 @@
     "html_url": "https://github.com/obra/superpowers",
     "desc": "面向 AI Agent 的技能框架与软件开发方法论。",
     "language": "Shell",
-    "stars": 303860,
+    "stars": 303863,
     "stars_today": 628,
     "delta": 628,
     "reason": "今日涨星 +628"
@@ -134,7 +134,7 @@
     "html_url": "https://github.com/twentyhq/twenty",
     "desc": "Salesforce 的开放替代方案，专为 AI 设计。",
     "language": "TypeScript",
-    "stars": 59558,
+    "stars": 59559,
     "stars_today": 605,
     "delta": 605,
     "reason": "今日涨星 +605"
@@ -146,7 +146,7 @@
     "html_url": "https://github.com/pbakaus/impeccable",
     "desc": "使您的 AI 线束在设计上更加出色的设计语言。",
     "language": "Rust",
-    "stars": 85112,
+    "stars": 85113,
     "stars_today": 587,
     "delta": 587,
     "reason": "今日涨星 +587"
@@ -158,7 +158,7 @@
     "html_url": "https://github.com/headroomlabs-ai/headroom",
     "desc": "在工具输出、日志、文件和 RAG 块到达 LLM 之前对其进行压缩。编码代理的标记减少了 20%，JSON 的标记减少了 60-95%，答案相同。库、代理、MCP 服务器。",
     "language": "Python",
-    "stars": 77593,
+    "stars": 77594,
     "stars_today": 517,
     "delta": 517,
     "reason": "今日涨星 +517"
@@ -182,7 +182,7 @@
     "html_url": "https://github.com/vllm-project/vllm",
     "desc": "适用于法学硕士的高吞吐量和内存高效推理和服务引擎",
     "language": "Python",
-    "stars": 95185,
+    "stars": 95186,
     "stars_today": 440,
     "delta": 440,
     "reason": "今日涨星 +440"
@@ -194,7 +194,7 @@
     "html_url": "https://github.com/firecrawl/firecrawl",
     "desc": "大规模网页搜索、抓取与交互的上下文 API。",
     "language": "TypeScript",
-    "stars": 194393,
+    "stars": 194394,
     "stars_today": 424,
     "delta": 424,
     "reason": "今日涨星 +424"
@@ -206,7 +206,7 @@
     "html_url": "https://github.com/msitarzewski/agency-agents",
     "desc": "触手可及的完整 AI 团队：从前端高手到 Reddit 社区达人，每个智能体都是带人格、流程和可交付成果的专家。",
     "language": "Shell",
-    "stars": 163345,
+    "stars": 163346,
     "stars_today": 355,
     "delta": 355,
     "reason": "今日涨星 +355"
@@ -218,7 +218,7 @@
     "html_url": "https://github.com/citrolabs/ego-lite",
     "desc": "AI 代理运行浏览器自动化的最快浏览器，专为与您的 AI 代理（如 Codex 或 Claude Code）共享您登录的浏览器状态而构建，而不会打扰您。零成本，零配置。",
     "language": "JavaScript",
-    "stars": 18876,
+    "stars": 18877,
     "stars_today": 311,
     "delta": 311,
     "reason": "今日涨星 +311"
@@ -256,7 +256,7 @@
     "html_url": "https://github.com/openclaw/openclaw",
     "desc": "开源 AI 个人助手，跨任意操作系统与平台运行。",
     "language": "TypeScript",
-    "stars": 392801,
+    "stars": 392802,
     "created_at": "2025-11-24",
     "reason": "累计 39.3万星标"
    },
@@ -267,7 +267,7 @@
     "html_url": "https://github.com/morluto/rea",
     "desc": "使用代理对任何内容进行逆向工程，从应用程序行为到本机二进制文件。",
     "language": "TypeScript",
-    "stars": 368064,
+    "stars": 368087,
     "created_at": "2026-04-14",
     "reason": "累计 36.8万星标"
    },
@@ -278,7 +278,7 @@
     "html_url": "https://github.com/obra/superpowers",
     "desc": "面向 AI Agent 的技能框架与软件开发方法论。",
     "language": "Shell",
-    "stars": 303860,
+    "stars": 303862,
     "created_at": "2025-10-09",
     "reason": "累计 30.4万星标"
    },
@@ -289,7 +289,7 @@
     "html_url": "https://github.com/affaan-m/ECC",
     "desc": "Agent 性能优化系统，整合技能、记忆、安全与代码研究。",
     "language": "JavaScript",
-    "stars": 286686,
+    "stars": 286688,
     "created_at": "2026-01-18",
     "reason": "累计 28.7万星标"
    },
@@ -333,7 +333,7 @@
     "html_url": "https://github.com/firecrawl/firecrawl",
     "desc": "大规模网页搜索、抓取与交互的上下文 API。",
     "language": "TypeScript",
-    "stars": 194393,
+    "stars": 194394,
     "created_at": "2024-04-15",
     "reason": "累计 19.4万星标"
    },
@@ -366,7 +366,7 @@
     "html_url": "https://github.com/f/prompts.chat",
     "desc": "精选 ChatGPT 提示词合集，支持自托管。",
     "language": "HTML",
-    "stars": 174078,
+    "stars": 174080,
     "created_at": "2022-12-05",
     "reason": "累计 17.4万星标"
    },
@@ -377,7 +377,7 @@
     "html_url": "https://github.com/DietrichGebert/ponytail",
     "desc": "让你的人工智能代理像房间里最懒的高级开发人员一样思考。最好的代码是你从未编写过的代码。",
     "language": "JavaScript",
-    "stars": 173891,
+    "stars": 173899,
     "created_at": "2026-06-12",
     "reason": "累计 17.4万星标"
    },
@@ -421,7 +421,7 @@
     "html_url": "https://github.com/Snailclimb/JavaGuide",
     "desc": "Java 面试与后端通用面试指南。",
     "language": "JavaScript",
-    "stars": 159213,
+    "stars": 159214,
     "created_at": "2018-05-07",
     "reason": "累计 15.9万星标"
    },

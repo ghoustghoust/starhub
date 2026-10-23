@@ -1,6 +1,6 @@
 {
  "schema_version": 2,
- "updated_at": "2026-10-23T06:26:44.865554Z",
+ "updated_at": "2026-10-23T06:30:33.101927Z",
  "map": {
   "2951461586/GPT-Register-Tool": "assistant",
   "bestnite/skills": "tools",
@@ -138,7 +138,8 @@
   "jiellll1219/OpenDoctoratePy-EX-Public": "agent",
   "yaobiao131/downkyicore": "tools",
   "lixibi/browser-use": "agent",
-  "dadaguailhb/TCL": "agent"
+  "dadaguailhb/TCL": "agent",
+  "Ebony-Vinyl/EAC-design-world": "video"
  },
  "labels": {
   "agent": "AI Agent & Skills",

@@ -47,6 +47,7 @@ jobs:
         run: |
           test -s index.html
           test -s ai-daily.html
+          test -s assets/css/main.css
           ! grep -q 'rss-aggregator' index.html
           ! grep -q 'daily-insight' ai-daily.html
 
@@ -59,6 +60,7 @@ jobs:
           cp index.html ai-daily.html _site/
           if [ -f trending_board.json ]; then cp trending_board.json _site/; fi
           if [ -d data ]; then cp -r data _site/; fi
+          if [ -d assets ]; then cp -r assets _site/; fi
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

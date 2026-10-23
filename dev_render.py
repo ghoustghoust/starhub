@@ -1,48 +1,73 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""本地开发工具：从现有 index.html 提取已注入的数据，重新渲染 template.html 生成 index.html。
-仅用于本地预览模板改动；不参与 GitHub Actions 构建。"""
+"""本地开发工具：从现有 index.html 提取已注入的数据，重新渲染 template.html。
+
+只用于本地预览模板/样式改动；不参与 GitHub Actions 构建。
+"""
 import json
 import re
+import sys
 
 SRC = "index.html"
 TPL = "template.html"
 
-# (常量名, 模板占位符, 后继行前缀)：占位符名与常量名不同（__LANGS__/__FAVS__），
-# 用后继常量行作截取边界，避免 JSON 内部分号误伤（DEFAULT_FAVS 后继是 STORE_KEY 非 UPDATED）
-PAIRS = [
-    ("DATA", "__DATA__", "const CATS"),
-    ("CATS", "__CATS__", "const LANG_COLORS"),
-    ("LANG_COLORS", "__LANGS__", "const DEFAULT_FAVS"),
-    ("DEFAULT_FAVS", "__FAVS__", "const STORE_KEY"),
-    ("UPDATED", "__UPDATED__", "const TRENDING"),
-    ("TRENDING", "__TRENDING__", "const FEED"),
-    ("FEED", "__FEED__", "\nconst $"),
+CONSTANTS = [
+    ("DATA", "__DATA__"),
+    ("CATS", "__CATS__"),
+    ("LANG_COLORS", "__LANGS__"),
+    ("DEFAULT_FAVS", "__FAVS__"),
+    ("UPDATED", "__UPDATED__"),
+    ("TRENDING", "__TRENDING__"),
+    ("FEED", "__FEED__"),
 ]
 
 
-# 常量名 → 模板占位符
-PLACEHOLDER = {name: ph for name, ph, _ in PAIRS}
+def extract_value(source, name):
+    match = re.search(r"(?:const|let)\s+%s\s*=\s*" % re.escape(name), source)
+    if not match:
+        raise SystemExit("index.html 中未找到常量 %s" % name)
+
+    start = index = match.end()
+    depth = 0
+    quote = None
+    escaped = False
+    while index < len(source):
+        char = source[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        else:
+            if char in "'\"`":
+                quote = char
+            elif char in "([{":
+                depth += 1
+            elif char in ")]}":
+                depth -= 1
+            elif char == ";" and depth == 0:
+                return source[start:index]
+        index += 1
+    raise SystemExit("常量 %s 没有找到结束分号" % name)
 
 
 def main():
-    src = open(SRC, encoding="utf-8").read()
-    tpl = open(TPL, encoding="utf-8").read()
-    for name, ph, nxt in PAIRS:
-        pat = r"const %s = (.*?);\n%s" % (name, re.escape(nxt))
-        m = re.search(pat, src, re.S)
-        if not m:
-            raise SystemExit("index.html 中未找到常量 %s" % name)
-        raw = m.group(1)
+    source = open(SRC, encoding="utf-8").read()
+    template = open(TPL, encoding="utf-8").read()
+
+    for name, placeholder in CONSTANTS:
+        raw = extract_value(source, name).strip()
         if name == "UPDATED":
-            # 源文件是单引号字符串 '2026-08-14 15:23'，剥掉外层引号（模板自带引号）
-            raw = raw.strip()[1:-1]
+            raw = raw[1:-1]
         else:
-            json.loads(raw)  # 校验数据完整
-        if ph not in tpl:
-            raise SystemExit("template.html 中缺少占位符 %s" % ph)
-        tpl = tpl.replace(ph, raw)
-    open(SRC, "w", encoding="utf-8").write(tpl)
+            json.loads(raw)
+        if placeholder not in template:
+            raise SystemExit("template.html 中缺少占位符 %s" % placeholder)
+        template = template.replace(placeholder, raw)
+
+    open(SRC, "w", encoding="utf-8").write(template)
     print("渲染完成：index.html 已由 template.html 重新生成")
 
 

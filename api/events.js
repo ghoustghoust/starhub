@@ -26,6 +26,13 @@ function parseCn(iso) {
   return Number.isNaN(date.getTime()) ? null : new Date(date.getTime() + CN_OFFSET);
 }
 
+export function resolveEventScope(following, owner) {
+  const users = Array.isArray(following) ? following.filter(Boolean) : [];
+  if (users.length) return { scope: 'following', users, followingCount: users.length };
+  if (owner) return { scope: 'self', users: [owner], followingCount: 0 };
+  return { scope: 'following', users: [], followingCount: 0 };
+}
+
 async function fetchFollowing() {
   if (!OWNER) return [];
   const out = [];
@@ -115,8 +122,7 @@ export default async function handler(req, res) {
       // Scope/网络问题不应让整个动态块 502：无关注列表时改看账号自己的公开动态。
       console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'events_following_fail', error: String(err && err.message || err) }));
     }
-    const scope = following.length ? 'following' : (OWNER ? 'self' : 'following');
-    const users = following.length ? following : (OWNER ? [OWNER] : []);
+    const { scope, users, followingCount } = resolveEventScope(following, OWNER);
     if (scope === 'self') {
       console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'events_scope_self', owner: OWNER }));
     }
@@ -132,7 +138,7 @@ export default async function handler(req, res) {
       window: '24h',
       scope,
       owner: OWNER || null,
-      following_count: following.length,
+      following_count: followingCount,
       items: all,
     };
     cache = { t: Date.now(), v: body };

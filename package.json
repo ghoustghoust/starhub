@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "bundle": "npx --yes esbuild@0.28.2 assets/js/app.js --bundle --format=esm --outfile=assets/js/app.bundle.js --minify",
-    "test": "node --test tests/search-quality.test.mjs tests/frontend-regressions.test.mjs"
+    "test": "node --test tests/search-quality.test.mjs tests/frontend-regressions.test.mjs tests/events.test.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -1,9 +1,9 @@
-import { API_BASE, feedState, siteData } from '../core/state.js';
+import { API_BASE, UPDATED, feedState, siteData } from '../core/state.js';
 import { $, icon } from '../core/dom.js';
 import { escHtml } from '../core/format.js';
 import { renderTrending } from './trending.js';
 
-const EVENTS_API = API_BASE + '/api/events';
+const EVENTS_API = API_BASE + '/api/events?v=' + encodeURIComponent(UPDATED || 'dev');
 
 /* Following activity feed. */
 // ---- 近 24 小时关注动态 ----
@@ -11,10 +11,21 @@ const FEED_COLORS = { repo:'#0969da', star:'#e3a008', follow:'#8250df', pr:'#1a7
 export function renderFeed(){
   const list = $('#feedList');
   const items = siteData.FEED || [];
-  $('#feedUpdated').textContent = '近 24 小时滚动窗口 · ' + (feedState.live ? '实时更新于 ' : '更新于 ') + feedState.updated;
+  const isSelf = feedState.scope === 'self';
+  const title = $('#feedTitle');
+  if(title) title.textContent = isSelf ? '我的最近公开动态' : '近 24 小时关注动态';
+  const sideTab = $('.side-tab[data-side="feed"]');
+  if(sideTab) sideTab.textContent = isSelf ? '我的动态' : '关注动态';
+  $('#feedUpdated').textContent = (isSelf
+    ? '你还没有关注任何人 · 以下是你的最近公开动态 · '
+    : '近 24 小时滚动窗口 · ') + (feedState.live ? '实时更新于 ' : '更新于 ') + feedState.updated;
   list.innerHTML = '';
   if(!items.length){
-    list.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:16px 0">近 24 小时暂无关注动态</div>';
+    const follow = (isSelf && feedState.owner)
+      ? ' <a href="https://github.com/' + encodeURIComponent(feedState.owner) + '?tab=following" target="_blank" rel="noopener" style="color:var(--brand)">去 GitHub 关注</a>'
+      : '';
+    list.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:16px 0">' +
+      (isSelf ? '你还没有关注任何人，近 24 小时也没有公开动态。' : '近 24 小时暂无关注动态。') + follow + '</div>';
     return;
   }
   items.forEach(f => {
@@ -52,6 +63,9 @@ export async function refreshFeed(){
     if(!j || !Array.isArray(j.items)) return;
     siteData.FEED = j.items;
     feedState.updated = j.updated_at || '';
+    feedState.scope = j.scope === 'self' ? 'self' : 'following';
+    feedState.followingCount = typeof j.following_count === 'number' ? j.following_count : null;
+    feedState.owner = j.owner || '';
     feedState.live = true;
     renderFeed();
   }catch(e){ /* 静默降级：网络异常时保持静态数据 */ }

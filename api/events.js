@@ -1,12 +1,14 @@
 // GET /api/events — recent public activity from the token owner's following list.
 import { applyCors, rejectMethod, setPublicCache } from './_lib/http.js';
 import { ghJson } from './_lib/github.js';
+import { GITHUB_REPOSITORY } from './_lib/config.js';
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 const TTL = 10 * 60 * 1000;
 const CDN_TTL = 300;
 const CONCURRENCY = 3;
 const MAX_FOLLOWING = Math.max(1, parseInt(process.env.EVENTS_MAX_USERS || '200', 10) || 200);
+const OWNER = (process.env.EVENTS_OWNER || GITHUB_REPOSITORY.split('/')[0] || '').trim();
 
 let cache = { t: 0, v: null };
 
@@ -25,10 +27,12 @@ function parseCn(iso) {
 }
 
 async function fetchFollowing() {
+  if (!OWNER) return [];
   const out = [];
   const maxPages = Math.ceil(MAX_FOLLOWING / 100);
   for (let page = 1; page <= maxPages; page++) {
-    const data = await ghJson(`/user/following?per_page=100&page=${page}`, { timeout: 12000 });
+    // 公开 following 端点不依赖 token 的 read:user scope；当前 PAT 只有 repo/workflow 等权限。
+    const data = await ghJson(`/users/${encodeURIComponent(OWNER)}/following?per_page=100&page=${page}`, { timeout: 12000 });
     out.push(...data.map((entry) => entry.login).filter(Boolean));
     if (out.length >= MAX_FOLLOWING) {
       out.length = MAX_FOLLOWING;
@@ -104,15 +108,33 @@ export default async function handler(req, res) {
     const now = cnNow();
     const cutoff = new Date(now.getTime() - WINDOW_MS);
     const today = cnStr(now).date;
-    const following = await fetchFollowing();
+    let following = [];
+    try {
+      following = await fetchFollowing();
+    } catch (err) {
+      // Scope/网络问题不应让整个动态块 502：无关注列表时改看账号自己的公开动态。
+      console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'events_following_fail', error: String(err && err.message || err) }));
+    }
+    const scope = following.length ? 'following' : (OWNER ? 'self' : 'following');
+    const users = following.length ? following : (OWNER ? [OWNER] : []);
+    if (scope === 'self') {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), type: 'events_scope_self', owner: OWNER }));
+    }
     const all = [];
-    for (let index = 0; index < following.length; index += CONCURRENCY) {
-      const batch = following.slice(index, index + CONCURRENCY);
+    for (let index = 0; index < users.length; index += CONCURRENCY) {
+      const batch = users.slice(index, index + CONCURRENCY);
       const results = await Promise.allSettled(batch.map((user) => fetchUserEvents(user, cutoff, today)));
       for (const result of results) if (result.status === 'fulfilled') all.push(...result.value);
     }
     all.sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
-    const body = { updated_at: cnStr(now).date + ' ' + cnStr(now).time, window: '24h', items: all };
+    const body = {
+      updated_at: cnStr(now).date + ' ' + cnStr(now).time,
+      window: '24h',
+      scope,
+      owner: OWNER || null,
+      following_count: following.length,
+      items: all,
+    };
     cache = { t: Date.now(), v: body };
     setPublicCache(res, CDN_TTL, 300);
     res.status(200).json(body);

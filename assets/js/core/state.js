@@ -66,5 +66,8 @@ export const siteData = {
 export const feedState = {
   updated: UPDATED,
   live: false,
+  scope: 'following',
+  followingCount: null,
+  owner: '',
   timer: null,
 };

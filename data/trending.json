@@ -1,7 +1,7 @@
 {
  "schema_version": 2,
- "generated_at": "2026-10-23T07:29:54.437788Z",
- "updated": "2026-10-23 15:29",
+ "generated_at": "2026-10-24T05:35:50.305567Z",
+ "updated": "2026-10-24 13:35",
  "summary": {
   "text": ""
  },
@@ -14,10 +14,10 @@
     "html_url": "https://github.com/cloudflare/security-audit-skill",
     "desc": "用于多阶段安全审计的编码代理技能，具有独立验证、机器可读的结果",
     "language": "JavaScript",
-    "stars": 40225,
-    "stars_today": 2979,
-    "delta": 2979,
-    "reason": "今日涨星 +2979"
+    "stars": 42502,
+    "stars_today": 2716,
+    "delta": 2716,
+    "reason": "今日涨星 +2716"
    },
    {
     "name": "ponytail",
@@ -26,22 +26,10 @@
     "html_url": "https://github.com/DietrichGebert/ponytail",
     "desc": "让你的人工智能代理像房间里最懒的高级开发人员一样思考。最好的代码是你从未编写过的代码。",
     "language": "JavaScript",
-    "stars": 174010,
-    "stars_today": 1948,
-    "delta": 1948,
-    "reason": "今日涨星 +1948"
-   },
-   {
-    "name": "orca",
-    "owner": "stablyai",
-    "full_name": "stablyai/orca",
-    "html_url": "https://github.com/stablyai/orca",
-    "desc": "Orca 是与一组并行代理一起工作的 ADE。使用您自己的订阅运行任何编码代理。可在桌面、移动和 VPS 上使用。",
-    "language": "TypeScript",
-    "stars": 103135,
-    "stars_today": 1689,
-    "delta": 1689,
-    "reason": "今日涨星 +1689"
+    "stars": 174930,
+    "stars_today": 1575,
+    "delta": 1575,
+    "reason": "今日涨星 +1575"
    },
    {
     "name": "graphify",
@@ -50,10 +38,46 @@
     "html_url": "https://github.com/Graphify-Labs/graphify",
     "desc": "将任何代码库及其文档、SQL 架构、配置和 PDF 转换为可查询的知识图。适用于 Claude Code、Cursor、Codex 和 Gemini CLI 的 /graphify 技能：本地确定性 AST 解析，每条边均已解释，无向量存储。",
     "language": "Python",
-    "stars": 133344,
-    "stars_today": 1408,
-    "delta": 1408,
-    "reason": "今日涨星 +1408"
+    "stars": 133991,
+    "stars_today": 1173,
+    "delta": 1173,
+    "reason": "今日涨星 +1173"
+   },
+   {
+    "name": "OpenShell",
+    "owner": "NVIDIA",
+    "full_name": "NVIDIA/OpenShell",
+    "html_url": "https://github.com/NVIDIA/OpenShell",
+    "desc": "OpenShell is the safe, private runtime for autonomous AI agents.",
+    "language": "Rust",
+    "stars": 18927,
+    "stars_today": 1119,
+    "delta": 1119,
+    "reason": "今日涨星 +1119"
+   },
+   {
+    "name": "orca",
+    "owner": "stablyai",
+    "full_name": "stablyai/orca",
+    "html_url": "https://github.com/stablyai/orca",
+    "desc": "Orca 是与一组并行代理一起工作的 ADE。使用您自己的订阅运行任何编码代理。可在桌面、移动和 VPS 上使用。",
+    "language": "TypeScript",
+    "stars": 104087,
+    "stars_today": 1081,
+    "delta": 1081,
+    "reason": "今日涨星 +1081"
+   },
+   {
+    "name": "claude-howto",
+    "owner": "luongnv89",
+    "full_name": "luongnv89/claude-howto",
+    "html_url": "https://github.com/luongnv89/claude-howto",
+    "desc": "A visual, example-driven guide to Claude Code — from basic concepts to advanced agents, with copy-paste templates that bring immediate value.",
+    "language": "Python",
+    "stars": 44058,
+    "stars_today": 1053,
+    "delta": 1053,
+    "reason": "今日涨星 +1053"
    },
    {
     "name": "skills",
@@ -62,166 +86,10 @@
     "html_url": "https://github.com/mattpocock/skills",
     "desc": "面向实战工程师的技能集，直接来自作者的 .agents 目录。",
     "language": "Shell",
-    "stars": 301189,
-    "stars_today": 1104,
-    "delta": 1104,
-    "reason": "今日涨星 +1104"
-   },
-   {
-    "name": "supabase",
-    "owner": "supabase",
-    "full_name": "supabase/supabase",
-    "html_url": "https://github.com/supabase/supabase",
-    "desc": "Postgres 开发平台。 Supabase 为您提供专用的 Postgres 数据库来构建您的 Web、移动和 AI 应用程序。",
-    "language": "TypeScript",
-    "stars": 113609,
-    "stars_today": 693,
-    "delta": 693,
-    "reason": "今日涨星 +693"
-   },
-   {
-    "name": "ComfyUI",
-    "owner": "Comfy-Org",
-    "full_name": "Comfy-Org/ComfyUI",
-    "html_url": "https://github.com/Comfy-Org/ComfyUI",
-    "desc": "功能强大的模块化扩散模型 GUI 与后端。",
-    "language": "Python",
-    "stars": 142121,
-    "stars_today": 681,
-    "delta": 681,
-    "reason": "今日涨星 +681"
-   },
-   {
-    "name": "taste-skill",
-    "owner": "Leonxlnx",
-    "full_name": "Leonxlnx/taste-skill",
-    "html_url": "https://github.com/Leonxlnx/taste-skill",
-    "desc": "品味技能 - 给你的人工智能良好的品味。阻止人工智能产生无聊的、通用的斜坡",
-    "language": "JavaScript",
-    "stars": 101284,
-    "stars_today": 630,
-    "delta": 630,
-    "reason": "今日涨星 +630"
-   },
-   {
-    "name": "superpowers",
-    "owner": "obra",
-    "full_name": "obra/superpowers",
-    "html_url": "https://github.com/obra/superpowers",
-    "desc": "面向 AI Agent 的技能框架与软件开发方法论。",
-    "language": "Shell",
-    "stars": 303881,
-    "stars_today": 628,
-    "delta": 628,
-    "reason": "今日涨星 +628"
-   },
-   {
-    "name": "freellmapi",
-    "owner": "tashfeenahmed",
-    "full_name": "tashfeenahmed/freellmapi",
-    "html_url": "https://github.com/tashfeenahmed/freellmapi",
-    "desc": "OpenAI 兼容代理，聚合 28 家大模型免费额度（约 40 亿 token/月），支持智能路由、自动故障转移、密钥加密。",
-    "language": "TypeScript",
-    "stars": 39757,
-    "stars_today": 625,
-    "delta": 625,
-    "reason": "今日涨星 +625"
-   },
-   {
-    "name": "twenty",
-    "owner": "twentyhq",
-    "full_name": "twentyhq/twenty",
-    "html_url": "https://github.com/twentyhq/twenty",
-    "desc": "Salesforce 的开放替代方案，专为 AI 设计。",
-    "language": "TypeScript",
-    "stars": 59565,
-    "stars_today": 605,
-    "delta": 605,
-    "reason": "今日涨星 +605"
-   },
-   {
-    "name": "impeccable",
-    "owner": "pbakaus",
-    "full_name": "pbakaus/impeccable",
-    "html_url": "https://github.com/pbakaus/impeccable",
-    "desc": "使您的 AI 线束在设计上更加出色的设计语言。",
-    "language": "Rust",
-    "stars": 85136,
-    "stars_today": 587,
-    "delta": 587,
-    "reason": "今日涨星 +587"
-   },
-   {
-    "name": "headroom",
-    "owner": "headroomlabs-ai",
-    "full_name": "headroomlabs-ai/headroom",
-    "html_url": "https://github.com/headroomlabs-ai/headroom",
-    "desc": "在工具输出、日志、文件和 RAG 块到达 LLM 之前对其进行压缩。编码代理的标记减少了 20%，JSON 的标记减少了 60-95%，答案相同。库、代理、MCP 服务器。",
-    "language": "Python",
-    "stars": 77595,
-    "stars_today": 517,
-    "delta": 517,
-    "reason": "今日涨星 +517"
-   },
-   {
-    "name": "Kronos",
-    "owner": "shiyu-coder",
-    "full_name": "shiyu-coder/Kronos",
-    "html_url": "https://github.com/shiyu-coder/Kronos",
-    "desc": "Kronos：金融市场语言的基础模型",
-    "language": "Python",
-    "stars": 43265,
-    "stars_today": 500,
-    "delta": 500,
-    "reason": "今日涨星 +500"
-   },
-   {
-    "name": "vllm",
-    "owner": "vllm-project",
-    "full_name": "vllm-project/vllm",
-    "html_url": "https://github.com/vllm-project/vllm",
-    "desc": "适用于法学硕士的高吞吐量和内存高效推理和服务引擎",
-    "language": "Python",
-    "stars": 95192,
-    "stars_today": 440,
-    "delta": 440,
-    "reason": "今日涨星 +440"
-   },
-   {
-    "name": "firecrawl",
-    "owner": "firecrawl",
-    "full_name": "firecrawl/firecrawl",
-    "html_url": "https://github.com/firecrawl/firecrawl",
-    "desc": "大规模网页搜索、抓取与交互的上下文 API。",
-    "language": "TypeScript",
-    "stars": 194412,
-    "stars_today": 424,
-    "delta": 424,
-    "reason": "今日涨星 +424"
-   },
-   {
-    "name": "agency-agents",
-    "owner": "msitarzewski",
-    "full_name": "msitarzewski/agency-agents",
-    "html_url": "https://github.com/msitarzewski/agency-agents",
-    "desc": "触手可及的完整 AI 团队：从前端高手到 Reddit 社区达人，每个智能体都是带人格、流程和可交付成果的专家。",
-    "language": "Shell",
-    "stars": 163360,
-    "stars_today": 355,
-    "delta": 355,
-    "reason": "今日涨星 +355"
-   },
-   {
-    "name": "ego-lite",
-    "owner": "citrolabs",
-    "full_name": "citrolabs/ego-lite",
-    "html_url": "https://github.com/citrolabs/ego-lite",
-    "desc": "AI 代理运行浏览器自动化的最快浏览器，专为与您的 AI 代理（如 Codex 或 Claude Code）共享您登录的浏览器状态而构建，而不会打扰您。零成本，零配置。",
-    "language": "JavaScript",
-    "stars": 18901,
-    "stars_today": 311,
-    "delta": 311,
-    "reason": "今日涨星 +311"
+    "stars": 301928,
+    "stars_today": 967,
+    "delta": 967,
+    "reason": "今日涨星 +967"
    },
    {
     "name": "knowledge-work-plugins",
@@ -230,22 +98,154 @@
     "html_url": "https://github.com/anthropics/knowledge-work-plugins",
     "desc": "主要供知识工作者在 Claude Cowork 中使用的开源插件存储库",
     "language": "Python",
-    "stars": 31796,
-    "stars_today": 303,
-    "delta": 303,
-    "reason": "今日涨星 +303"
+    "stars": 32337,
+    "stars_today": 635,
+    "delta": 635,
+    "reason": "今日涨星 +635"
    },
    {
-    "name": "dsh-context",
-    "owner": "bowenliang123",
-    "full_name": "bowenliang123/dsh-context",
-    "html_url": "https://github.com/bowenliang123/dsh-context",
-    "desc": "The best DeepSeek Harness plugin for context insight and management, with context dashboard / browser / sidebar and context command, for context statistics, composition, breakdown, evolution details, agent teams, understanding how the context is made of, and how it evolves. 一站式 DeepSeek Harness 上下文可视化插件，Context 面板、浏览器、侧栏、命令，透视上下文组成、演进、压缩、多 Agent等。",
+    "name": "superpowers",
+    "owner": "obra",
+    "full_name": "obra/superpowers",
+    "html_url": "https://github.com/obra/superpowers",
+    "desc": "面向 AI Agent 的技能框架与软件开发方法论。",
+    "language": "Shell",
+    "stars": 304318,
+    "stars_today": 563,
+    "delta": 563,
+    "reason": "今日涨星 +563"
+   },
+   {
+    "name": "impeccable",
+    "owner": "pbakaus",
+    "full_name": "pbakaus/impeccable",
+    "html_url": "https://github.com/pbakaus/impeccable",
+    "desc": "使您的 AI 线束在设计上更加出色的设计语言。",
+    "language": "Rust",
+    "stars": 85659,
+    "stars_today": 541,
+    "delta": 541,
+    "reason": "今日涨星 +541"
+   },
+   {
+    "name": "TradingAgents",
+    "owner": "TauricResearch",
+    "full_name": "TauricResearch/TradingAgents",
+    "html_url": "https://github.com/TauricResearch/TradingAgents",
+    "desc": "TradingAgents：多智能体大模型金融交易框架。",
+    "language": "Python",
+    "stars": 113451,
+    "stars_today": 485,
+    "delta": 485,
+    "reason": "今日涨星 +485"
+   },
+   {
+    "name": "firecrawl",
+    "owner": "firecrawl",
+    "full_name": "firecrawl/firecrawl",
+    "html_url": "https://github.com/firecrawl/firecrawl",
+    "desc": "大规模网页搜索、抓取与交互的上下文 API。",
     "language": "TypeScript",
-    "stars": 3432,
-    "stars_today": 296,
-    "delta": 296,
-    "reason": "今日涨星 +296"
+    "stars": 194745,
+    "stars_today": 430,
+    "delta": 430,
+    "reason": "今日涨星 +430"
+   },
+   {
+    "name": "supabase",
+    "owner": "supabase",
+    "full_name": "supabase/supabase",
+    "html_url": "https://github.com/supabase/supabase",
+    "desc": "Postgres 开发平台。 Supabase 为您提供专用的 Postgres 数据库来构建您的 Web、移动和 AI 应用程序。",
+    "language": "TypeScript",
+    "stars": 113824,
+    "stars_today": 428,
+    "delta": 428,
+    "reason": "今日涨星 +428"
+   },
+   {
+    "name": "codegraph",
+    "owner": "colbymchenry",
+    "full_name": "colbymchenry/codegraph",
+    "html_url": "https://github.com/colbymchenry/codegraph",
+    "desc": "预索引代码知识图，代码更改自动同步，适用于 Claude Code、Codex、Gemini、Cursor、OpenCode、AntiGravity、Kiro 和 Hermes Agent — 更少的令牌、更少的工具调用、100% 本地",
+    "language": "C",
+    "stars": 75117,
+    "stars_today": 347,
+    "delta": 347,
+    "reason": "今日涨星 +347"
+   },
+   {
+    "name": "ai-memory",
+    "owner": "akitaonrails",
+    "full_name": "akitaonrails/ai-memory",
+    "html_url": "https://github.com/akitaonrails/ai-memory",
+    "desc": "用于代理编码 CLI 的长期记忆解决方案，并促进不同代理供应商之间的切换",
+    "language": "Rust",
+    "stars": 13098,
+    "stars_today": 271,
+    "delta": 271,
+    "reason": "今日涨星 +271"
+   },
+   {
+    "name": "video-shotcraft",
+    "owner": "Vincentwei1021",
+    "full_name": "Vincentwei1021/video-shotcraft",
+    "html_url": "https://github.com/Vincentwei1021/video-shotcraft",
+    "desc": "面向 Claude Code / Codex 的 AI 视频技能，用 Remotion 制作电影级产品视频，含 152 个镜头卡片与 209 个动效预览。",
+    "language": "TypeScript",
+    "stars": 13276,
+    "stars_today": 259,
+    "delta": 259,
+    "reason": "今日涨星 +259"
+   },
+   {
+    "name": "ego-lite",
+    "owner": "citrolabs",
+    "full_name": "citrolabs/ego-lite",
+    "html_url": "https://github.com/citrolabs/ego-lite",
+    "desc": "AI 代理运行浏览器自动化的最快浏览器，专为与您的 AI 代理（如 Codex 或 Claude Code）共享您登录的浏览器状态而构建，而不会打扰您。零成本，零配置。",
+    "language": "JavaScript",
+    "stars": 19055,
+    "stars_today": 234,
+    "delta": 234,
+    "reason": "今日涨星 +234"
+   },
+   {
+    "name": "Claude-Red",
+    "owner": "SnailSploit",
+    "full_name": "SnailSploit/Claude-Red",
+    "html_url": "https://github.com/SnailSploit/Claude-Red",
+    "desc": "claude-red is a curated library of offensive security skills designed for the Claude skills system. Each skill is a structured SKILL.md file that primes Claude with expert-level methodology for a specific attack surface — from SQLi to shellcode, EDR evasion to exploit development.",
+    "language": "Python",
+    "stars": 8614,
+    "stars_today": 226,
+    "delta": 226,
+    "reason": "今日涨星 +226"
+   },
+   {
+    "name": "codex",
+    "owner": "openai",
+    "full_name": "openai/codex",
+    "html_url": "https://github.com/openai/codex",
+    "desc": "在您的终端中运行的轻量级编码代理",
+    "language": "Rust",
+    "stars": 130716,
+    "stars_today": 173,
+    "delta": 173,
+    "reason": "今日涨星 +173"
+   },
+   {
+    "name": "airllm",
+    "owner": "lyogavin",
+    "full_name": "lyogavin/airllm",
+    "html_url": "https://github.com/lyogavin/airllm",
+    "desc": "使用单个 4GB GPU 进行 AirLLM 70B 推理",
+    "language": "Jupyter Notebook",
+    "stars": 40496,
+    "stars_today": 156,
+    "delta": 156,
+    "reason": "今日涨星 +156"
    }
   ],
   "total": [
@@ -256,7 +256,7 @@
     "html_url": "https://github.com/openclaw/openclaw",
     "desc": "开源 AI 个人助手，跨任意操作系统与平台运行。",
     "language": "TypeScript",
-    "stars": 392807,
+    "stars": 392893,
     "created_at": "2025-11-24",
     "reason": "累计 39.3万星标"
    },
@@ -267,9 +267,9 @@
     "html_url": "https://github.com/morluto/rea",
     "desc": "使用代理对任何内容进行逆向工程，从应用程序行为到本机二进制文件。",
     "language": "TypeScript",
-    "stars": 368484,
+    "stars": 374135,
     "created_at": "2026-04-14",
-    "reason": "累计 36.8万星标"
+    "reason": "累计 37.4万星标"
    },
    {
     "name": "superpowers",
@@ -278,7 +278,7 @@
     "html_url": "https://github.com/obra/superpowers",
     "desc": "面向 AI Agent 的技能框架与软件开发方法论。",
     "language": "Shell",
-    "stars": 303880,
+    "stars": 304318,
     "created_at": "2025-10-09",
     "reason": "累计 30.4万星标"
    },
@@ -289,7 +289,7 @@
     "html_url": "https://github.com/affaan-m/ECC",
     "desc": "Agent 性能优化系统，整合技能、记忆、安全与代码研究。",
     "language": "JavaScript",
-    "stars": 286719,
+    "stars": 287443,
     "created_at": "2026-01-18",
     "reason": "累计 28.7万星标"
    },
@@ -300,9 +300,9 @@
     "html_url": "https://github.com/NousResearch/hermes-agent",
     "desc": "会随使用不断进化的自适应 AI Agent。",
     "language": "Python",
-    "stars": 256327,
+    "stars": 256579,
     "created_at": "2025-07-22",
-    "reason": "累计 25.6万星标"
+    "reason": "累计 25.7万星标"
    },
    {
     "name": "n8n",
@@ -311,7 +311,7 @@
     "html_url": "https://github.com/n8n-io/n8n",
     "desc": "公平代码的工作流自动化平台，原生集成 AI 能力。",
     "language": "TypeScript",
-    "stars": 208359,
+    "stars": 208436,
     "created_at": "2019-06-22",
     "reason": "累计 20.8万星标"
    },
@@ -322,7 +322,7 @@
     "html_url": "https://github.com/tensorflow/tensorflow",
     "desc": "Google 出品的开源机器学习框架。",
     "language": "C++",
-    "stars": 201193,
+    "stars": 201206,
     "created_at": "2015-11-07",
     "reason": "累计 20.1万星标"
    },
@@ -333,9 +333,9 @@
     "html_url": "https://github.com/firecrawl/firecrawl",
     "desc": "大规模网页搜索、抓取与交互的上下文 API。",
     "language": "TypeScript",
-    "stars": 194412,
+    "stars": 194745,
     "created_at": "2024-04-15",
-    "reason": "累计 19.4万星标"
+    "reason": "累计 19.5万星标"
    },
    {
     "name": "AutoGPT",
@@ -344,7 +344,7 @@
     "html_url": "https://github.com/Significant-Gravitas/AutoGPT",
     "desc": "让 AI 普惠大众的自主智能体项目。",
     "language": "Python",
-    "stars": 187712,
+    "stars": 187722,
     "created_at": "2023-03-16",
     "reason": "累计 18.8万星标"
    },
@@ -355,20 +355,9 @@
     "html_url": "https://github.com/ollama/ollama",
     "desc": "本地一键运行 DeepSeek、Qwen、Gemma 等大模型。",
     "language": "Go",
-    "stars": 184386,
+    "stars": 184510,
     "created_at": "2023-06-26",
-    "reason": "累计 18.4万星标"
-   },
-   {
-    "name": "prompts.chat",
-    "owner": "f",
-    "full_name": "f/prompts.chat",
-    "html_url": "https://github.com/f/prompts.chat",
-    "desc": "精选 ChatGPT 提示词合集，支持自托管。",
-    "language": "HTML",
-    "stars": 174099,
-    "created_at": "2022-12-05",
-    "reason": "累计 17.4万星标"
+    "reason": "累计 18.5万星标"
    },
    {
     "name": "ponytail",
@@ -377,8 +366,19 @@
     "html_url": "https://github.com/DietrichGebert/ponytail",
     "desc": "让你的人工智能代理像房间里最懒的高级开发人员一样思考。最好的代码是你从未编写过的代码。",
     "language": "JavaScript",
-    "stars": 174009,
+    "stars": 174930,
     "created_at": "2026-06-12",
+    "reason": "累计 17.5万星标"
+   },
+   {
+    "name": "prompts.chat",
+    "owner": "f",
+    "full_name": "f/prompts.chat",
+    "html_url": "https://github.com/f/prompts.chat",
+    "desc": "精选 ChatGPT 提示词合集，支持自托管。",
+    "language": "HTML",
+    "stars": 174282,
+    "created_at": "2022-12-05",
     "reason": "累计 17.4万星标"
    },
    {
@@ -388,7 +388,7 @@
     "html_url": "https://github.com/huggingface/transformers",
     "desc": "Hugging Face 模型框架，覆盖文本、视觉、音频多模态。",
     "language": "Python",
-    "stars": 168013,
+    "stars": 168053,
     "created_at": "2018-10-29",
     "reason": "累计 16.8万星标"
    },
@@ -399,7 +399,7 @@
     "html_url": "https://github.com/AUTOMATIC1111/stable-diffusion-webui",
     "desc": "Stable Diffusion 的网页版图形界面。",
     "language": "Python",
-    "stars": 165111,
+    "stars": 165123,
     "created_at": "2022-08-22",
     "reason": "累计 16.5万星标"
    },
@@ -410,7 +410,7 @@
     "html_url": "https://github.com/langgenius/dify",
     "desc": "一站式构建 Agent 工作流与 RAG 管线的平台。",
     "language": "Python",
-    "stars": 159308,
+    "stars": 159394,
     "created_at": "2023-04-12",
     "reason": "累计 15.9万星标"
    },
@@ -421,7 +421,7 @@
     "html_url": "https://github.com/Snailclimb/JavaGuide",
     "desc": "Java 面试与后端通用面试指南。",
     "language": "JavaScript",
-    "stars": 159216,
+    "stars": 159222,
     "created_at": "2018-05-07",
     "reason": "累计 15.9万星标"
    },
@@ -432,7 +432,7 @@
     "html_url": "https://github.com/open-webui/open-webui",
     "desc": "友好的本地 AI 界面，支持 Ollama 与 OpenAI 接口。",
     "language": "Python",
-    "stars": 156521,
+    "stars": 156605,
     "created_at": "2023-10-06",
     "reason": "累计 15.7万星标"
    },
@@ -443,7 +443,7 @@
     "html_url": "https://github.com/langchain-ai/langchain",
     "desc": "面向智能体的工程化开发平台。",
     "language": "Python",
-    "stars": 148308,
+    "stars": 148345,
     "created_at": "2022-10-17",
     "reason": "累计 14.8万星标"
    },
@@ -454,7 +454,7 @@
     "html_url": "https://github.com/x1xhlol/system-prompts-and-models-of-ai-tools",
     "desc": "汇总各大 AI 编程工具的系统提示词与内部模型。",
     "language": null,
-    "stars": 144202,
+    "stars": 144209,
     "created_at": "2025-03-05",
     "reason": "累计 14.4万星标"
    },
@@ -465,7 +465,7 @@
     "html_url": "https://github.com/github/spec-kit",
     "desc": "帮助你入门「规格驱动开发」的工具集。",
     "language": "Python",
-    "stars": 142501,
+    "stars": 142625,
     "created_at": "2025-08-21",
     "reason": "累计 14.3万星标"
    }
@@ -478,9 +478,9 @@
     "html_url": "https://github.com/Alejandros17487/ai-jailbreaks",
     "desc": "AI 越狱：35 个可粘贴的 AI 越狱提示，适用于 25 多个前沿和开放重量模型 - 系统提示、AGENTS.md 规范和 Ollama 模型文件。专为人工智能安全研究和红队测试而构建。",
     "language": null,
-    "stars": 349,
+    "stars": 495,
     "created_at": "2026-10-21",
-    "reason": "近 7 天新建 · 349星标"
+    "reason": "近 7 天新建 · 495星标"
    },
    {
     "name": "ai-roadmap-2026",
@@ -489,9 +489,31 @@
     "html_url": "https://github.com/h9-tec/ai-roadmap-2026",
     "desc": "AI 路线图 2026：通过基础、LLM 工程、代理、评估和生产的初学者路径，提供经过验证的免费资源和每层一个迷你项目",
     "language": null,
-    "stars": 123,
+    "stars": 148,
     "created_at": "2026-10-21",
-    "reason": "近 7 天新建 · 123星标"
+    "reason": "近 7 天新建 · 148星标"
+   },
+   {
+    "name": "verity-enhanced",
+    "owner": "verity-mods",
+    "full_name": "verity-mods/verity-enhanced",
+    "html_url": "https://github.com/verity-mods/verity-enhanced",
+    "desc": "Unofficial Enhanced Edition of the Verity Minecraft mod. Upgraded AI, new scenarios, multiple endings, and support for Forge 1.18 - 1.21.11",
+    "language": null,
+    "stars": 100,
+    "created_at": "2026-10-23",
+    "reason": "近 7 天新建 · 100星标"
+   },
+   {
+    "name": "Ultron",
+    "owner": "AbuZar-Ansarii",
+    "full_name": "AbuZar-Ansarii/Ultron",
+    "html_url": "https://github.com/AbuZar-Ansarii/Ultron",
+    "desc": "Autonomous desktop intelligence with MCU Ultron persona, mood-aware workspace orchestration, cyber security sentry, and full PC control.",
+    "language": "Python",
+    "stars": 74,
+    "created_at": "2026-10-18",
+    "reason": "近 7 天新建 · 74星标"
    }
   ]
  }

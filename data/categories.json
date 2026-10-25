@@ -1,6 +1,6 @@
 {
  "schema_version": 2,
- "updated_at": "2026-10-24T08:22:37.637232Z",
+ "updated_at": "2026-10-25T05:51:05.471027Z",
  "map": {
   "2951461586/GPT-Register-Tool": "assistant",
   "bestnite/skills": "tools",
@@ -140,7 +140,11 @@
   "lixibi/browser-use": "agent",
   "dadaguailhb/TCL": "agent",
   "Ebony-Vinyl/EAC-design-world": "video",
-  "Niko1221/Strata": "tools"
+  "Niko1221/Strata": "tools",
+  "pjpv/zcode-switch": "tools",
+  "cyber-xiaoya/cyber-xiaoya-live": "tools",
+  "duixcom/Duix-Avatar": "video",
+  "moeru-ai/airi": "tools"
  },
  "labels": {
   "agent": "AI Agent & Skills",

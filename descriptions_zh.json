@@ -442,5 +442,8 @@
  "anthropics/knowledge-work-plugins": "主要供知识工作者在 Claude Cowork 中使用的开源插件存储库",
  "bowenliang123/dsh-context": "The best DeepSeek Harness plugin for context insight and management, with context dashboard / browser / sidebar and context command, for context statistics, composition, breakdown, evolution details, agent teams, understanding how the context is made of, and how it evolves. 一站式 DeepSeek Harness 上下文可视化插件，Context 面板、浏览器、侧栏、命令，透视上下文组成、演进、压缩、多 Agent等。",
  "Alejandros17487/ai-jailbreaks": "AI 越狱：35 个可粘贴的 AI 越狱提示，适用于 25 多个前沿和开放重量模型 - 系统提示、AGENTS.md 规范和 Ollama 模型文件。专为人工智能安全研究和红队测试而构建。",
- "h9-tec/ai-roadmap-2026": "AI 路线图 2026：通过基础、LLM 工程、代理、评估和生产的初学者路径，提供经过验证的免费资源和每层一个迷你项目"
+ "h9-tec/ai-roadmap-2026": "AI 路线图 2026：通过基础、LLM 工程、代理、评估和生产的初学者路径，提供经过验证的免费资源和每层一个迷你项目",
+ "makecindy/cindy": "Consider it done. The open-source AI agent that works out of the box · 想到，就能做到。开源、开箱即用的 AI Agent。",
+ "basketikun/infinite-canvas": "面向 AI 创作的开源无限画布工作台，集成 AI 生图、参考图编辑、视频生成、Agent 智能助手、画布编排、对话创作、提示词库与素材管理等能力，支持可视化创作流程与多 Agent 协同工作。兼容 OpenAI 接口生态，支持 chatgpt2api、grok2api、flow2api、newapi 等渠道接入。",
+ "liyupi/dafeiyu-cleaner": "DeepSeek 蓝色大肥鱼消除计划：识别并清理 B 站（Bilibili）评论区中由 DeepSeek 大模型、AI Agent 驱动的机器人账号（大肥鱼）的 Chrome / Edge / Firefox 浏览器插件。离线规则 + DeepSeek API 精判，AI 评论检测、空间主页鉴定、鲸鱼娘一键清场。DeepSeek AI bot detector for Bilibili comments."
 }

@@ -137,5 +137,9 @@
  "lixibi/browser-use": "agent",
  "dadaguailhb/TCL": "agent",
  "Ebony-Vinyl/EAC-design-world": "video",
- "Niko1221/Strata": "tools"
+ "Niko1221/Strata": "tools",
+ "pjpv/zcode-switch": "tools",
+ "cyber-xiaoya/cyber-xiaoya-live": "tools",
+ "duixcom/Duix-Avatar": "video",
+ "moeru-ai/airi": "tools"
 }

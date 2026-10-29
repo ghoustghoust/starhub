@@ -141,5 +141,7 @@
  "pjpv/zcode-switch": "tools",
  "cyber-xiaoya/cyber-xiaoya-live": "tools",
  "duixcom/Duix-Avatar": "video",
- "moeru-ai/airi": "tools"
+ "moeru-ai/airi": "tools",
+ "RVC-Boss/GPT-SoVITS": "video",
+ "openfilm/openfilm": "video"
 }

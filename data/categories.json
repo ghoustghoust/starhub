@@ -1,6 +1,6 @@
 {
  "schema_version": 2,
- "updated_at": "2026-10-28T06:45:25.119615Z",
+ "updated_at": "2026-10-29T06:52:57.694779Z",
  "map": {
   "2951461586/GPT-Register-Tool": "assistant",
   "bestnite/skills": "tools",
@@ -144,7 +144,9 @@
   "pjpv/zcode-switch": "tools",
   "cyber-xiaoya/cyber-xiaoya-live": "tools",
   "duixcom/Duix-Avatar": "video",
-  "moeru-ai/airi": "tools"
+  "moeru-ai/airi": "tools",
+  "RVC-Boss/GPT-SoVITS": "video",
+  "openfilm/openfilm": "video"
  },
  "labels": {
   "agent": "AI Agent & Skills",

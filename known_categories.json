@@ -143,5 +143,9 @@
  "duixcom/Duix-Avatar": "video",
  "moeru-ai/airi": "tools",
  "RVC-Boss/GPT-SoVITS": "video",
- "openfilm/openfilm": "video"
+ "openfilm/openfilm": "video",
+ "timoncool/YuE2-Studio": "tools",
+ "seasnakes/gloria-prompt-archive": "tools",
+ "1314521gjy/ComfyUI-Local-Infinite-Canvas": "video",
+ "linshenkx/prompt-optimizer": "tools"
 }

@@ -6,15 +6,41 @@ import json
 import sys
 
 from ..enrich.desc import desc_zh
-from ..sources.github import fetch_ai_pool, fetch_new_repos, fetch_trending_daily, is_ai_repo
+from ..sources.github import fetch_ai_pool, fetch_download_totals, fetch_new_repos, fetch_trending_daily, is_ai_repo
 
 TRENDING_BOARD = "trending_board.json"
 
 
 def _fmt_zh(number: int) -> str:
+    if number >= 100000000:
+        return "%.1f亿" % (number / 100000000)
     if number >= 10000:
         return "%.1f万" % (number / 10000)
     return str(number)
+
+
+def _build_downloads(pool, rising, token, descriptions, *, top, candidates, fast) -> list[dict]:
+    """下载榜：GitHub 只公开 Release 资产的下载量，以此为仓库下载口径。
+
+    候选从 AI 池按星标取前 N 个、并入涨星榜名单（新热仓库可能星标不高但下载量可观），
+    逐仓统计累计下载后取前 top。拉取全挂时返回空表，榜单降级为「暂无数据」，不挡发布。
+    """
+    by_name = {item["full_name"]: item for item in pool}
+    for item in rising:
+        by_name.setdefault(item["full_name"], item)
+    if not by_name:
+        return []
+    candidates_items = sorted(
+        by_name.values(), key=lambda item: item.get("stars") or 0, reverse=True)[:max(1, candidates)]
+    totals = fetch_download_totals(token, [item["full_name"] for item in candidates_items])
+    rows = [dict(by_name[full_name], downloads=total)
+            for full_name, total in totals.items() if total > 0]
+    rows.sort(key=lambda item: item["downloads"], reverse=True)
+    rows = rows[:top]
+    for item in rows:
+        item["desc"] = desc_zh(item["full_name"], item["desc"], descriptions, fast=fast)
+        item["reason"] = "累计下载 %s次" % _fmt_zh(item["downloads"])
+    return rows
 
 
 def build_trending(
@@ -26,6 +52,7 @@ def build_trending(
     new_min_stars: int,
     trend_top: int,
     trend_max_stars: int,
+    downloads_candidates: int = 60,
     fast: bool = False,
     snapshot_path: str = "trending_snapshot.json",
 ) -> dict:
@@ -61,6 +88,9 @@ def build_trending(
 
     new_repos = fetch_new_repos(token, new_min_stars, trend_top)
 
+    downloads = _build_downloads(pool, rising, token, descriptions,
+                                 top=trend_top, candidates=downloads_candidates, fast=fast)
+
     for item in rising + total + new_repos:
         item["desc"] = desc_zh(item["full_name"], item["desc"], descriptions, fast=fast)
 
@@ -80,7 +110,7 @@ def build_trending(
     else:
         print("[警告] AI 池为空，跳过快照更新，保留旧基线", file=sys.stderr)
 
-    return {"rising": rising, "total": total, "new": new_repos,
+    return {"rising": rising, "total": total, "new": new_repos, "downloads": downloads,
             "source": "trending" if trend_rows else "snapshot"}
 
 

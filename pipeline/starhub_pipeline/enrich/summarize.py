@@ -55,7 +55,7 @@ def generate_ai_summary(rising_top10, fast: bool = False) -> str | None:
                 },
             )
             try:
-                with urllib.request.urlopen(request, timeout=llm.TIMEOUT_SECONDS) as response:
+                with llm.safe_fetch(request) as response:
                     data = json.loads(response.read().decode("utf-8"))
                 choices = data.get("choices") or []
                 if not choices:
@@ -126,8 +126,7 @@ def build_category_guides(cats, known, cache_path=None, fast: bool = False) -> d
     if changed:
         try:
             tmp = str(path) + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as handle:
-                json.dump(cache, handle, ensure_ascii=False, indent=1)
+            Path(tmp).write_text(json.dumps(cache, ensure_ascii=False, indent=1), encoding="utf-8")
             os.replace(tmp, path)
         except Exception as exc:  # noqa: BLE001
             print("[guides] 缓存写回失败: %s" % exc, file=sys.stderr)

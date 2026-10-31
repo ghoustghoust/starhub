@@ -30,7 +30,10 @@ class TranslateTest(unittest.TestCase):
 
     def test_google_translation(self) -> None:
         payload = [[["你好世界", "hello world", None, None]]]
-        with mock.patch("starhub_pipeline.enrich.translate.urllib.request.urlopen", return_value=_Response(payload)):
+        opener = mock.MagicMock()
+        opener.open.return_value = _Response(payload)
+        with mock.patch.object(translate, "_SAFE_OPENER", opener), \
+             mock.patch.object(translate.netguard, "assert_safe_url"):
             self.assertEqual(translate.translate_to_zh("hello world"), "你好世界")
 
     def test_has_cn(self) -> None:

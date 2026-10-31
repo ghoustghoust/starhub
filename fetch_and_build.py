@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 for _stream in (sys.stdout, sys.stderr):
     try:
@@ -85,6 +86,7 @@ def build_trending(token, descriptions):
         new_min_stars=NEW_MIN_STARS,
         trend_top=TREND_TOP,
         trend_max_stars=TREND_MAX_STARS,
+        downloads_candidates=DOWNLOADS_CANDIDATES,
         fast=FAST,
     )
 
@@ -98,6 +100,7 @@ AI_MIN_STARS = 500       # AI 项目池最小星标
 NEW_MIN_STARS = 50       # 新秀榜最小星标
 TREND_TOP = 20           # 每榜展示数量
 TREND_MAX_STARS = 50000  # 涨星榜排除超过此星标的巨头项目（避免 tensorflow/pytorch 霸榜）
+DOWNLOADS_CANDIDATES = 60  # 下载榜候选扫描量：AI 池按星标取前 N，控制 Release API 预算
 
 BUILD_CONFIG_FILE = "build_config.json"
 
@@ -106,6 +109,28 @@ BUILD_CONFIG_FILE = "build_config.json"
 # 发出去，比缺件更糟：缺件至少会让 Stage 判失败并红，错误页却会被当成一次成功发布。
 PAGES_INDEX_URL = PAGES_URL.rstrip("/") + "/index.html"
 MIN_REAL_PAGE_BYTES = 20000
+
+# Pages 兜底抓取的出网护栏：主机白名单取自站点配置的 Pages 域，共享 netguard 通道
+from starhub_pipeline.sources import netguard  # noqa: E402
+
+_PAGES_HOST = urllib.parse.urlsplit(PAGES_URL).hostname or ""
+_PAGES_OPENER = netguard.build_safe_opener({_PAGES_HOST})
+
+
+def _pages_open(req, timeout):
+    """Pages 兜底抓取的唯一出口：先校验 URL，再走钉住通道。"""
+    netguard.assert_safe_url(req.full_url, {_PAGES_HOST})
+    return _PAGES_OPENER.open(req, timeout=timeout)
+
+
+def _safe_out_path(out_dir, *parts):
+    """构建输出路径 containment：解析成绝对路径后强制落在输出目录内，越界即抛
+    （构建产物只落本仓库，拼接来的名字逃不出这个圈）。"""
+    base = os.path.abspath(out_dir or ".")
+    path = os.path.abspath(os.path.join(base, *parts))
+    if not path.startswith(base + os.sep):
+        raise ValueError("output path escapes build dir: %s" % path)
+    return path
 PLACEHOLDER_INDEX = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -122,7 +147,7 @@ def fetch_live_index(url):
     """取回线上首页正文；取不到返回 None。测试里打桩它（本机这条通道要走代理，CI 直连可用）。"""
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "starhub-build/1.0"})
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with _pages_open(req, 30) as r:
             if getattr(r, "status", 200) != 200:
                 return None
             return r.read().decode("utf-8", "replace")
@@ -138,20 +163,19 @@ def _looks_like_real_index(body):
 
 def ensure_pool_fallback(out_dir="."):
     """Star 拉取失败时，首页可能来自线上旧版；它引用的 pool.js 也必须一起补齐。"""
-    path = os.path.join(out_dir, "data", "pool.js")
+    path = _safe_out_path(out_dir, "data", "pool.js")
     if os.path.exists(path) and os.path.getsize(path) > 1000:
         return "existing"
     url = PAGES_URL.rstrip("/") + "/data/pool.js"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "starhub-build/1.0"})
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with _pages_open(req, 30) as r:
             body = r.read().decode("utf-8", "replace")
         if "window.__STARHUB_POOL_DATA__=" not in body:
             raise ValueError("not a pool script")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            fh.write(body)
+        Path(tmp).write_text(body, encoding="utf-8")
         os.replace(tmp, path)
         print("[首页兜底] 已补齐线上 pool.js（%d B）" % len(body))
         return "live"
@@ -163,22 +187,20 @@ def ensure_pool_fallback(out_dir="."):
 def write_index_fallback(out_dir="."):
     """缺首页时才补：先拿回上一版，拿不到写占位页。已有合格首页则一律不碰。
 
-    为什么必须有这一步（2026-10-03 现取）：`if stars_ok:` 罩子里才有 `open("index.html","w")`，
+    为什么必须有这一步（2026-10-03 现取）：写首页的代码挂在 `if stars_ok:` 罩子里，
     而页面 HTML 已退出 git ⇒ 限流场工作树里根本没有首页；Stage 的必检清单含 index.html，
     缺件会让 `Upload/Deploy Pages` 双双跳过 —— **代价不是"首页旧一小时"，是那一小时整站不发布**。
     判据：tests/rss_history/test_index_fallback_on_star_ratelimit.py（含"不许挪回罩子里"的 AST 反向控制）。
     """
-    path = os.path.join(out_dir, "index.html")
-    if os.path.exists(path) and os.path.getsize(path) >= MIN_REAL_PAGE_BYTES:
+    path = Path(_safe_out_path(out_dir, "index.html"))
+    if path.exists() and path.stat().st_size >= MIN_REAL_PAGE_BYTES:
         return None
     body = fetch_live_index(PAGES_INDEX_URL)
     if _looks_like_real_index(body):
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(body)
+        path.write_text(body, encoding="utf-8")
         print("[首页兜底] star 数据缺失，已用线上上一版顶上（%d B）⇒ Pages 不缺件" % len(body))
         return "live"
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(PLACEHOLDER_INDEX)
+    path.write_text(PLACEHOLDER_INDEX, encoding="utf-8")
     print("[首页兜底] 取不到上一版首页，写占位页（宁可不美，不可缺件）")
     return "placeholder"
 
@@ -191,6 +213,7 @@ def load_build_config():
         "ai_min_stars": AI_MIN_STARS,
         "new_min_stars": NEW_MIN_STARS,
         "trend_max_stars": TREND_MAX_STARS,
+        "downloads_candidates": DOWNLOADS_CANDIDATES,
         "ai_topics": list(AI_TOPICS),
         "ai_summary_enabled": True,
     }
@@ -223,13 +246,14 @@ def load_build_config():
 
 
 def main(mode="full"):
-    global AI_TOPICS, AI_MIN_STARS, NEW_MIN_STARS, TREND_TOP, TREND_MAX_STARS
+    global AI_TOPICS, AI_MIN_STARS, NEW_MIN_STARS, TREND_TOP, TREND_MAX_STARS, DOWNLOADS_CANDIDATES
     cfg = load_build_config()
     AI_TOPICS = cfg["ai_topics"]
     AI_MIN_STARS = cfg["ai_min_stars"]
     NEW_MIN_STARS = cfg["new_min_stars"]
     TREND_TOP = cfg["trend_top"]
     TREND_MAX_STARS = cfg["trend_max_stars"]
+    DOWNLOADS_CANDIDATES = cfg["downloads_candidates"]
 
     known = {}
     try:
@@ -307,13 +331,17 @@ def main(mode="full"):
                                 updated=updated, ai_summary_html=ai_summary_html,
                                 attention_html=attention_html)
 
-        open("index.html", "w", encoding="utf-8").write(html)
+        Path(_safe_out_path(".", "index.html")).write_text(html, encoding="utf-8")
         # 排行榜数据出口：浏览器同源 fetch 它（见 template.html 的 refreshTrendingBoard）。
         # 有了它，快车道重建整页就伤不到排行榜——内联那份只是首屏兜底。
-        json.dump(trending_board_payload(trending, ai_summary_html, updated),
-                  open(TRENDING_BOARD, "w", encoding="utf-8"), ensure_ascii=False)
-        json.dump(known, open("known_categories.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-        json.dump(desc_zh, open("descriptions_zh.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        board_path = Path(_safe_out_path(".", TRENDING_BOARD))
+        board_path.write_text(
+            json.dumps(trending_board_payload(trending, ai_summary_html, updated), ensure_ascii=False),
+            encoding="utf-8")
+        Path(_safe_out_path(".", "known_categories.json")).write_text(
+            json.dumps(known, ensure_ascii=False, indent=1), encoding="utf-8")
+        Path(_safe_out_path(".", "descriptions_zh.json")).write_text(
+            json.dumps(desc_zh, ensure_ascii=False, indent=1), encoding="utf-8")
         try:
             write_site_contracts(out, known, trending, ai_summary, updated, cats=CATS)
         except Exception as e:  # noqa: BLE001

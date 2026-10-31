@@ -18,6 +18,7 @@ RSS 聚合、每日洞察、Vercel 部署一概不碰；也不触发 fetch_and_b
 import json
 import os
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -48,8 +49,7 @@ def _write_live_list(names):
     try:
         os.makedirs(os.path.dirname(LIVE_LIST_PATH), exist_ok=True)
         tmp = LIVE_LIST_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(sorted(names), f)
+        Path(tmp).write_text(json.dumps(sorted(names)), encoding="utf-8")
         os.replace(tmp, LIVE_LIST_PATH)
     except Exception as e:  # noqa: BLE001
         print("::warning::[fast] live 名单写失败，本场 star-state 不剪枝：%s" % e)
@@ -57,8 +57,7 @@ def _write_live_list(names):
 
 def _atomic_write_json(path, data):
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=1)
+    Path(tmp).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(tmp, path)
 
 

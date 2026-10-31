@@ -42,7 +42,8 @@ class ContractsTest(unittest.TestCase):
             contracts.write_site_contracts(
                 [{"full_name": "owner/repo", "html_url": "https://github.com/owner/repo"}],
                 {"owner/repo": "tools"},
-                {"rising": [], "total": [], "new": []},
+                {"rising": [], "total": [], "new": [],
+                 "downloads": [{"full_name": "a/one", "downloads": 12000}]},
                 "summary",
                 "2026-10-23 10:00",
                 [{"key": "tools", "label": "效率工具"}],
@@ -50,10 +51,21 @@ class ContractsTest(unittest.TestCase):
             )
             stars = json.loads(Path(tmp, "stars.json").read_text(encoding="utf-8"))
             categories = json.loads(Path(tmp, "categories.json").read_text(encoding="utf-8"))
+            trending = json.loads(Path(tmp, "trending.json").read_text(encoding="utf-8"))
             self.assertEqual(stars["items"][0]["full_name"], "owner/repo")
             self.assertEqual(categories["labels"]["tools"], "效率工具")
+            self.assertEqual(trending["boards"]["downloads"][0]["downloads"], 12000)
             self.assertTrue(Path(tmp, "trending.json").exists())
             self.assertTrue(Path(tmp, "build-status.json").exists())
+
+    def test_trending_defaults_to_empty_downloads_board(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            contracts.write_site_contracts(
+                [], {}, {"rising": [], "total": [], "new": []}, "", "2026-10-23 10:00",
+                [], data_dir=tmp,
+            )
+            trending = json.loads(Path(tmp, "trending.json").read_text(encoding="utf-8"))
+            self.assertEqual(trending["boards"]["downloads"], [])
 
 
 if __name__ == "__main__":

@@ -10,10 +10,22 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from ..sources import netguard
+
 API_URL = "https://apihub.agnes-ai.com/v1/chat/completions"
 MODEL = "agnes-2.5-flash"
 TIMEOUT_SECONDS = 30
 NOTE_MAX_CHARS = 30
+
+# Agnes 聊天端点出网护栏：主机白名单 + 公网解析校验 + 钉住通道（共享 netguard）
+_HOSTS = frozenset({"apihub.agnes-ai.com"})
+_SAFE_OPENER = netguard.build_safe_opener(_HOSTS)
+
+
+def safe_fetch(request, timeout=TIMEOUT_SECONDS):
+    """Agnes 出网的唯一出口：先校验 URL，再走钉住通道；summarize 复用。"""
+    netguard.assert_safe_url(request.full_url, _HOSTS)
+    return _SAFE_OPENER.open(request, timeout=timeout)
 
 
 def key_pool() -> list[str]:
@@ -69,7 +81,7 @@ def chat(messages: list[dict[str, str]], temperature: float = 0.4, max_tokens: i
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+            with safe_fetch(request, TIMEOUT_SECONDS) as response:
                 body = json.loads(response.read().decode("utf-8"))
             content = body["choices"][0]["message"]["content"] or ""
             return content.strip() or None

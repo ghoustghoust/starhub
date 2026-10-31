@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..config import site_value
+from . import netguard
 
 _API_ROOT = "https://api.github.com"
 _TIMEOUT_SECONDS = 30
@@ -59,7 +60,7 @@ def fetch_stars(token: str | None = None, username: str | None = None) -> list[d
         headers["Accept"] = "application/vnd.github.star+json"
         request = urllib.request.Request(url, headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
+            with _safe_fetch(request, _TIMEOUT_SECONDS) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except Exception as exc:  # noqa: BLE001
             print(f"[github] star fetch failed: {exc}", file=sys.stderr)
@@ -80,7 +81,7 @@ def search_repos(query: str, token: str | None, per_page: int = 100, sort: str =
         % (urllib.parse.quote(query), sort, per_page)
     )
     request = urllib.request.Request(url, headers=api_headers(token))
-    with urllib.request.urlopen(request, timeout=30) as response:
+    with _safe_fetch(request, 30) as response:
         return json.loads(response.read().decode("utf-8")).get("items", [])
 
 
@@ -120,6 +121,81 @@ def fetch_new_repos(token: str | None, min_stars: int, top: int) -> list[dict[st
     except Exception as exc:  # noqa: BLE001
         print("[新秀榜失败] %s" % exc, file=sys.stderr)
     return result
+
+
+RELEASES_MAX_PAGES = 5  # 单仓库最多翻的 releases 页数（每页 100 条，控制 API 预算）
+
+
+# 下载量通道的出网护栏走共享的 netguard：主机钉死 api.github.com，解析地址全公网、
+# 重定向逐跳复检、校验过的 IP 直连（防 DNS rebinding）。
+_API_HOST = "api.github.com"
+_SAFE_OPENER = netguard.build_safe_opener({_API_HOST})
+
+
+def _assert_safe_url(url: str) -> None:
+    netguard.assert_safe_url(url, {_API_HOST})
+
+
+def _safe_fetch(request, timeout):
+    """本模块所有出网的唯一出口：白名单校验后走钉住通道。"""
+    _assert_safe_url(request.full_url)
+    return _SAFE_OPENER.open(request, timeout=timeout)
+
+
+class _RateLimited(Exception):
+    """GitHub 对 releases 接口限流（403/429）；扫描应整体收手而不是逐个硬闯。"""
+
+
+def fetch_release_downloads(full_name: str, token: str | None = None,
+                            max_pages: int = RELEASES_MAX_PAGES) -> int | None:
+    """Sum release asset download counts; None when the fetch fails.
+
+    GitHub 只在 Release 资产上公开下载量，这是仓库下载量唯一可用的官方口径；
+    没有 release 的仓库返回 0，由调用方决定要不要展示。
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", full_name or ""):
+        return None
+    total = 0
+    for page in range(1, max_pages + 1):
+        url = f"{_API_ROOT}/repos/{full_name}/releases?per_page=100&page={page}"
+        _assert_safe_url(url)
+        request = urllib.request.Request(url, headers=api_headers(token))
+        try:
+            with _SAFE_OPENER.open(request, timeout=_TIMEOUT_SECONDS) as response:
+                releases = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code in (403, 429):
+                raise _RateLimited(str(exc)) from exc
+            print("[下载量 %s 失败] %s" % (full_name, exc), file=sys.stderr)
+            return None
+        except Exception as exc:  # noqa: BLE001
+            print("[下载量 %s 失败] %s" % (full_name, exc), file=sys.stderr)
+            return None
+        if not releases:
+            break
+        for release in releases:
+            for asset in release.get("assets") or []:
+                total += asset.get("download_count") or 0
+        if len(releases) < 100:
+            break
+        time.sleep(_PAGE_DELAY_SECONDS)
+    return total
+
+
+def fetch_download_totals(token: str | None, full_names: list[str]) -> dict[str, int]:
+    """Best-effort download totals for a candidate list; failed repos are skipped."""
+    totals: dict[str, int] = {}
+    try:
+        for index, full_name in enumerate(full_names):
+            total = fetch_release_downloads(full_name, token)
+            if total is None:
+                continue
+            totals[full_name] = total
+            if index < len(full_names) - 1:
+                time.sleep(_PAGE_DELAY_SECONDS)
+    except _RateLimited as exc:
+        print("[下载量] 限流收手：%s（已拿到 %d 个仓库的量）" % (exc, len(totals)), file=sys.stderr)
+    return totals
 
 
 def readme_first_sentence(text: str) -> str | None:
@@ -165,7 +241,7 @@ def fetch_readme_summary(full_name: str, token: str | None) -> str | None:
         headers["Authorization"] = "Bearer " + token
     try:
         request = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with _safe_fetch(request, 20) as response:
             raw = response.read(30000).decode("utf-8", errors="replace")
     except Exception:  # noqa: BLE001
         return None
@@ -233,7 +309,7 @@ def fetch_trending_daily(token: str | None = None) -> list[dict[str, Any]] | Non
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                               " (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
             })
-            with urllib.request.urlopen(request, timeout=20) as response:
+            with _safe_fetch(request, 20) as response:
                 html = response.read().decode("utf-8", errors="replace")
             for item in parse_trending(html):
                 if item["full_name"] not in pool:
@@ -275,7 +351,7 @@ def fetch_following(token: str | None, username: str | None = None) -> list[str]
         url = "https://api.github.com/users/%s/following?per_page=100&page=%d" % (user, page)
         request = urllib.request.Request(url, headers=api_headers(token))
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with _safe_fetch(request, 30) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except Exception as exc:  # noqa: BLE001
             print("[关注列表失败] %s" % exc, file=sys.stderr)
@@ -301,7 +377,7 @@ def fetch_following_events(token: str | None, username: str | None = None) -> li
         for page in (1, 2):
             request = urllib.request.Request(url % page, headers=api_headers(token))
             try:
-                with urllib.request.urlopen(request, timeout=30) as response:
+                with _safe_fetch(request, 30) as response:
                     events = json.loads(response.read().decode("utf-8"))
             except Exception as exc:  # noqa: BLE001
                 print("[事件拉取失败 %s] %s" % (user, exc), file=sys.stderr)

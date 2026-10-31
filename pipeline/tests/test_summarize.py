@@ -30,8 +30,11 @@ class SummarizeTest(unittest.TestCase):
 
     def test_summary_with_mocked_llm(self) -> None:
         payload = {"choices": [{"message": {"content": "今日 AI 生态活跃"}, "finish_reason": "stop"}], "usage": {}}
+        opener = mock.MagicMock()
+        opener.open.return_value = _Response(payload)
         with mock.patch.object(summarize.llm, "key_pool", return_value=["key"]), \
-             mock.patch("starhub_pipeline.enrich.summarize.urllib.request.urlopen", return_value=_Response(payload)):
+             mock.patch.object(summarize.llm, "_SAFE_OPENER", opener), \
+             mock.patch.object(summarize.llm.netguard, "assert_safe_url"):
             result = summarize.generate_ai_summary([{"full_name": "owner/repo", "delta": 10}])
         self.assertEqual(result, "今日 AI 生态活跃")
 

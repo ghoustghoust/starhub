@@ -19,12 +19,17 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
     except Exception:  # noqa: BLE001
         pass
+
+# 独立运行时要自己找得到 pipeline 包（fetch_and_build 已插入过，重复插入无害）
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline"))
+from starhub_pipeline.sources import netguard  # noqa: E402
 
 RSS_URL = "https://aihot.virxact.com/feed.xml"  # API 失败时的降级回退
 API_URL = "https://aihot.virxact.com/api/v1/items"  # 公开 API v1，匿名只读
@@ -48,6 +53,51 @@ KR36_FEEDS = [
 # 中英双语发布同一文章（/en/ 与 /zh-CN/ 两条），按 slug 归并偏好中文版（_atlasnote_items）。
 ATLASNOTE_RSS = "https://atlasnote.ai/rss.xml"
 UA = {"User-Agent": "Mozilla/5.0 (starhub-auto-update)"}
+
+# ---------------------------- 出网护栏 ----------------------------
+# 全部信源主机入表（SSRF 加固：非白名单 URL 直接拒绝；解析出的地址必须全是公网，
+# 挡内网/环回/链路本地/保留段；重定向逐跳复检；直连拨校验过的 IP 防 DNS rebinding）。
+_OUT_HOSTS = frozenset({
+    "aihot.virxact.com",            # AIHOT API / RSS
+    "hn.algolia.com",               # Hacker News
+    "www.theverge.com", "techcrunch.com",
+    "rsshub.ktachibana.party", "rsshub.woodland.cafe",
+    "rsshub.rssforever.com", "hub.slarker.me",   # 36氪 RSSHub 公共镜像
+    "atlasnote.ai",
+    "export.arxiv.org",
+    "www.bing.com",                 # Bing 网页版翻译
+    "apihub.agnes-ai.com",
+    "translate.googleapis.com", "api.mymemory.translated.net",
+})
+_AI_SAFE_OPENER = netguard.build_safe_opener(_OUT_HOSTS)
+
+
+def _safe_open(req, timeout):
+    """本文件所有出网的唯一出口：先校验 URL，再走钉住通道。"""
+    netguard.assert_safe_url(req.full_url, _OUT_HOSTS)
+    return _AI_SAFE_OPENER.open(req, timeout=timeout)
+
+
+class _NoDtdTree(ET.TreeBuilder):
+    """拒收 DTD 的 TreeBuilder：doctype 事件一到就中止解析，实体无从展开。
+    纯标准库下的 XML 加固（外部实体注入与实体放大都堵死），实测全部信源
+    都不带 DTD，零误伤。"""
+
+    def doctype(self, name, pubid, system):
+        raise ValueError("rejected XML with DTD declarations")
+
+
+# 解析前的文本层拒绝（双保险的第一道）：带 DTD 声明的输入直接不进 parser
+_DTD_RE = re.compile(r"<!(?:DOCTYPE|ENTITY)", re.IGNORECASE)
+
+
+def _safe_xml(text):
+    """不可信 XML 的统一解析口：文本层拒收 DTD 后，再经拒收 DTD 的 parser 走 ElementTree。"""
+    if _DTD_RE.search(text or ""):
+        raise ValueError("rejected XML with DTD declarations")
+    parser = ET.XMLParser(target=_NoDtdTree())
+    parser.feed(text)
+    return parser.close()
 
 # 分类排序权重（按此顺序展示）。编号配色收敛：绿色只用于编号/kicker/引用/评分（spec B-4）
 CAT_ORDER = ["AI 模型", "AI 产品", "行业动态", "海外热点", "论文", "技巧观点"]
@@ -170,7 +220,7 @@ def fetch_api():
         "Accept": "application/json",
     })
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with _safe_open(req, 20) as r:
             data = json.loads(r.read(2000000).decode("utf-8", errors="replace"))
     except Exception as e:
         print("[AI晨报] API 拉取失败: %s" % e, file=sys.stderr)
@@ -207,14 +257,14 @@ def fetch_rss():
         "Accept": "application/rss+xml, application/xml, text/xml",
     })
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with _safe_open(req, 20) as r:
             raw = r.read(500000).decode("utf-8", errors="replace")
     except Exception as e:
         print("[AI晨报] RSS 拉取失败: %s" % e, file=sys.stderr)
         return None
 
     try:
-        root = ET.fromstring(raw)
+        root = _safe_xml(raw)
     except ET.ParseError as e:
         print("[AI晨报] RSS 解析失败: %s" % e, file=sys.stderr)
         return None
@@ -298,7 +348,7 @@ def _fetch_url(url, timeout=20, accept=None):
     if accept:
         headers["Accept"] = accept
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with _safe_open(req, timeout) as r:
         return r.read(1000000).decode("utf-8", errors="replace")
 
 
@@ -364,7 +414,7 @@ def _feed_items(url, source, limit=6):
     try:
         raw = _fetch_url(url, timeout=20,
                          accept="application/rss+xml, application/xml, text/xml")
-        root = ET.fromstring(raw)
+        root = _safe_xml(raw)
     except Exception as ex:
         print("[AI晨报] %s 拉取失败: %s" % (source, ex), file=sys.stderr)
         return []
@@ -403,7 +453,7 @@ def _feed_items(url, source, limit=6):
 def _parse_rss2(raw, source, category, limit):
     """RSS 2.0 XML 文本 → 晨报条目结构；解析失败返回空列表。"""
     try:
-        root = ET.fromstring(raw)
+        root = _safe_xml(raw)
     except Exception as ex:
         print("[AI晨报] %s 解析异常: %s" % (source, ex), file=sys.stderr)
         return []
@@ -489,7 +539,7 @@ def _arxiv_items():
     if not xml_text:
         return []
     try:
-        root = ET.fromstring(xml_text)
+        root = _safe_xml(xml_text)
     except Exception as ex:
         print("[AI晨报] arXiv XML 解析失败: %s" % ex, file=sys.stderr)
         return []
@@ -579,7 +629,7 @@ def _fetch_bing_tokens():
         "https://www.bing.com/translator",
         headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
     )
-    r = urllib.request.urlopen(req, timeout=15)
+    r = _safe_open(req, 15)
     html = r.read().decode("utf-8")
     ig = re.search(r'IG:"([^"]+)"', html)
     iid = re.search(r'data-iid="([^"]+)"', html)
@@ -609,7 +659,7 @@ def _bing_translate(text):
             "Content-Type": "application/x-www-form-urlencoded",
             "Referer": "https://www.bing.com/translator",
         })
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with _safe_open(req, 10) as r:
             result = json.loads(r.read().decode("utf-8"))
         if isinstance(result, list) and result:
             trans = result[0].get("translations", [{}])
@@ -648,7 +698,7 @@ def _agnes_translate(text):
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with _safe_open(req, 20) as r:
             data = json.loads(r.read().decode("utf-8"))
         cand = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
         return cand or None
@@ -696,7 +746,7 @@ def _translate_to_zh(text):
                     "https://translate.googleapis.com/translate_a/single?" + params,
                     headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
                 )
-                with urllib.request.urlopen(req, timeout=10) as r:
+                with _safe_open(req, 10) as r:
                     data = json.loads(r.read().decode("utf-8"))
                 cand = "".join(seg[0] for seg in data[0] if seg[0]).strip()
                 if cand and _has_cn(cand):
@@ -731,7 +781,7 @@ def _translate_to_zh(text):
                     "https://api.mymemory.translated.net/get?" + params,
                     headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
                 )
-                with urllib.request.urlopen(req, timeout=10) as r:
+                with _safe_open(req, 10) as r:
                     data = json.loads(r.read().decode("utf-8"))
                 cand = (data.get("responseData", {}) or {}).get("translatedText", "").strip()
                 if cand and _has_cn(cand) and "MYMEMORY WARNING" not in cand:
@@ -755,7 +805,7 @@ def _translate_to_zh(text):
                 "https://translate.googleapis.com/translate_a/single?" + params,
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
             )
-            with urllib.request.urlopen(req, timeout=10) as r:
+            with _safe_open(req, 10) as r:
                 data = json.loads(r.read().decode("utf-8"))
             cand = "".join(seg[0] for seg in data[0] if seg[0]).strip()
             if cand and _has_cn(cand):
@@ -1131,8 +1181,7 @@ def main():
     window_human = f"数据截至 {now.strftime('%Y-%m-%d %H:%M')}（北京时间）"
 
     html_doc = build_html(grouped, date_human, window_human, sources_note)
-    with open(OUT, "w", encoding="utf-8") as f:
-        f.write(html_doc)
+    Path(OUT).write_text(html_doc, encoding="utf-8")
 
     total = sum(len(its) for _, its in grouped)
     print("[AI晨报] 生成完成 → %s（%d 条，%d 个分类）" % (OUT, total, len(grouped)))

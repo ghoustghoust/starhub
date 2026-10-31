@@ -31,13 +31,56 @@ class TrendingTest(unittest.TestCase):
                 {"full_name": "a/one", "stars": 100, "desc": "one"},
                 {"full_name": "b/two", "stars": 200, "desc": "two"},
             ]), mock.patch.object(trending, "fetch_trending_daily", return_value=None), \
-                 mock.patch.object(trending, "fetch_new_repos", return_value=[]):
+                 mock.patch.object(trending, "fetch_new_repos", return_value=[]), \
+                 mock.patch.object(trending, "fetch_download_totals", return_value={}):
                 result = trending.build_trending(
                     "token", {}, ai_topics=["ai"], ai_min_stars=1, new_min_stars=1,
                     trend_top=20, trend_max_stars=50000, fast=True, snapshot_path=str(snapshot),
                 )
             self.assertEqual(result["total"][0]["full_name"], "b/two")
+            self.assertEqual(result["downloads"], [])
             self.assertTrue(snapshot.exists())
+
+    def test_downloads_board_sorted_and_translated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = Path(tmp) / "snap.json"
+            pool = [
+                {"full_name": "a/one", "name": "one", "owner": "a",
+                 "html_url": "https://github.com/a/one", "stars": 100, "desc": "one"},
+                {"full_name": "b/two", "name": "two", "owner": "b",
+                 "html_url": "https://github.com/b/two", "stars": 200, "desc": "two"},
+            ]
+            with mock.patch.object(trending, "fetch_ai_pool", return_value=pool), \
+                 mock.patch.object(trending, "fetch_trending_daily", return_value=None), \
+                 mock.patch.object(trending, "fetch_new_repos", return_value=[]), \
+                 mock.patch.object(trending, "fetch_download_totals",
+                                   return_value={"a/one": 12000, "b/two": 500}) as totals:
+                result = trending.build_trending(
+                    "token", {"a/one": "中文一"}, ai_topics=["ai"], ai_min_stars=1, new_min_stars=1,
+                    trend_top=20, trend_max_stars=50000, fast=True, snapshot_path=str(snapshot),
+                )
+            downloads = result["downloads"]
+            self.assertEqual([row["full_name"] for row in downloads], ["a/one", "b/two"])
+            self.assertEqual(downloads[0]["downloads"], 12000)
+            self.assertEqual(downloads[0]["reason"], "累计下载 1.2万次")
+            self.assertEqual(downloads[0]["desc"], "中文一")
+            self.assertEqual(downloads[1]["reason"], "累计下载 500次")
+            totals.assert_called_once_with("token", ["b/two", "a/one"])
+
+    def test_downloads_board_skips_zero_downloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = Path(tmp) / "snap.json"
+            pool = [{"full_name": "a/one", "stars": 100, "desc": "one"}]
+            with mock.patch.object(trending, "fetch_ai_pool", return_value=pool), \
+                 mock.patch.object(trending, "fetch_trending_daily", return_value=None), \
+                 mock.patch.object(trending, "fetch_new_repos", return_value=[]), \
+                 mock.patch.object(trending, "fetch_download_totals", return_value={"a/one": 0}):
+                result = trending.build_trending(
+                    "token", {}, ai_topics=["ai"], ai_min_stars=1, new_min_stars=1,
+                    trend_top=20, trend_max_stars=50000, fast=True, snapshot_path=str(snapshot),
+                )
+            self.assertEqual(result["downloads"], [])
+            self.assertEqual(len(result["total"]), 1)
 
 
 if __name__ == "__main__":

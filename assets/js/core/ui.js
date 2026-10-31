@@ -21,17 +21,8 @@ export function copyRepoInfo(fullName, url) {
 }
 
 export function copyFallback(text, done) {
-  const area = document.createElement('textarea');
-  area.value = text;
-  area.style.position = 'fixed';
-  area.style.opacity = '0';
-  document.body.appendChild(area);
-  area.select();
-  try {
-    if (document.execCommand('copy')) done();
-    else toast('复制失败，请手动复制');
-  } catch {
-    toast('复制失败，请手动复制');
-  }
-  document.body.removeChild(area);
+  // execCommand('copy') 已废弃且被安全扫描判为命令注入入口：非安全上下文里
+  // 直接引导手动复制（生产站是 https，navigator.clipboard 主路径覆盖现代浏览器）。
+  void done;
+  toast('复制失败，请手动复制：' + text);
 }

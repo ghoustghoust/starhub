@@ -1,7 +1,7 @@
 // POST /api/refresh — dispatch this repository's update workflow.
 import { GITHUB_REPOSITORY } from './_lib/config.js';
 import { applyCors, rejectMethod } from './_lib/http.js';
-import { gh } from './_lib/github.js';
+import { gh, assertApiPath } from './_lib/github.js';
 
 export default async function handler(req, res) {
   const allowed = applyCors(req, res, {
@@ -19,7 +19,7 @@ export default async function handler(req, res) {
   if (!process.env.GH_TOKEN) { res.status(500).json({ error: 'GH_TOKEN is not configured' }); return; }
 
   try {
-    await gh(`/repos/${GITHUB_REPOSITORY}/actions/workflows/update.yml/dispatches`, {
+    await gh(assertApiPath(`/repos/${GITHUB_REPOSITORY}/actions/workflows/update.yml/dispatches`), {
       method: 'POST',
       body: { ref: 'main' },
       timeout: 10000,

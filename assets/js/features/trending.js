@@ -1,20 +1,23 @@
 import { LANG_COLORS, UPDATED, siteData, state } from '../core/state.js';
 import { $ } from '../core/dom.js';
-import { escHtml, fmtStars } from '../core/format.js';
+import { escHtml, fmtStars, fmtDownloads } from '../core/format.js';
 
 /* Daily trending board. */
 // ---- 每日 AI 排行榜 ----
 export function buildTrendItem(p, i, full){
-  const hasDelta = p.delta !== null && p.delta !== undefined;
-  const deltaHtml = state.trendTab === 'rising'
-    ? (hasDelta
-        ? (p.delta > 0
-            ? '<span class="delta">▲ +' + p.delta + '</span>'
-            : (p.delta === 0
-                ? '<span class="delta flat">➖</span>'
-                : '<span class="delta neg">▼ ' + Math.abs(p.delta) + '</span>'))
-        : '<span class="delta new">新</span>')
-    : '';
+  let deltaHtml = '';
+  if(state.trendTab === 'rising'){
+    const hasDelta = p.delta !== null && p.delta !== undefined;
+    deltaHtml = hasDelta
+      ? (p.delta > 0
+          ? '<span class="delta">▲ +' + p.delta + '</span>'
+          : (p.delta === 0
+              ? '<span class="delta flat">➖</span>'
+              : '<span class="delta neg">▼ ' + Math.abs(p.delta) + '</span>'))
+      : '<span class="delta new">新</span>';
+  } else if(state.trendTab === 'downloads'){
+    deltaHtml = '<span class="delta dl" title="Release 累计下载量">⬇ ' + fmtDownloads(p.downloads || 0) + '</span>';
+  }
   const rank = '<span class="rank">' + (i+1) + '</span>';
   const name = '<a class="tn" href="' + escHtml(p.html_url) + '" title="' + escHtml(p.owner) + '/' + escHtml(p.name) + '" target="_blank" rel="noopener">' + escHtml(p.owner) + '/' + escHtml(p.name) + '</a>';
   const lang = p.language
@@ -40,6 +43,8 @@ export function renderTrending(){
   if(state.trendTab === 'rising'){
     const src = siteData.TRENDING && siteData.TRENDING.source;
     sub += src === 'trending' ? ' · GitHub Trending 今日涨星' : (src === 'snapshot' ? ' · 快照差值' : '');
+  } else if(state.trendTab === 'downloads'){
+    sub += ' · Release 累计下载量';
   } else {
     sub += ' · Star 池统计';
   }
@@ -48,7 +53,9 @@ export function renderTrending(){
   if(!items.length){
     const msg = state.trendTab === 'rising'
       ? '首次运行正在建立基线，明天起显示每日涨星变化'
-      : '暂无数据';
+      : (state.trendTab === 'downloads'
+          ? '下载量数据暂缺，下次构建会自动重试'
+          : '暂无数据');
     list.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:24px 0">'+msg+'</div>';
     return;
   }

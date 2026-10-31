@@ -12,8 +12,20 @@ import sys
 import urllib.request
 from typing import Any, Iterable
 
+from ..sources import netguard
+
 _ENDPOINT = "https://api.siliconflow.cn/v1/embeddings"
 _MODEL = "BAAI/bge-m3"
+
+# 向量端点出网护栏：主机白名单 + 公网解析校验 + 钉住通道（共享 netguard）
+_HOSTS = frozenset({"api.siliconflow.cn"})
+_SAFE_OPENER = netguard.build_safe_opener(_HOSTS)
+
+
+def _safe_fetch(request, timeout=60):
+    """向量出网的唯一出口：先校验 URL，再走钉住通道。"""
+    netguard.assert_safe_url(request.full_url, _HOSTS)
+    return _SAFE_OPENER.open(request, timeout=timeout)
 
 
 def embed_texts(texts: Iterable[str], api_key: str | None = None) -> list[list[float]] | None:
@@ -29,7 +41,7 @@ def embed_texts(texts: Iterable[str], api_key: str | None = None) -> list[list[f
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with _safe_fetch(request) as response:
             body = json.loads(response.read().decode("utf-8"))
         items = sorted(body.get("data", []), key=lambda item: item.get("index", 0))
         vectors = [item.get("embedding") for item in items]

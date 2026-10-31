@@ -32,3 +32,22 @@ test('localStorage 写入失败时视图仍能在本次会话内往返', async (
   applyView('card');
   assert.equal(getView(), 'card');
 });
+
+test('下载榜行渲染 Release 下载量徽标', async () => {
+  globalThis.window = { __STARHUB_BOOT__: { TRENDING: {}, LANG_COLORS: {} } };
+  globalThis.localStorage = {
+    getItem: () => null,
+    setItem: () => {},
+    removeItem: () => {},
+  };
+  const { state } = await import('../assets/js/core/state.js');
+  const { buildTrendItem } = await import('../assets/js/features/trending.js');
+  state.trendTab = 'downloads';
+  const html = buildTrendItem({
+    html_url: 'https://github.com/a/one', owner: 'a', name: 'one', desc: 'd',
+    language: 'Python', stars: 1200, downloads: 123456, reason: '累计下载 12.3万次',
+  }, 0, false);
+  assert.ok(html.includes('delta dl'), html);
+  assert.ok(html.includes('⬇ 12.3万'), html);
+  state.trendTab = 'rising';
+});

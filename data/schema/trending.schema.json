@@ -13,11 +13,12 @@
     },
     "boards": {
       "type": "object",
-      "required": ["rising", "total", "new"],
+      "required": ["rising", "total", "new", "downloads"],
       "properties": {
         "rising": { "type": "array", "items": { "type": "object" } },
         "total": { "type": "array", "items": { "type": "object" } },
-        "new": { "type": "array", "items": { "type": "object" } }
+        "new": { "type": "array", "items": { "type": "object" } },
+        "downloads": { "type": "array", "items": { "type": "object" } }
       }
     }
   },

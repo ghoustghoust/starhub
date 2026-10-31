@@ -97,6 +97,7 @@ def write_site_contracts(
             "rising": boards.get("rising", []),
             "total": boards.get("total", []),
             "new": boards.get("new", []),
+            "downloads": boards.get("downloads", []),
         },
     })
     atomic_json_write(os.path.join(data_dir, "build-status.json"), {

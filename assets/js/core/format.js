@@ -13,6 +13,12 @@ export function fmtStars(number) {
   return number;
 }
 
+export function fmtDownloads(number) {
+  if (number >= 100000000) return (number / 100000000).toFixed(1).replace(/\.0$/, '') + '亿';
+  if (number >= 10000) return (number / 10000).toFixed(1).replace(/\.0$/, '') + '万';
+  return String(number);
+}
+
 export function fmtRelTime(iso) {
   if (!iso) return '';
   const time = new Date(iso).getTime();

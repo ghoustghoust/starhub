@@ -1,6 +1,6 @@
 // GET /api/events — recent public activity from the token owner's following list.
 import { applyCors, rejectMethod, setPublicCache } from './_lib/http.js';
-import { ghJson } from './_lib/github.js';
+import { ghJson, assertApiPath } from './_lib/github.js';
 import { GITHUB_REPOSITORY } from './_lib/config.js';
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -39,7 +39,7 @@ async function fetchFollowing() {
   const maxPages = Math.ceil(MAX_FOLLOWING / 100);
   for (let page = 1; page <= maxPages; page++) {
     // 公开 following 端点不依赖 token 的 read:user scope；当前 PAT 只有 repo/workflow 等权限。
-    const data = await ghJson(`/users/${encodeURIComponent(OWNER)}/following?per_page=100&page=${page}`, { timeout: 12000 });
+    const data = await ghJson(assertApiPath(`/users/${encodeURIComponent(OWNER)}/following?per_page=100&page=${page}`), { timeout: 12000 });
     out.push(...data.map((entry) => entry.login).filter(Boolean));
     if (out.length >= MAX_FOLLOWING) {
       out.length = MAX_FOLLOWING;
@@ -56,7 +56,7 @@ async function fetchUserEvents(user, cutoff, today) {
   for (let page = 1; page <= 2; page++) {
     let events;
     try {
-      events = await ghJson(`/users/${encodeURIComponent(user)}/events/public?per_page=100&page=${page}`, { timeout: 12000 });
+      events = await ghJson(assertApiPath(`/users/${encodeURIComponent(user)}/events/public?per_page=100&page=${page}`), { timeout: 12000 });
     } catch {
       break;
     }

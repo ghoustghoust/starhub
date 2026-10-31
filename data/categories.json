@@ -1,6 +1,6 @@
 {
  "schema_version": 2,
- "updated_at": "2026-10-30T06:56:31.933984Z",
+ "updated_at": "2026-10-31T06:50:52.064108Z",
  "map": {
   "2951461586/GPT-Register-Tool": "assistant",
   "bestnite/skills": "tools",
@@ -150,7 +150,9 @@
   "timoncool/YuE2-Studio": "tools",
   "seasnakes/gloria-prompt-archive": "tools",
   "1314521gjy/ComfyUI-Local-Infinite-Canvas": "video",
-  "linshenkx/prompt-optimizer": "tools"
+  "linshenkx/prompt-optimizer": "tools",
+  "peach-mitao/peach": "video",
+  "xiaoyang111222/cn-math-taxonomy": "tools"
  },
  "labels": {
   "agent": "AI Agent & Skills",

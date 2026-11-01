@@ -500,5 +500,10 @@
  "moeru-ai/airi": "💖🧸 自托管的 Grok 伴侣，一个承载着“妻魂”与赛博生命的容器，将它们带入我们的世界，并立志达到 Neuro-sama 的高度。支持实时语音聊天、《我的世界》和《异星工厂》游戏。支持网页端 / macOS / Windows。",
  "Niko1221/Strata": "任何消费硬件上的Qwen3.8-Flash-Next ：一键安装Windows/Linux。Strata推理引擎， localhost上的OpenAI/Anthropic API ，可选图像输入。",
  "cheaper-inference/OmniRoute": "永不停止编码。免费MIT AI网关：一个端点， 375个提供商（ 150多个免费） ， 1,400多个型号Kimi ， Claude ， GPT ， Gemini ， GLM ， DeepSeek ， MiniMax。适用于Claude Code、Codex、Cursor、OpenCode、Cline和Copilot。配额感知自动回退， RTK +穴居人压缩可节省15-95%的代币、MCP/A2A、桌面/PWA。由900多位贡献者构建",
- "thesysdev/openui": "生成式用户界面开放标准"
+ "thesysdev/openui": "生成式用户界面开放标准",
+ "srbhr/Resume-Matcher": "这是构建简历、PDF、求职信等的顶级 AI 工具，支持本地使用并兼容 100+ LLM。",
+ "e2b-dev/awesome-ai-agents": "AI 自主代理列表",
+ "zeroclaw-labs/zeroclaw": "快速、小巧且完全自主的 AI 个人助理基础设施，支持任意操作系统和平台——随处部署，灵活替换 🦀",
+ "microsoft/RD-Agent": "研发（R&D）对于提升工业生产力至关重要，尤其在人工智能时代，研发的核心重点主要集中在数据和模型上。我们致力于通过“研发智能体（R&D-Agent）”自动化这些高价值的通用研发流程，让人工智能驱动数据驱动的 AI 发展。 🔗https://aka.ms/RD-Agent-Tech-Report",
+ "d2l-ai/d2l-en": "互动式深度学习教材，包含多框架代码、数学推导和讨论内容。已被来自70个国家的500所大学采用，其中包括斯坦福大学、麻省理工学院、哈佛大学和剑桥大学。"
 }

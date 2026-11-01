@@ -491,5 +491,13 @@
  "VectifyAI/PageIndex": "📑 页码索引：用于无向量、基于推理的RAG的文档索引",
  "Dokploy/dokploy": "Vercel、Netlify 和 Heroku 的开源替代品。",
  "ItzCrazyKns/Vane": "Vane是一款AI驱动的问答引擎。",
- "modular/modular": "模块化平台（包括 MAX 和 Mojo）"
+ "modular/modular": "模块化平台（包括 MAX 和 Mojo）",
+ "peach-mitao/peach": "Peach：本地优先的视频元数据刮削器和媒体管理器。",
+ "timoncool/YuE2-Studio": "本地AI歌曲生成器，支持可编辑乐谱 —— 在您的GPU上运行YuE2：包含人声的完整歌曲、乐谱、翻唱及精准回放。原生Windows应用，无需Python，安装程序支持自动更新。",
+ "RVC-Boss/GPT-SoVITS": "1 分钟语音数据也可用于训练优秀的 TTS 模型！（少样本声音克隆）",
+ "openfilm/openfilm": "开源AI视频代理：将任意编码代理转变为视频代理，并配备编辑器以修改其生成的所有内容。",
+ "duixcom/Duix-Avatar": "🚀 真正开源的 AI 虚拟形象（数字人）工具包，用于离线视频生成和数字人克隆。",
+ "moeru-ai/airi": "💖🧸 自托管的 Grok 伴侣，一个承载着“妻魂”与赛博生命的容器，将它们带入我们的世界，并立志达到 Neuro-sama 的高度。支持实时语音聊天、《我的世界》和《异星工厂》游戏。支持网页端 / macOS / Windows。",
+ "Niko1221/Strata": "任何消费硬件上的Qwen3.8-Flash-Next ：一键安装Windows/Linux。Strata推理引擎， localhost上的OpenAI/Anthropic API ，可选图像输入。",
+ "cheaper-inference/OmniRoute": "永不停止编码。免费MIT AI网关：一个端点， 375个提供商（ 150多个免费） ， 1,400多个型号Kimi ， Claude ， GPT ， Gemini ， GLM ， DeepSeek ， MiniMax。适用于Claude Code、Codex、Cursor、OpenCode、Cline和Copilot。配额感知自动回退， RTK +穴居人压缩可节省15-95%的代币、MCP/A2A、桌面/PWA。由900多位贡献者构建"
 }

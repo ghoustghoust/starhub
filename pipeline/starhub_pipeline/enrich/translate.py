@@ -33,16 +33,23 @@ def _safe_fetch(request, timeout=10):
 
 def _translate_via_llm(text: str) -> str | None:
     """Agnes LLM 翻译。免费端点会被数据中心 IP 封锁（429/timeout），LLM 是 CI 的主通道；
-    本地构建它同样优先（质量最好）。失败返回 None。"""
-    return llm.chat(
-        [
-            {"role": "system",
-             "content": "你是翻译引擎。把用户输入的英文翻译成简体中文，只输出译文，不要解释。"},
-            {"role": "user", "content": text[:1500]},
-        ],
-        temperature=0.2,
-        max_tokens=400,
-    )
+    本地构建它同样优先（质量最好）。限流/偶发失败按 2s/4s/6s 退避重试，请求间留间隔
+    防止按分钟计的配额被连发打穿。失败返回 None。"""
+    result = None
+    for attempt in range(3):
+        time.sleep(2 * (attempt + 1))
+        result = llm.chat(
+            [
+                {"role": "system",
+                 "content": "你是翻译引擎。把用户输入的英文翻译成简体中文，只输出译文，不要解释。"},
+                {"role": "user", "content": text[:1500]},
+            ],
+            temperature=0.2,
+            max_tokens=400,
+        )
+        if result:
+            return result
+    return result
 
 
 def has_cn(text: str | None) -> bool:
@@ -69,6 +76,8 @@ def translate_to_zh(text: str | None, fast: bool = False) -> str | None:
         if cand and has_cn(cand):
             _FAIL_STREAK = 0
             return cand
+        # 三种静默失败（429/空响应/没翻出中文）里，只有这一种还查无实据，留一行现场
+        print("[translate] LLM 未产出中文: %r" % ((cand or "")[:60]), file=sys.stderr)
 
     if fast:
         # 快速模式到此为止：不再撞免费端点，失败也计入熔断，避免逐仓硬闯

@@ -59,6 +59,7 @@ UA = {"User-Agent": "Mozilla/5.0 (starhub-auto-update)"}
 # 挡内网/环回/链路本地/保留段；重定向逐跳复检；直连拨校验过的 IP 防 DNS rebinding）。
 _OUT_HOSTS = frozenset({
     "aihot.virxact.com",            # AIHOT API / RSS
+    "aihot.news",                   # AIHOT 新域名：virxact 在部分网络下 301 过去
     "hn.algolia.com",               # Hacker News
     "www.theverge.com", "techcrunch.com",
     "rsshub.ktachibana.party", "rsshub.woodland.cafe",

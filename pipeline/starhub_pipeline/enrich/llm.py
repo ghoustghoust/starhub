@@ -84,9 +84,12 @@ def chat(messages: list[dict[str, str]], temperature: float = 0.4, max_tokens: i
             with safe_fetch(request, TIMEOUT_SECONDS) as response:
                 body = json.loads(response.read().decode("utf-8"))
             content = body["choices"][0]["message"]["content"] or ""
+            if not content.strip():
+                print("[llm] 空响应（可能限流或内容审查）", file=sys.stderr)
             return content.strip() or None
         except urllib.error.HTTPError as exc:
             if exc.code == 429:
+                print(f"[llm] 429 rate limited（key {pool.index(key) + 1}/{len(pool)}）", file=sys.stderr)
                 continue
             print(f"[llm] HTTP {exc.code}", file=sys.stderr)
             return None

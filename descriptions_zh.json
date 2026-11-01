@@ -470,5 +470,16 @@
  "Orderlight93426/call-of-duty-modern-warfare-resocket-4-fps-optimizer": "轻量级桌面工具，专为《使命召唤：现代战争4》打造。智能FPS优化、性能调优、进程管理和实时监控，旨在提升帧率和稳定性。持续定期更新。",
  "amitshekhariitbhu/forward-deployed-engineer-roadmap": "部署工程师路线图 - 成为 AI 部署工程师的分步指南，每个主题都有一篇博客文章。",
  "loyaltyzkeeper/release-resocket-flow-docs": "音乐发行商的代理技能：保持发布流程文档与实际代码一致，或搭建本地 Adonis/Nest 审核 API。",
- "Vampiresatyr/rpocket-AI-Coding-Agent-Toolkit": "一款强大的多合一 AI 编码智能体工具包，支持 Claude Code、OpenAI Codex 等主流平台。通过简单几步设置即可快速上手，其安装简便、工作流灵活，适用于各类项目的智能化 AI 辅助开发。"
+ "Vampiresatyr/rpocket-AI-Coding-Agent-Toolkit": "一款强大的多合一 AI 编码智能体工具包，支持 Claude Code、OpenAI Codex 等主流平台。通过简单几步设置即可快速上手，其安装简便、工作流灵活，适用于各类项目的智能化 AI 辅助开发。",
+ "eriklindernoren/ML-From-Scratch": "从零开始实现机器学习。使用极简的 NumPy 实现机器学习和算法，注重易用性。旨在涵盖从线性回归到深度学习的全部内容。",
+ "ahujasid/mcp-for-blender": "社区插件，用于通过任意你选择的LLM来控制Blender 3D。与官方Blender基金会无关。",
+ "langbot-app/LangBot": "Production-grade platform for building agentic IM bots - 生产级多平台智能机器人开发平台/ Agent、知识库编排、插件系统 / Bots for Discord / Slack / LINE / Telegram / WeChat(企业微信, 企微智能机器人, 公众号) / 飞书 / 钉钉 / QQ / Matrix e.g. Integrated with ChatGPT(GPT), DeepSeek, Dify, n8n, Langflow, Coze, Claude, Gemini, GLM, Ollama, SiliconFlow, Kimi, openclaw / hermes agent, deerflow",
+ "LibreChat-AI/LibreChat": "增强版 ChatGPT 克隆：功能包括智能体、MCP、技能、DeepSeek、Anthropic、AWS、OpenAI、Responses API、Azure、Groq、o1、GPT-5、Mistral、OpenRouter、Vertex AI、Gemini、Artifacts、AI 模型切换、消息搜索、代码解释器、langchain、DALL-E-3、OpenAPI 动作、函数、安全多用户认证、预设，开源可自托管。活跃",
+ "ashishpatel26/500-AI-Machine-learning-Deep-learning-Computer-vision-NLP-Projects-with-code": "500 个带有代码的人工智能机器学习深度学习计算机视觉自然语言处理项目",
+ "Balanov/baiagent-director": "免费本地优先的AI商业顾问，提供基于证据的研究和可验证的试点计划。",
+ "tavern-labs-ai/persona-ai-sdk": "Persona AI SDK：默认角色、持久角色记忆以及 Bedrock/OpenAI 适配器，一个包搞定。",
+ "EntranceStarfish/VoiceStudioV2": "本地AI语音工作室：实时语音转换器、文本转语音、语音克隆和配音，使用插入式OpenAI兼容API。100%离线，无云，无API密钥。VoiceStudio的非官方分支。",
+ "gh9ko8y/graphmemory": "双时相AI内存系统：六变量衰减、时间分级召回、TTL到期、重复数据删除、竞争检索（ Neo4j + PostgreSQL + Redis ）",
+ "Windlich13044/rpocket-skill4agent-mcp-server": "skill4agent 的 MCP 服务器 - 通过模型上下文协议搜索和安装 AI 技能",
+ "enmerasoftware/ai-design-check": "设计规则及零依赖接口检查器，适用于由 AI 编码代理构建的 Web 及 SwiftUI、Jetpack Compose 应用中的界面。支持英语和土耳其语。"
 }

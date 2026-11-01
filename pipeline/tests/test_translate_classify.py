@@ -26,13 +26,38 @@ class TranslateTest(unittest.TestCase):
         translate.reset_circuit()
 
     def test_fast_mode_skips_network(self) -> None:
-        self.assertIsNone(translate.translate_to_zh("hello", fast=True))
+        # 无 key 环境：fast 模式没有可用端点，保持 None（有 key 时走 LLM，见下）
+        with mock.patch.object(translate.llm, "key_pool", return_value=[]):
+            self.assertIsNone(translate.translate_to_zh("hello", fast=True))
+
+    def test_agnes_translation(self) -> None:
+        payload = {"choices": [{"message": {"content": "你好世界"}}]}
+        opener = mock.MagicMock()
+        opener.open.return_value = _Response(payload)
+        with mock.patch.object(translate.llm, "key_pool", return_value=["key"]), \
+             mock.patch.object(translate.llm, "_SAFE_OPENER", opener), \
+             mock.patch.object(translate.llm.netguard, "assert_safe_url"):
+            self.assertEqual(translate.translate_to_zh("hello world"), "你好世界")
+
+    def test_fast_mode_uses_llm_only(self) -> None:
+        # fast（CI 快速模式）只允许 LLM 出手，免费端点一次都不能碰
+        payload = {"choices": [{"message": {"content": "你好世界"}}]}
+        opener = mock.MagicMock()
+        opener.open.return_value = _Response(payload)
+        free_opener = mock.MagicMock()
+        with mock.patch.object(translate.llm, "key_pool", return_value=["key"]), \
+             mock.patch.object(translate.llm, "_SAFE_OPENER", opener), \
+             mock.patch.object(translate.llm.netguard, "assert_safe_url"), \
+             mock.patch.object(translate, "_SAFE_OPENER", free_opener):
+            self.assertEqual(translate.translate_to_zh("hello world", fast=True), "你好世界")
+        free_opener.open.assert_not_called()
 
     def test_google_translation(self) -> None:
         payload = [[["你好世界", "hello world", None, None]]]
         opener = mock.MagicMock()
         opener.open.return_value = _Response(payload)
-        with mock.patch.object(translate, "_SAFE_OPENER", opener), \
+        with mock.patch.object(translate.llm, "key_pool", return_value=[]), \
+             mock.patch.object(translate, "_SAFE_OPENER", opener), \
              mock.patch.object(translate.netguard, "assert_safe_url"):
             self.assertEqual(translate.translate_to_zh("hello world"), "你好世界")
 

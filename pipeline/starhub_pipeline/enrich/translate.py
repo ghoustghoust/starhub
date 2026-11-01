@@ -13,6 +13,7 @@ import urllib.parse
 import urllib.request
 
 from ..sources import netguard
+from . import llm
 
 _FAIL_STREAK = 0
 _BLOCK_UNTIL = 0.0
@@ -25,9 +26,23 @@ _SAFE_OPENER = netguard.build_safe_opener(_HOSTS)
 
 
 def _safe_fetch(request, timeout=10):
-    """翻译出网的唯一出口：先校验 URL，再走钉住通道。"""
+    """免费端点出网的唯一出口：先校验 URL，再走钉住通道。"""
     netguard.assert_safe_url(request.full_url, _HOSTS)
     return _SAFE_OPENER.open(request, timeout=timeout)
+
+
+def _translate_via_llm(text: str) -> str | None:
+    """Agnes LLM 翻译。免费端点会被数据中心 IP 封锁（429/timeout），LLM 是 CI 的主通道；
+    本地构建它同样优先（质量最好）。失败返回 None。"""
+    return llm.chat(
+        [
+            {"role": "system",
+             "content": "你是翻译引擎。把用户输入的英文翻译成简体中文，只输出译文，不要解释。"},
+            {"role": "user", "content": text[:1500]},
+        ],
+        temperature=0.2,
+        max_tokens=400,
+    )
 
 
 def has_cn(text: str | None) -> bool:
@@ -41,8 +56,26 @@ def reset_circuit() -> None:
 
 
 def translate_to_zh(text: str | None, fast: bool = False) -> str | None:
+    """英译中；全部端点失败返回 None（调用方保留原文）。
+    fast=True 只走 Agnes LLM、跳过免费端点（CI 快速模式：免费端点长重试且被
+    数据中心 IP 封锁）；有 key 时两种模式都先走 Agnes（质量与可用性最好）。"""
     global _FAIL_STREAK, _BLOCK_UNTIL
-    if fast or not text or time.time() < _BLOCK_UNTIL:
+    if not text or time.time() < _BLOCK_UNTIL:
+        return None
+
+    # ── 端点 0：Agnes LLM（CI 与本地共同的主通道）──
+    if llm.key_pool():
+        cand = _translate_via_llm(text)
+        if cand and has_cn(cand):
+            _FAIL_STREAK = 0
+            return cand
+
+    if fast:
+        # 快速模式到此为止：不再撞免费端点，失败也计入熔断，避免逐仓硬闯
+        _FAIL_STREAK += 1
+        if _FAIL_STREAK >= _FAIL_LIMIT:
+            _BLOCK_UNTIL = time.time() + _COOLDOWN_SECONDS
+            print(f"[translate] circuit open after {_FAIL_STREAK} failures", file=sys.stderr)
         return None
 
     params = urllib.parse.urlencode({"client": "gtx", "sl": "auto", "tl": "zh-CN", "dt": "t", "q": text})

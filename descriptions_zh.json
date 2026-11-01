@@ -451,5 +451,13 @@
  "JunWan666/astrbot-for-android": "在 Android 手机上本地部署和管理 AstrBot 与 NapCat，内置 PRoot Ubuntu 运行环境，支持原生管理界面、WebUI、日志、备份恢复和独立更新，无需 Root。",
  "YuJunZhiXue/dsh-purge": "DeepSeek Harness 破甲：让所有模型都能破甲，不同模型可换不同提示词；默认提示词面向国模「小码酱」。Jailbreak for every model — swap prompts per model. 求 Star 收藏 ⭐ 如要二开，请查看署名要求部分",
  "shipwords-dev/shipwords": "Ship a money-making AI site for every new keyword. Cloudflare-native starter with auth, credits, payments and AI generation. | 新词站群框架：一个新词一个站，一个下午上线。起量的继续迭代，没起来的放着不管。不变的共享，变的独立。",
- "hhtower/price-comparison": "AI 订阅与卡网比价，聚合 ChatGPT / Codex、Claude、Gemini、Grok、Cursor 等代充、成品号与兑换码报价，提供价格走势、官方地区价参考和 AI / IP 检测。Compare AI subscription and account offers across shops, with price history, official regional pricing, and AI/IP checks."
+ "hhtower/price-comparison": "AI 订阅与卡网比价，聚合 ChatGPT / Codex、Claude、Gemini、Grok、Cursor 等代充、成品号与兑换码报价，提供价格走势、官方地区价参考和 AI / IP 检测。Compare AI subscription and account offers across shops, with price history, official regional pricing, and AI/IP checks.",
+ "ifixai-ai/iFixAi": "AI 代理的独立审计。无论由人工还是代理自身运行，都将回答 AI 代理经济中最关键的问题：该代理是否在做它应该做的事？借助 iFixAi，您可以在不到 120 秒的时间内获得答案。",
+ "linshenkx/prompt-optimizer": "AI提示词优化器，用于撰写更优质的提示词并获得更出色的AI生成结果。",
+ "NirDiamant/RAG_Techniques": "本仓库展示了检索增强生成（RAG）系统的多种高级技术。每种技术都配有详细的 Notebook 教程。",
+ "mli/paper-reading": "深度学习经典、新论文逐段精读",
+ "onyx-dot-app/onyx": "开源AI平台 - 具有高级功能的AI聊天，支持所有大型语言模型",
+ "nesquena/hermes-webui": "Hermes WebUI：通过网页或手机使用 Hermes Agent 的最佳方式！",
+ "dataelement/dsh-desktop": "DSHDesktop：DeepSeek Harness Desktop / DeepSeek Harness 桌面版",
+ "boardshogunfluctuate/Capri-AI": "⚡ 告诉你的电脑该做什么。卡普利是一款赛博朋克风格的 AI 代理，通过 Claude Code、Codex 或 Antigravity 与你的文件、项目和代码协作。提供 Windows 安装程序，无需终端操作。此为粉丝制作项目，与 CD PROJEKT RED 无关。"
 }

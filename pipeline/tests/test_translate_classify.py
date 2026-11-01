@@ -10,10 +10,13 @@ from starhub_pipeline.enrich import classify, llm, translate
 
 class _Response:
     def __init__(self, payload):
-        self._payload = json.dumps(payload).encode("utf-8")
+        # 字符串 = 原始文本（HTML 页）；其余按 JSON 序列化
+        self._payload = (payload.encode("utf-8") if isinstance(payload, str)
+                         else json.dumps(payload).encode("utf-8"))
 
-    def read(self):
-        return self._payload
+    def read(self, size=-1):
+        # 兼容带 size 的读取（Bing token 页按 300KB 截断）
+        return self._payload if size < 0 else self._payload[:size]
 
     def __enter__(self):
         return self
@@ -26,6 +29,15 @@ class TranslateTest(unittest.TestCase):
     def setUp(self) -> None:
         translate.reset_circuit()
 
+    class _Seq:
+        """同一端点按序返回多个响应（用于 token 过期重试等场景）。"""
+
+        def __init__(self, *items):
+            self.items = list(items)
+
+        def next_response(self):
+            return self.items.pop(0) if len(self.items) > 1 else self.items[0]
+
     @staticmethod
     def _url_router(responses):
         """按 URL 分发的 opener mock：key 命中哪个端点就回哪个 payload。"""
@@ -35,7 +47,8 @@ class TranslateTest(unittest.TestCase):
             url = request.full_url
             for key, payload in responses.items():
                 if key in url:
-                    return _Response(payload)
+                    return _Response(payload.next_response() if isinstance(payload, TranslateTest._Seq)
+                                     else payload)
             raise AssertionError("unexpected url: " + url)
 
         opener.open.side_effect = open_side_effect
@@ -98,6 +111,48 @@ class TranslateTest(unittest.TestCase):
              mock.patch.object(translate.time, "sleep"):
             self.assertEqual(translate.translate_to_zh("hello world", fast=True), "你好")
         self.assertTrue(all("google" not in url for url in requested), requested)
+
+    _BING_HTML = ('<script>IG:"A1B2C3";</script> <div data-iid="translator.5076"></div>'
+                  '<script>params_AbusePreventionHelper = [1730000000000,"T0K3N"];</script>')
+
+    def test_bing_translation(self) -> None:
+        # Bing 网页版：先取 token 再翻译，token 进程内缓存复用
+        opener = self._url_router({
+            "bing.com/translator": self._BING_HTML,
+            "ttranslatev3": [{"translations": [{"text": "你好世界"}]}],
+        })
+        with mock.patch.object(translate, "_SAFE_OPENER", opener), \
+             mock.patch.object(translate.netguard, "assert_safe_url"), \
+             mock.patch.object(translate, "_BING_TOKENS", None):
+            self.assertEqual(translate._via_bing("hello world"), "你好世界")
+            # 第二次直接命中缓存：不再请求 token 页
+            self.assertEqual(translate._via_bing("another"), "你好世界")
+        token_calls = [c for c in opener.open.call_args_list
+                       if "/translator" in c.args[0].full_url]  # IID 参数里也有 translator 字样
+        self.assertEqual(len(token_calls), 1)
+
+    def test_bing_token_expired_retry(self) -> None:
+        # 首次翻译返回 statusCode（token 过期）→ 清缓存重取一次后成功
+        opener = self._url_router({
+            "bing.com/translator": self._BING_HTML,
+            "ttranslatev3": self._Seq({"statusCode": 400},
+                                      [{"translations": [{"text": "你好"}]}]),
+        })
+        with mock.patch.object(translate, "_SAFE_OPENER", opener), \
+             mock.patch.object(translate.netguard, "assert_safe_url"), \
+             mock.patch.object(translate, "_BING_TOKENS", None):
+            self.assertEqual(translate._via_bing("hello"), "你好")
+
+    def test_bing_fails_chain_reaches_mymemory(self) -> None:
+        # 无 key：LLM 跳过 → Bing 全挂 → MyMemory 兜底
+        opener = self._url_router({
+            "mymemory.translated.net": {"responseData": {"translatedText": "你好"}},
+        })
+        with mock.patch.object(translate.llm, "key_pool", return_value=[]), \
+             mock.patch.object(translate, "_SAFE_OPENER", opener), \
+             mock.patch.object(translate.netguard, "assert_safe_url"), \
+             mock.patch.object(translate, "_BING_TOKENS", None):
+            self.assertEqual(translate.translate_to_zh("hello", fast=True), "你好")
 
     def test_google_translation(self) -> None:
         # 非 fast：LLM 无 key、MyMemory 给不出中文 → gtx 兜底

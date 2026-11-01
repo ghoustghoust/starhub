@@ -29,3 +29,4 @@ __pycache__/
 /test-screenshots/
 *.tmp
 *.png
+/local_fastlane.log

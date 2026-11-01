@@ -1,251 +1,251 @@
 {
  "schema_version": 2,
- "generated_at": "2026-10-31T06:50:52.064108Z",
- "updated": "2026-10-31 14:50",
+ "generated_at": "2026-11-01T07:18:31.465584Z",
+ "updated": "2026-11-01 15:18",
  "summary": {
   "text": ""
  },
  "boards": {
   "rising": [
    {
-    "name": "impeccable",
-    "owner": "pbakaus",
-    "full_name": "pbakaus/impeccable",
-    "html_url": "https://github.com/pbakaus/impeccable",
-    "desc": "使您的 AI 线束在设计上更加出色的设计语言。",
+    "name": "iFixAi",
+    "owner": "ifixai-ai",
+    "full_name": "ifixai-ai/iFixAi",
+    "html_url": "https://github.com/ifixai-ai/iFixAi",
+    "desc": "Independent Auditing of AI Agents. Run by human or the agent itself, to answer the most crucial question in the AI Agent Economy. Is the agent doing what is supposed to do? With iFixAi you can have this answer in less than 120 seconds.",
+    "language": "Python",
+    "stars": 41753,
+    "created_at": "2026-04-27",
+    "delta": 1934,
+    "reason": "今日涨星 +1934"
+   },
+   {
+    "name": "ai-engineering-hub",
+    "owner": "patchy631",
+    "full_name": "patchy631/ai-engineering-hub",
+    "html_url": "https://github.com/patchy631/ai-engineering-hub",
+    "desc": "有关法学硕士、RAG 和现实世界人工智能代理应用程序的深入教程。",
+    "language": "Jupyter Notebook",
+    "stars": 39552,
+    "created_at": "2024-10-21",
+    "delta": 1013,
+    "reason": "今日涨星 +1013"
+   },
+   {
+    "name": "AstrBot",
+    "owner": "AstrBotDevs",
+    "full_name": "AstrBotDevs/AstrBot",
+    "html_url": "https://github.com/AstrBotDevs/AstrBot",
+    "desc": "AI 智能体助手与开发框架，集成多 IM 平台、大模型、插件与 AI 能力，可作为 openclaw 的替代。",
+    "language": "Python",
+    "stars": 45399,
+    "created_at": "2022-12-08",
+    "delta": 263,
+    "reason": "今日涨星 +263"
+   },
+   {
+    "name": "herdr",
+    "owner": "herdrdev",
+    "full_name": "herdrdev/herdr",
+    "html_url": "https://github.com/herdrdev/herdr",
+    "desc": "你的编码代理所在的运行时",
     "language": "Rust",
-    "stars": 97385,
-    "stars_today": 2300,
-    "delta": 2300,
-    "reason": "今日涨星 +2300"
+    "stars": 47194,
+    "created_at": "2026-03-27",
+    "delta": 210,
+    "reason": "今日涨星 +210"
    },
    {
-    "name": "Claude-Code-Game-Studios",
-    "owner": "Donchitos",
-    "full_name": "Donchitos/Claude-Code-Game-Studios",
-    "html_url": "https://github.com/Donchitos/Claude-Code-Game-Studios",
-    "desc": "Turn Claude Code into a full game dev studio — 49 AI agents, 72 workflow skills, and a complete coordination system mirroring real studio hierarchy.",
-    "language": "Shell",
-    "stars": 30534,
-    "stars_today": 1347,
-    "delta": 1347,
-    "reason": "今日涨星 +1347"
-   },
-   {
-    "name": "superpowers",
-    "owner": "obra",
-    "full_name": "obra/superpowers",
-    "html_url": "https://github.com/obra/superpowers",
-    "desc": "面向 AI Agent 的技能框架与软件开发方法论。",
-    "language": "Shell",
-    "stars": 309572,
-    "stars_today": 1259,
-    "delta": 1259,
-    "reason": "今日涨星 +1259"
-   },
-   {
-    "name": "claude-mem",
-    "owner": "thedotmack",
-    "full_name": "thedotmack/claude-mem",
-    "html_url": "https://github.com/thedotmack/claude-mem",
-    "desc": "每个座席跨会话的持久上下文–捕获座席在会话期间执行的所有操作，使用AI对其进行压缩，并将相关上下文注入到未来的会话中。适用于Claude Code、OpenClaw、Codex、Gemini、Hermes、Copilot、OpenCode等",
-    "language": "TypeScript",
-    "stars": 106674,
-    "stars_today": 1140,
-    "delta": 1140,
-    "reason": "今日涨星 +1140"
-   },
-   {
-    "name": "Orkas",
-    "owner": "Orkas-AI",
-    "full_name": "Orkas-AI/Orkas",
-    "html_url": "https://github.com/Orkas-AI/Orkas",
-    "desc": "Orkas is an open-source (MIT), local-first AI team for your desktop: a Commander turns your goal into to-dos and coordinates 16 built-in specialist agents plus Claude Code, Codex, OpenCode, OpenClaw and Hermes, with projects, scheduled automations and connectors. Free app for macOS &amp; Windows; built-in models or your own keys.",
-    "language": "JavaScript",
-    "stars": 5444,
-    "stars_today": 1004,
-    "delta": 1004,
-    "reason": "今日涨星 +1004"
-   },
-   {
-    "name": "taste-skill",
-    "owner": "Leonxlnx",
-    "full_name": "Leonxlnx/taste-skill",
-    "html_url": "https://github.com/Leonxlnx/taste-skill",
-    "desc": "品味技能 - 给你的人工智能良好的品味。阻止人工智能产生无聊的、通用的斜坡",
-    "language": "JavaScript",
-    "stars": 106487,
-    "stars_today": 885,
-    "delta": 885,
-    "reason": "今日涨星 +885"
-   },
-   {
-    "name": "skills",
-    "owner": "mattpocock",
-    "full_name": "mattpocock/skills",
-    "html_url": "https://github.com/mattpocock/skills",
-    "desc": "面向实战工程师的技能集，直接来自作者的 .agents 目录。",
-    "language": "Shell",
-    "stars": 307670,
-    "stars_today": 876,
-    "delta": 876,
-    "reason": "今日涨星 +876"
-   },
-   {
-    "name": "ECC",
-    "owner": "affaan-m",
-    "full_name": "affaan-m/ECC",
-    "html_url": "https://github.com/affaan-m/ECC",
-    "desc": "Agent 性能优化系统，整合技能、记忆、安全与代码研究。",
-    "language": "JavaScript",
-    "stars": 293539,
-    "stars_today": 802,
-    "delta": 802,
-    "reason": "今日涨星 +802"
-   },
-   {
-    "name": "OpenBot",
-    "owner": "CopilotKit",
-    "full_name": "CopilotKit/OpenBot",
-    "html_url": "https://github.com/CopilotKit/OpenBot",
-    "desc": "Open-source AI coworkers that each get a computer of their own: a browser, files and tools, with every action decided before it happens and recorded after. Bring any AG-UI agent.",
-    "language": "TypeScript",
-    "stars": 8926,
-    "stars_today": 706,
-    "delta": 706,
-    "reason": "今日涨星 +706"
-   },
-   {
-    "name": "browser",
-    "owner": "lightpanda-io",
-    "full_name": "lightpanda-io/browser",
-    "html_url": "https://github.com/lightpanda-io/browser",
-    "desc": "Lightpanda ：专为人工智能和自动化设计的无头浏览器",
-    "language": "Zig",
-    "stars": 38621,
-    "stars_today": 626,
-    "delta": 626,
-    "reason": "今日涨星 +626"
-   },
-   {
-    "name": "openbot",
-    "owner": "nightly-labs",
-    "full_name": "nightly-labs/openbot",
-    "html_url": "https://github.com/nightly-labs/openbot",
-    "desc": "A local-first desktop workspace for persistent AI teammates. Run Codex, Claude, and Grok with dedicated workspaces, task queues, file sharing, browser control, and agent-to-agent collaboration.",
-    "language": "TypeScript",
-    "stars": 4272,
-    "stars_today": 485,
-    "delta": 485,
-    "reason": "今日涨星 +485"
-   },
-   {
-    "name": "hindsight",
-    "owner": "vectorize-io",
-    "full_name": "vectorize-io/hindsight",
-    "html_url": "https://github.com/vectorize-io/hindsight",
-    "desc": "Hindsight: Agent Memory That Learns",
-    "language": "Python",
-    "stars": 56736,
-    "stars_today": 411,
-    "delta": 411,
-    "reason": "今日涨星 +411"
-   },
-   {
-    "name": "agency-agents",
-    "owner": "msitarzewski",
-    "full_name": "msitarzewski/agency-agents",
-    "html_url": "https://github.com/msitarzewski/agency-agents",
-    "desc": "触手可及的完整 AI 团队：从前端高手到 Reddit 社区达人，每个智能体都是带人格、流程和可交付成果的专家。",
-    "language": "Shell",
-    "stars": 165555,
-    "stars_today": 334,
-    "delta": 334,
-    "reason": "今日涨星 +334"
-   },
-   {
-    "name": "caveman",
-    "owner": "JuliusBrussee",
-    "full_name": "JuliusBrussee/caveman",
-    "html_url": "https://github.com/JuliusBrussee/caveman",
-    "desc": "🪨 当很少的令牌可以完成戏法时，为什么要使用大量的令牌 — 克劳德代码技能，通过像穴居人一样说话来减少 65% 的令牌",
-    "language": "Go",
-    "stars": 116379,
-    "stars_today": 296,
-    "delta": 296,
-    "reason": "今日涨星 +296"
-   },
-   {
-    "name": "skills",
-    "owner": "anthropics",
-    "full_name": "anthropics/skills",
-    "html_url": "https://github.com/anthropics/skills",
-    "desc": "座席技能的公共存储库",
-    "language": "Python",
-    "stars": 185514,
-    "stars_today": 295,
-    "delta": 295,
-    "reason": "今日涨星 +295"
-   },
-   {
-    "name": "hex",
-    "owner": "anomalyco",
-    "full_name": "anomalyco/hex",
-    "html_url": "https://github.com/anomalyco/hex",
-    "desc": "Local-first voice dictation for macOS. Hold a shortcut, speak, and paste into any app. Native Rust, on-device speech recognition, and a Linux beta.",
+    "name": "artcraft",
+    "owner": "storytold",
+    "full_name": "storytold/artcraft",
+    "html_url": "https://github.com/storytold/artcraft",
+    "desc": "ArtCraft is an intentional crafting engine for artists, designers, and filmmakers",
     "language": "Rust",
-    "stars": 1284,
-    "stars_today": 289,
-    "delta": 289,
-    "reason": "今日涨星 +289"
+    "stars": 38045,
+    "created_at": "2022-03-31",
+    "delta": 170,
+    "reason": "今日涨星 +170"
    },
    {
-    "name": "agent-skills",
-    "owner": "addyosmani",
-    "full_name": "addyosmani/agent-skills",
-    "html_url": "https://github.com/addyosmani/agent-skills",
-    "desc": "面向 AI 编码智能体的生产级工程技能集。",
-    "language": "JavaScript",
-    "stars": 112040,
-    "stars_today": 279,
-    "delta": 279,
-    "reason": "今日涨星 +279"
+    "name": "ai-website-cloner-template",
+    "owner": "JCodesMore",
+    "full_name": "JCodesMore/ai-website-cloner-template",
+    "html_url": "https://github.com/JCodesMore/ai-website-cloner-template",
+    "desc": "使用 AI 编码代理通过一个命令克隆任何网站",
+    "language": "TypeScript",
+    "stars": 38315,
+    "created_at": "2026-03-13",
+    "delta": 130,
+    "reason": "今日涨星 +130"
    },
    {
-    "name": "mempalace",
-    "owner": "MemPalace",
-    "full_name": "MemPalace/mempalace",
-    "html_url": "https://github.com/MemPalace/mempalace",
-    "desc": "The best-benchmarked open-source AI memory system. And it's free.",
+    "name": "prompt-optimizer",
+    "owner": "linshenkx",
+    "full_name": "linshenkx/prompt-optimizer",
+    "html_url": "https://github.com/linshenkx/prompt-optimizer",
+    "desc": "An AI prompt optimizer for writing better prompts and getting better AI results.",
+    "language": "TypeScript",
+    "stars": 40158,
+    "created_at": "2025-02-12",
+    "delta": 126,
+    "reason": "今日涨星 +126"
+   },
+   {
+    "name": "oh-my-pi",
+    "owner": "can1357",
+    "full_name": "can1357/oh-my-pi",
+    "html_url": "https://github.com/can1357/oh-my-pi",
+    "desc": "⌥ 终端的 AI 编码代理 — 哈希锚定编辑、优化工具利用、LSP、Python、浏览器、子代理等",
+    "language": "TypeScript",
+    "stars": 37366,
+    "created_at": "2025-12-31",
+    "delta": 107,
+    "reason": "今日涨星 +107"
+   },
+   {
+    "name": "learn-harness-engineering",
+    "owner": "walkinglabs",
+    "full_name": "walkinglabs/learn-harness-engineering",
+    "html_url": "https://github.com/walkinglabs/learn-harness-engineering",
+    "desc": "线束工程初学者教程，从0到1",
+    "language": "TypeScript",
+    "stars": 22712,
+    "created_at": "2026-03-29",
+    "delta": 102,
+    "reason": "今日涨星 +102"
+   },
+   {
+    "name": "airllm",
+    "owner": "lyogavin",
+    "full_name": "lyogavin/airllm",
+    "html_url": "https://github.com/lyogavin/airllm",
+    "desc": "使用单个 4GB GPU 进行 AirLLM 70B 推理",
+    "language": "Jupyter Notebook",
+    "stars": 41451,
+    "created_at": "2023-06-12",
+    "delta": 94,
+    "reason": "今日涨星 +94"
+   },
+   {
+    "name": "heretic",
+    "owner": "p-e-w",
+    "full_name": "p-e-w/heretic",
+    "html_url": "https://github.com/p-e-w/heretic",
+    "desc": "全自动消除语言模型审查",
     "language": "Python",
-    "stars": 60170,
-    "stars_today": 258,
-    "delta": 258,
-    "reason": "今日涨星 +258"
+    "stars": 37328,
+    "created_at": "2025-09-21",
+    "delta": 84,
+    "reason": "今日涨星 +84"
    },
    {
-    "name": "harvey",
-    "owner": "ethanplusai",
-    "full_name": "ethanplusai/harvey",
-    "html_url": "https://github.com/ethanplusai/harvey",
-    "desc": "Autonomous AI sales agent powered by Claude Code or Codex. Finds prospects, writes cold emails, sends campaigns, handles replies, books meetings. No API keys needed — runs on your Claude or Codex subscriptions.",
+    "name": "agentscope",
+    "owner": "agentscope-ai",
+    "full_name": "agentscope-ai/agentscope",
+    "html_url": "https://github.com/agentscope-ai/agentscope",
+    "desc": "构建和运行您可以看到、理解和信任的代理。",
     "language": "Python",
-    "stars": 3524,
-    "stars_today": 244,
-    "delta": 244,
-    "reason": "今日涨星 +244"
+    "stars": 35067,
+    "created_at": "2024-01-12",
+    "delta": 83,
+    "reason": "今日涨星 +83"
    },
    {
-    "name": "colibri",
-    "owner": "JustVugg",
-    "full_name": "JustVugg/colibri",
-    "html_url": "https://github.com/JustVugg/colibri",
-    "desc": "Run frontier MoE models on hardware you already own — pure C, zero deps, experts streamed from disk. Tiny engine, immense model. 🐦",
-    "language": "C",
-    "stars": 45240,
-    "stars_today": 242,
-    "delta": 242,
-    "reason": "今日涨星 +242"
+    "name": "mcp-for-blender",
+    "owner": "ahujasid",
+    "full_name": "ahujasid/mcp-for-blender",
+    "html_url": "https://github.com/ahujasid/mcp-for-blender",
+    "desc": "Community plugin to control Blender 3D with any LLM of your choice. Not affiliated with the official Blender Foundation.",
+    "language": "Python",
+    "stars": 32939,
+    "created_at": "2025-03-07",
+    "delta": 80,
+    "reason": "今日涨星 +80"
+   },
+   {
+    "name": "openui",
+    "owner": "thesysdev",
+    "full_name": "thesysdev/openui",
+    "html_url": "https://github.com/thesysdev/openui",
+    "desc": "The Open Standard for Generative UI",
+    "language": "TypeScript",
+    "stars": 14583,
+    "created_at": "2024-12-02",
+    "delta": 78,
+    "reason": "今日涨星 +78"
+   },
+   {
+    "name": "GPT_API_free",
+    "owner": "chatanywhere",
+    "full_name": "chatanywhere/GPT_API_free",
+    "html_url": "https://github.com/chatanywhere/GPT_API_free",
+    "desc": "免费大模型API，支持免费调用GPT、DeepSeek等主流模型，免费额度10000点，每日刷新！另付费价格最低官方1-2折！",
+    "language": null,
+    "stars": 45186,
+    "created_at": "2023-04-23",
+    "delta": 65,
+    "reason": "今日涨星 +65"
+   },
+   {
+    "name": "cua",
+    "owner": "trycua",
+    "full_name": "trycua/cua",
+    "html_url": "https://github.com/trycua/cua",
+    "desc": "通过开源驱动程序、跨操作系统车队以及培训、评估和数据生成的基准来扩展计算机使用2.0。",
+    "language": "Rust",
+    "stars": 31443,
+    "created_at": "2025-01-31",
+    "delta": 62,
+    "reason": "今日涨星 +62"
+   },
+   {
+    "name": "paperless-ngx",
+    "owner": "paperless-ngx",
+    "full_name": "paperless-ngx/paperless-ngx",
+    "html_url": "https://github.com/paperless-ngx/paperless-ngx",
+    "desc": "社区支持的强大文档管理系统：扫描、索引和归档您的所有文档",
+    "language": "Python",
+    "stars": 47479,
+    "created_at": "2022-02-12",
+    "delta": 61,
+    "reason": "今日涨星 +61"
+   },
+   {
+    "name": "LibreChat",
+    "owner": "LibreChat-AI",
+    "full_name": "LibreChat-AI/LibreChat",
+    "html_url": "https://github.com/LibreChat-AI/LibreChat",
+    "desc": "Enhanced ChatGPT Clone: Features Agents, MCP, Skills, DeepSeek, Anthropic, AWS, OpenAI, Responses API, Azure, Groq, o1, GPT-5, Mistral, OpenRouter, Vertex AI, Gemini, Artifacts, AI model switching, message search, Code Interpreter, langchain, DALL-E-3, OpenAPI Actions, Functions, Secure Multi-User Auth, Presets, open-source for self-hosting. Active",
+    "language": "TypeScript",
+    "stars": 46588,
+    "created_at": "2023-02-12",
+    "delta": 61,
+    "reason": "今日涨星 +61"
+   },
+   {
+    "name": "Vibe-Trading",
+    "owner": "HKUDS",
+    "full_name": "HKUDS/Vibe-Trading",
+    "html_url": "https://github.com/HKUDS/Vibe-Trading",
+    "desc": "“Vibe-Trading：您的个人交易代理”",
+    "language": "Python",
+    "stars": 37316,
+    "created_at": "2026-04-01",
+    "delta": 61,
+    "reason": "今日涨星 +61"
+   },
+   {
+    "name": "serena",
+    "owner": "oraios",
+    "full_name": "oraios/serena",
+    "html_url": "https://github.com/oraios/serena",
+    "desc": "强大的 MCP 编码工具包，提供语义检索和编辑功能 - 适用于您的代理的 IDE",
+    "language": "Python",
+    "stars": 30963,
+    "created_at": "2025-03-23",
+    "delta": 61,
+    "reason": "今日涨星 +61"
    }
   ],
   "total": [
@@ -256,9 +256,9 @@
     "html_url": "https://github.com/morluto/rea",
     "desc": "使用代理对任何内容进行逆向工程，从应用程序行为到本机二进制文件。",
     "language": "TypeScript",
-    "stars": 413098,
+    "stars": 416284,
     "created_at": "2026-04-14",
-    "reason": "累计 41.3万星标"
+    "reason": "累计 41.6万星标"
    },
    {
     "name": "openclaw",
@@ -267,7 +267,7 @@
     "html_url": "https://github.com/openclaw/openclaw",
     "desc": "开源 AI 个人助手，跨任意操作系统与平台运行。",
     "language": "TypeScript",
-    "stars": 393501,
+    "stars": 393586,
     "created_at": "2025-11-24",
     "reason": "累计 39.4万星标"
    },
@@ -278,7 +278,7 @@
     "html_url": "https://github.com/obra/superpowers",
     "desc": "面向 AI Agent 的技能框架与软件开发方法论。",
     "language": "Shell",
-    "stars": 309572,
+    "stars": 310219,
     "created_at": "2025-10-09",
     "reason": "累计 31.0万星标"
    },
@@ -289,7 +289,7 @@
     "html_url": "https://github.com/affaan-m/ECC",
     "desc": "Agent 性能优化系统，整合技能、记忆、安全与代码研究。",
     "language": "JavaScript",
-    "stars": 293539,
+    "stars": 294236,
     "created_at": "2026-01-18",
     "reason": "累计 29.4万星标"
    },
@@ -300,7 +300,7 @@
     "html_url": "https://github.com/NousResearch/hermes-agent",
     "desc": "会随使用不断进化的自适应 AI Agent。",
     "language": "Python",
-    "stars": 258944,
+    "stars": 259279,
     "created_at": "2025-07-22",
     "reason": "累计 25.9万星标"
    },
@@ -311,7 +311,7 @@
     "html_url": "https://github.com/n8n-io/n8n",
     "desc": "公平代码的工作流自动化平台，原生集成 AI 能力。",
     "language": "TypeScript",
-    "stars": 209167,
+    "stars": 209231,
     "created_at": "2019-06-22",
     "reason": "累计 20.9万星标"
    },
@@ -322,7 +322,7 @@
     "html_url": "https://github.com/tensorflow/tensorflow",
     "desc": "Google 出品的开源机器学习框架。",
     "language": "C++",
-    "stars": 201235,
+    "stars": 201257,
     "created_at": "2015-11-07",
     "reason": "累计 20.1万星标"
    },
@@ -333,7 +333,7 @@
     "html_url": "https://github.com/firecrawl/firecrawl",
     "desc": "大规模网页搜索、抓取与交互的上下文 API。",
     "language": "TypeScript",
-    "stars": 197183,
+    "stars": 197486,
     "created_at": "2024-04-15",
     "reason": "累计 19.7万星标"
    },
@@ -344,7 +344,7 @@
     "html_url": "https://github.com/Significant-Gravitas/AutoGPT",
     "desc": "让 AI 普惠大众的自主智能体项目。",
     "language": "Python",
-    "stars": 187840,
+    "stars": 187852,
     "created_at": "2023-03-16",
     "reason": "累计 18.8万星标"
    },
@@ -355,9 +355,9 @@
     "html_url": "https://github.com/ollama/ollama",
     "desc": "本地一键运行 DeepSeek、Qwen、Gemma 等大模型。",
     "language": "Go",
-    "stars": 185404,
+    "stars": 185512,
     "created_at": "2023-06-26",
-    "reason": "累计 18.5万星标"
+    "reason": "累计 18.6万星标"
    },
    {
     "name": "ponytail",
@@ -366,9 +366,9 @@
     "html_url": "https://github.com/DietrichGebert/ponytail",
     "desc": "让你的人工智能代理像房间里最懒的高级开发人员一样思考。最好的代码是你从未编写过的代码。",
     "language": "JavaScript",
-    "stars": 181095,
+    "stars": 181672,
     "created_at": "2026-06-12",
-    "reason": "累计 18.1万星标"
+    "reason": "累计 18.2万星标"
    },
    {
     "name": "prompts.chat",
@@ -377,7 +377,7 @@
     "html_url": "https://github.com/f/prompts.chat",
     "desc": "精选 ChatGPT 提示词合集，支持自托管。",
     "language": "HTML",
-    "stars": 175338,
+    "stars": 175461,
     "created_at": "2022-12-05",
     "reason": "累计 17.5万星标"
    },
@@ -388,7 +388,7 @@
     "html_url": "https://github.com/huggingface/transformers",
     "desc": "Hugging Face 模型框架，覆盖文本、视觉、音频多模态。",
     "language": "Python",
-    "stars": 168377,
+    "stars": 168400,
     "created_at": "2018-10-29",
     "reason": "累计 16.8万星标"
    },
@@ -399,7 +399,7 @@
     "html_url": "https://github.com/AUTOMATIC1111/stable-diffusion-webui",
     "desc": "Stable Diffusion 的网页版图形界面。",
     "language": "Python",
-    "stars": 165189,
+    "stars": 165207,
     "created_at": "2022-08-22",
     "reason": "累计 16.5万星标"
    },
@@ -410,7 +410,7 @@
     "html_url": "https://github.com/langgenius/dify",
     "desc": "一站式构建 Agent 工作流与 RAG 管线的平台。",
     "language": "Python",
-    "stars": 160049,
+    "stars": 160128,
     "created_at": "2023-04-12",
     "reason": "累计 16.0万星标"
    },
@@ -421,7 +421,7 @@
     "html_url": "https://github.com/Snailclimb/JavaGuide",
     "desc": "Java 面试与后端通用面试指南。",
     "language": "JavaScript",
-    "stars": 159359,
+    "stars": 159366,
     "created_at": "2018-05-07",
     "reason": "累计 15.9万星标"
    },
@@ -432,7 +432,7 @@
     "html_url": "https://github.com/open-webui/open-webui",
     "desc": "友好的本地 AI 界面，支持 Ollama 与 OpenAI 接口。",
     "language": "Python",
-    "stars": 157326,
+    "stars": 157432,
     "created_at": "2023-10-06",
     "reason": "累计 15.7万星标"
    },
@@ -443,9 +443,20 @@
     "html_url": "https://github.com/langchain-ai/langchain",
     "desc": "面向智能体的工程化开发平台。",
     "language": "Python",
-    "stars": 148752,
+    "stars": 148796,
     "created_at": "2022-10-17",
     "reason": "累计 14.9万星标"
+   },
+   {
+    "name": "spec-kit",
+    "owner": "github",
+    "full_name": "github/spec-kit",
+    "html_url": "https://github.com/github/spec-kit",
+    "desc": "帮助你入门「规格驱动开发」的工具集。",
+    "language": "Python",
+    "stars": 144556,
+    "created_at": "2025-08-21",
+    "reason": "累计 14.5万星标"
    },
    {
     "name": "system-prompts-and-models-of-ai-tools",
@@ -454,34 +465,12 @@
     "html_url": "https://github.com/x1xhlol/system-prompts-and-models-of-ai-tools",
     "desc": "汇总各大 AI 编程工具的系统提示词与内部模型。",
     "language": null,
-    "stars": 144372,
+    "stars": 144395,
     "created_at": "2025-03-05",
-    "reason": "累计 14.4万星标"
-   },
-   {
-    "name": "ComfyUI",
-    "owner": "Comfy-Org",
-    "full_name": "Comfy-Org/ComfyUI",
-    "html_url": "https://github.com/Comfy-Org/ComfyUI",
-    "desc": "功能强大的模块化扩散模型 GUI 与后端。",
-    "language": "Python",
-    "stars": 144241,
-    "created_at": "2023-01-17",
     "reason": "累计 14.4万星标"
    }
   ],
   "new": [
-   {
-    "name": "shipwords",
-    "owner": "shipwords-dev",
-    "full_name": "shipwords-dev/shipwords",
-    "html_url": "https://github.com/shipwords-dev/shipwords",
-    "desc": "Ship a money-making AI site for every new keyword. Cloudflare-native starter with auth, credits, payments and AI generation. | 新词站群框架：一个新词一个站，一个下午上线。起量的继续迭代，没起来的放着不管。不变的共享，变的独立。",
-    "language": "TypeScript",
-    "stars": 304,
-    "created_at": "2026-10-28",
-    "reason": "近 7 天新建 · 304星标"
-   },
    {
     "name": "Capri-AI",
     "owner": "boardshogunfluctuate",
@@ -489,9 +478,31 @@
     "html_url": "https://github.com/boardshogunfluctuate/Capri-AI",
     "desc": "⚡ Tell your PC what to do. Capri is a cyberpunk AI agent that works with your files, projects and code through Claude Code, Codex or Antigravity. Windows installer, no terminal. Fan-made, not affiliated with CD PROJEKT RED.",
     "language": null,
-    "stars": 286,
+    "stars": 518,
     "created_at": "2026-10-30",
-    "reason": "近 7 天新建 · 286星标"
+    "reason": "近 7 天新建 · 518星标"
+   },
+   {
+    "name": "shipwords",
+    "owner": "shipwords-dev",
+    "full_name": "shipwords-dev/shipwords",
+    "html_url": "https://github.com/shipwords-dev/shipwords",
+    "desc": "Ship a money-making AI site for every new keyword. Cloudflare-native starter with auth, credits, payments and AI generation. | 新词站群框架：一个新词一个站，一个下午上线。起量的继续迭代，没起来的放着不管。不变的共享，变的独立。",
+    "language": "TypeScript",
+    "stars": 317,
+    "created_at": "2026-10-28",
+    "reason": "近 7 天新建 · 317星标"
+   },
+   {
+    "name": "baiagent-director",
+    "owner": "Balanov",
+    "full_name": "Balanov/baiagent-director",
+    "html_url": "https://github.com/Balanov/baiagent-director",
+    "desc": "Free local-first AI business advisor with evidence-linked research and verifiable pilot plans.",
+    "language": "JavaScript",
+    "stars": 305,
+    "created_at": "2026-10-28",
+    "reason": "近 7 天新建 · 305星标"
    },
    {
     "name": "astrbot-for-android",
@@ -500,9 +511,20 @@
     "html_url": "https://github.com/JunWan666/astrbot-for-android",
     "desc": "在 Android 手机上本地部署和管理 AstrBot 与 NapCat，内置 PRoot Ubuntu 运行环境，支持原生管理界面、WebUI、日志、备份恢复和独立更新，无需 Root。",
     "language": "Kotlin",
-    "stars": 281,
+    "stars": 291,
     "created_at": "2026-10-26",
-    "reason": "近 7 天新建 · 281星标"
+    "reason": "近 7 天新建 · 291星标"
+   },
+   {
+    "name": "persona-ai-sdk",
+    "owner": "tavern-labs-ai",
+    "full_name": "tavern-labs-ai/persona-ai-sdk",
+    "html_url": "https://github.com/tavern-labs-ai/persona-ai-sdk",
+    "desc": "Persona AI SDK: default personas, durable character memory, and Bedrock/OpenAI adapters in one package.",
+    "language": "TypeScript",
+    "stars": 192,
+    "created_at": "2026-10-31",
+    "reason": "近 7 天新建 · 192星标"
    },
    {
     "name": "VoiceStudioV2",
@@ -511,9 +533,9 @@
     "html_url": "https://github.com/EntranceStarfish/VoiceStudioV2",
     "desc": "Local AI voice studio: real-time voice changer, text-to-speech, voice cloning & dubbing with a drop-in OpenAI-compatible API. 100% offline, no cloud, no API keys. Unofficial fork of VoiceStudio.",
     "language": null,
-    "stars": 128,
+    "stars": 131,
     "created_at": "2026-10-30",
-    "reason": "近 7 天新建 · 128星标"
+    "reason": "近 7 天新建 · 131星标"
    },
    {
     "name": "price-comparison",
@@ -522,20 +544,9 @@
     "html_url": "https://github.com/hhtower/price-comparison",
     "desc": "AI 订阅与卡网比价，聚合 ChatGPT / Codex、Claude、Gemini、Grok、Cursor 等代充、成品号与兑换码报价，提供价格走势、官方地区价参考和 AI / IP 检测。Compare AI subscription and account offers across shops, with price history, official regional pricing, and AI/IP checks.",
     "language": "TypeScript",
-    "stars": 87,
+    "stars": 108,
     "created_at": "2026-10-28",
-    "reason": "近 7 天新建 · 87星标"
-   },
-   {
-    "name": "call-of-duty-modern-warfare-resocket-4-fps-optimizer",
-    "owner": "Orderlight93426",
-    "full_name": "Orderlight93426/call-of-duty-modern-warfare-resocket-4-fps-optimizer",
-    "html_url": "https://github.com/Orderlight93426/call-of-duty-modern-warfare-resocket-4-fps-optimizer",
-    "desc": "Lightweight desktop tool for Call of Duty: Modern Warfare 4. Smart FPS optimization, performance tuning, process management and real-time monitoring. Designed to improve frame rates and stability. Regularly updated.",
-    "language": "HTML",
-    "stars": 56,
-    "created_at": "2026-10-26",
-    "reason": "近 7 天新建 · 56星标"
+    "reason": "近 7 天新建 · 108星标"
    },
    {
     "name": "InterviewCopilot-rpocket-team",
@@ -544,9 +555,20 @@
     "html_url": "https://github.com/OFat34764e/InterviewCopilot-rpocket-team",
     "desc": "EdTech application designed to bridge the gap between learning and landing your dream job",
     "language": null,
-    "stars": 56,
+    "stars": 95,
     "created_at": "2026-10-26",
-    "reason": "近 7 天新建 · 56星标"
+    "reason": "近 7 天新建 · 95星标"
+   },
+   {
+    "name": "call-of-duty-modern-warfare-resocket-4-fps-optimizer",
+    "owner": "Orderlight93426",
+    "full_name": "Orderlight93426/call-of-duty-modern-warfare-resocket-4-fps-optimizer",
+    "html_url": "https://github.com/Orderlight93426/call-of-duty-modern-warfare-resocket-4-fps-optimizer",
+    "desc": "Lightweight desktop tool for Call of Duty: Modern Warfare 4. Smart FPS optimization, performance tuning, process management and real-time monitoring. Designed to improve frame rates and stability. Regularly updated.",
+    "language": "HTML",
+    "stars": 95,
+    "created_at": "2026-10-26",
+    "reason": "近 7 天新建 · 95星标"
    },
    {
     "name": "forward-deployed-engineer-roadmap",
@@ -555,9 +577,295 @@
     "html_url": "https://github.com/amitshekhariitbhu/forward-deployed-engineer-roadmap",
     "desc": "Forward Deployed Engineer Roadmap - A step-by-step roadmap to become a Forward Deployed Engineer (FDE) in AI, with a blog for every topic.",
     "language": "Markdown",
-    "stars": 53,
+    "stars": 89,
     "created_at": "2026-10-30",
-    "reason": "近 7 天新建 · 53星标"
+    "reason": "近 7 天新建 · 89星标"
+   },
+   {
+    "name": "graphmemory",
+    "owner": "gh9ko8y",
+    "full_name": "gh9ko8y/graphmemory",
+    "html_url": "https://github.com/gh9ko8y/graphmemory",
+    "desc": "Bitemporal AI memory system: six-variable decay, time-graded recall, TTL expiry, dedupe, competitive retrieval (Neo4j + PostgreSQL + Redis)",
+    "language": "Python",
+    "stars": 68,
+    "created_at": "2026-10-30",
+    "reason": "近 7 天新建 · 68星标"
+   },
+   {
+    "name": "release-resocket-flow-docs",
+    "owner": "loyaltyzkeeper",
+    "full_name": "loyaltyzkeeper/release-resocket-flow-docs",
+    "html_url": "https://github.com/loyaltyzkeeper/release-resocket-flow-docs",
+    "desc": "Agent skill for music distributors: keep release-flow docs honest vs code, or scaffold a local Adonis/Nest moderation API.",
+    "language": null,
+    "stars": 68,
+    "created_at": "2026-10-28",
+    "reason": "近 7 天新建 · 68星标"
+   },
+   {
+    "name": "rpocket-AI-Coding-Agent-Toolkit",
+    "owner": "Vampiresatyr",
+    "full_name": "Vampiresatyr/rpocket-AI-Coding-Agent-Toolkit",
+    "html_url": "https://github.com/Vampiresatyr/rpocket-AI-Coding-Agent-Toolkit",
+    "desc": "A powerful all-in-one AI Coding Agent toolkit for Claude Code, OpenAI Codex, and more. Get started in just a few clicks with a simple setup designed for effortless installation, flexible workflows, and smarter AI-powered development across any project.",
+    "language": "HTML",
+    "stars": 67,
+    "created_at": "2026-10-28",
+    "reason": "近 7 天新建 · 67星标"
+   },
+   {
+    "name": "rpocket-skill4agent-mcp-server",
+    "owner": "Windlich13044",
+    "full_name": "Windlich13044/rpocket-skill4agent-mcp-server",
+    "html_url": "https://github.com/Windlich13044/rpocket-skill4agent-mcp-server",
+    "desc": "MCP Server for skill4agent - Search and install AI skills via Model Context Protocol",
+    "language": "HTML",
+    "stars": 67,
+    "created_at": "2026-10-28",
+    "reason": "近 7 天新建 · 67星标"
+   }
+  ],
+  "downloads": [
+   {
+    "name": "ollama",
+    "owner": "ollama",
+    "full_name": "ollama/ollama",
+    "html_url": "https://github.com/ollama/ollama",
+    "desc": "本地一键运行 DeepSeek、Qwen、Gemma 等大模型。",
+    "language": "Go",
+    "stars": 185512,
+    "created_at": "2023-06-26",
+    "downloads": 237090226,
+    "reason": "累计下载 2.4亿次"
+   },
+   {
+    "name": "ComfyUI",
+    "owner": "Comfy-Org",
+    "full_name": "Comfy-Org/ComfyUI",
+    "html_url": "https://github.com/Comfy-Org/ComfyUI",
+    "desc": "功能强大的模块化扩散模型 GUI 与后端。",
+    "language": "Python",
+    "stars": 144391,
+    "created_at": "2023-01-17",
+    "downloads": 10574172,
+    "reason": "累计下载 1057.4万次"
+   },
+   {
+    "name": "netdata",
+    "owner": "netdata",
+    "full_name": "netdata/netdata",
+    "html_url": "https://github.com/netdata/netdata",
+    "desc": "即使对于精益团队来说，也是实现人工智能驱动的全栈可观察性的最快途径。",
+    "language": "Go",
+    "stars": 81238,
+    "created_at": "2013-06-17",
+    "downloads": 7060008,
+    "reason": "累计下载 706.0万次"
+   },
+   {
+    "name": "stable-diffusion-webui",
+    "owner": "AUTOMATIC1111",
+    "full_name": "AUTOMATIC1111/stable-diffusion-webui",
+    "html_url": "https://github.com/AUTOMATIC1111/stable-diffusion-webui",
+    "desc": "Stable Diffusion 的网页版图形界面。",
+    "language": "Python",
+    "stars": 165207,
+    "created_at": "2022-08-22",
+    "downloads": 5914128,
+    "reason": "累计下载 591.4万次"
+   },
+   {
+    "name": "rtk",
+    "owner": "rtk-ai",
+    "full_name": "rtk-ai/rtk",
+    "html_url": "https://github.com/rtk-ai/rtk",
+    "desc": "CLI 代理可将常见开发命令的 LLM 令牌消耗减少 60-90%。单个 Rust 二进制文件，零依赖",
+    "language": "Rust",
+    "stars": 85163,
+    "created_at": "2026-01-22",
+    "downloads": 5049648,
+    "reason": "累计下载 505.0万次"
+   },
+   {
+    "name": "opencv",
+    "owner": "opencv",
+    "full_name": "opencv/opencv",
+    "html_url": "https://github.com/opencv/opencv",
+    "desc": "开源计算机视觉库",
+    "language": "C++",
+    "stars": 91399,
+    "created_at": "2012-07-19",
+    "downloads": 4956438,
+    "reason": "累计下载 495.6万次"
+   },
+   {
+    "name": "vllm",
+    "owner": "vllm-project",
+    "full_name": "vllm-project/vllm",
+    "html_url": "https://github.com/vllm-project/vllm",
+    "desc": "适用于法学硕士的高吞吐量和内存高效推理和服务引擎",
+    "language": "Python",
+    "stars": 96020,
+    "created_at": "2023-02-09",
+    "downloads": 4936585,
+    "reason": "累计下载 493.7万次"
+   },
+   {
+    "name": "unsloth",
+    "owner": "unslothai",
+    "full_name": "unslothai/unsloth",
+    "html_url": "https://github.com/unslothai/unsloth",
+    "desc": "用于运行和训练 LLM 和扩散模型的本地 UI，包括 Qwen3.8、Kimi K3、MiniMax-H3、Gemma 4、DeepSeek-V4、FLUX 等。",
+    "language": "Python",
+    "stars": 78899,
+    "created_at": "2023-11-29",
+    "downloads": 4722412,
+    "reason": "累计下载 472.2万次"
+   },
+   {
+    "name": "tesseract",
+    "owner": "tesseract-ocr",
+    "full_name": "tesseract-ocr/tesseract",
+    "html_url": "https://github.com/tesseract-ocr/tesseract",
+    "desc": "Tesseract 开源 OCR 引擎（主存储库）",
+    "language": "C++",
+    "stars": 77283,
+    "created_at": "2014-08-12",
+    "downloads": 4542596,
+    "reason": "累计下载 454.3万次"
+   },
+   {
+    "name": "impeccable",
+    "owner": "pbakaus",
+    "full_name": "pbakaus/impeccable",
+    "html_url": "https://github.com/pbakaus/impeccable",
+    "desc": "使您的 AI 线束在设计上更加出色的设计语言。",
+    "language": "Rust",
+    "stars": 98563,
+    "created_at": "2025-11-16",
+    "downloads": 3585488,
+    "reason": "累计下载 358.5万次"
+   },
+   {
+    "name": "openclaw",
+    "owner": "openclaw",
+    "full_name": "openclaw/openclaw",
+    "html_url": "https://github.com/openclaw/openclaw",
+    "desc": "开源 AI 个人助手，跨任意操作系统与平台运行。",
+    "language": "TypeScript",
+    "stars": 393586,
+    "created_at": "2025-11-24",
+    "downloads": 2643716,
+    "reason": "累计下载 264.4万次"
+   },
+   {
+    "name": "VoiceStudio",
+    "owner": "debpalash",
+    "full_name": "debpalash/VoiceStudio",
+    "html_url": "https://github.com/debpalash/VoiceStudio",
+    "desc": "VoiceStudio 是 ElevenLabs 的开源、完全本地化替代方案 — 提供 646 种语言的语音克隆、语音设计、视频配音、听写、转录和有声读物创建。",
+    "language": "Python",
+    "stars": 97103,
+    "created_at": "2026-04-09",
+    "downloads": 1982813,
+    "reason": "累计下载 198.3万次"
+   },
+   {
+    "name": "spec-kit",
+    "owner": "github",
+    "full_name": "github/spec-kit",
+    "html_url": "https://github.com/github/spec-kit",
+    "desc": "帮助你入门「规格驱动开发」的工具集。",
+    "language": "Python",
+    "stars": 144556,
+    "created_at": "2025-08-21",
+    "downloads": 943743,
+    "reason": "累计下载 94.4万次"
+   },
+   {
+    "name": "caveman",
+    "owner": "JuliusBrussee",
+    "full_name": "JuliusBrussee/caveman",
+    "html_url": "https://github.com/JuliusBrussee/caveman",
+    "desc": "🪨 当很少的令牌可以完成戏法时，为什么要使用大量的令牌 — 克劳德代码技能，通过像穴居人一样说话来减少 65% 的令牌",
+    "language": "Go",
+    "stars": 116575,
+    "created_at": "2026-04-04",
+    "downloads": 724817,
+    "reason": "累计下载 72.5万次"
+   },
+   {
+    "name": "pytorch",
+    "owner": "pytorch",
+    "full_name": "pytorch/pytorch",
+    "html_url": "https://github.com/pytorch/pytorch",
+    "desc": "Python 中的张量和动态神经网络，具有强大的 GPU 加速功能",
+    "language": "Python",
+    "stars": 105052,
+    "created_at": "2016-08-13",
+    "downloads": 347545,
+    "reason": "累计下载 34.8万次"
+   },
+   {
+    "name": "worldmonitor",
+    "owner": "koala73",
+    "full_name": "koala73/worldmonitor",
+    "html_url": "https://github.com/koala73/worldmonitor",
+    "desc": "实时全球情报仪表板。在统一的态势感知界面中进行人工智能驱动的新闻聚合、地缘政治监控和基础设施跟踪",
+    "language": "TypeScript",
+    "stars": 89884,
+    "created_at": "2026-01-08",
+    "downloads": 274966,
+    "reason": "累计下载 27.5万次"
+   },
+   {
+    "name": "MoneyPrinterTurbo",
+    "owner": "harry0703",
+    "full_name": "harry0703/MoneyPrinterTurbo",
+    "html_url": "https://github.com/harry0703/MoneyPrinterTurbo",
+    "desc": "利用 AI 大模型和自动化工作流，根据主题或关键词一键生成高清短视频。Generate HD short videos from a topic or keyword with an automated AI workflow.",
+    "language": "Python",
+    "stars": 136990,
+    "created_at": "2024-03-11",
+    "downloads": 158984,
+    "reason": "累计下载 15.9万次"
+   },
+   {
+    "name": "gemini-cli",
+    "owner": "google-gemini",
+    "full_name": "google-gemini/gemini-cli",
+    "html_url": "https://github.com/google-gemini/gemini-cli",
+    "desc": "一款开源 AI 代理，可将 Gemini 的强大功能直接带入您的终端。",
+    "language": "TypeScript",
+    "stars": 108643,
+    "created_at": "2025-04-17",
+    "downloads": 140749,
+    "reason": "累计下载 14.1万次"
+   },
+   {
+    "name": "ECC",
+    "owner": "affaan-m",
+    "full_name": "affaan-m/ECC",
+    "html_url": "https://github.com/affaan-m/ECC",
+    "desc": "Agent 性能优化系统，整合技能、记忆、安全与代码研究。",
+    "language": "JavaScript",
+    "stars": 294236,
+    "created_at": "2026-01-18",
+    "downloads": 95409,
+    "reason": "累计下载 9.5万次"
+   },
+   {
+    "name": "d2l-zh",
+    "owner": "d2l-ai",
+    "full_name": "d2l-ai/d2l-zh",
+    "html_url": "https://github.com/d2l-ai/d2l-zh",
+    "desc": "《动手学深度学习》：面向中文读者、能运行、可讨论。中英文版被70多个国家的500多所大学用于教学。",
+    "language": "Python",
+    "stars": 82184,
+    "created_at": "2017-08-23",
+    "downloads": 57203,
+    "reason": "累计下载 5.7万次"
    }
   ]
  }

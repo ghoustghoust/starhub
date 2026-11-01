@@ -506,5 +506,8 @@
  "zeroclaw-labs/zeroclaw": "快速、小巧且完全自主的 AI 个人助理基础设施，支持任意操作系统和平台——随处部署，灵活替换 🦀",
  "microsoft/RD-Agent": "研发（R&D）对于提升工业生产力至关重要，尤其在人工智能时代，研发的核心重点主要集中在数据和模型上。我们致力于通过“研发智能体（R&D-Agent）”自动化这些高价值的通用研发流程，让人工智能驱动数据驱动的 AI 发展。 🔗https://aka.ms/RD-Agent-Tech-Report",
  "d2l-ai/d2l-en": "互动式深度学习教材，包含多框架代码、数学推导和讨论内容。已被来自70个国家的500所大学采用，其中包括斯坦福大学、麻省理工学院、哈佛大学和剑桥大学。",
- "LoveRain1997/h3-prompt-journal": "MiniMax H3 提示词工程实验案例研究期刊"
+ "LoveRain1997/h3-prompt-journal": "MiniMax H3 提示词工程实验案例研究期刊",
+ "NirDiamant/GenAI_Agents": "50多个生成式AI代理技术的教程和实现，从基础的对话机器人到复杂的多智能体系统。",
+ "gradio-app/gradio": "用 Python 构建并分享令人愉悦的机器学习应用。🌟 点赞支持我们的工作！",
+ "stefan-jansen/machine-learning-for-trading": "《机器学习交易》第三版——从数据获取到实盘执行。"
 }

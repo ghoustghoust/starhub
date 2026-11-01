@@ -62,31 +62,17 @@ def reset_circuit() -> None:
     _BLOCK_UNTIL = 0.0
 
 
-def translate_to_zh(text: str | None, fast: bool = False) -> str | None:
-    """英译中；全部端点失败返回 None（调用方保留原文）。
-    fast=True 只走 Agnes LLM、跳过免费端点（CI 快速模式：免费端点长重试且被
-    数据中心 IP 封锁）；有 key 时两种模式都先走 Agnes（质量与可用性最好）。"""
+def _record_failure() -> None:
+    """全链失败计数：连败 _FAIL_LIMIT 次开冷却，避免对封锁中的端点逐仓硬闯。"""
     global _FAIL_STREAK, _BLOCK_UNTIL
-    if not text or time.time() < _BLOCK_UNTIL:
-        return None
+    _FAIL_STREAK += 1
+    if _FAIL_STREAK >= _FAIL_LIMIT:
+        _BLOCK_UNTIL = time.time() + _COOLDOWN_SECONDS
+        print(f"[translate] circuit open after {_FAIL_STREAK} failures", file=sys.stderr)
 
-    # ── 端点 0：Agnes LLM（CI 与本地共同的主通道）──
-    if llm.key_pool():
-        cand = _translate_via_llm(text)
-        if cand and has_cn(cand):
-            _FAIL_STREAK = 0
-            return cand
-        # 三种静默失败（429/空响应/没翻出中文）里，只有这一种还查无实据，留一行现场
-        print("[translate] LLM 未产出中文: %r" % ((cand or "")[:60]), file=sys.stderr)
 
-    if fast:
-        # 快速模式到此为止：不再撞免费端点，失败也计入熔断，避免逐仓硬闯
-        _FAIL_STREAK += 1
-        if _FAIL_STREAK >= _FAIL_LIMIT:
-            _BLOCK_UNTIL = time.time() + _COOLDOWN_SECONDS
-            print(f"[translate] circuit open after {_FAIL_STREAK} failures", file=sys.stderr)
-        return None
-
+def _via_gtx(text: str) -> str | None:
+    """Google gtx 免费端点。数据中心 IP 已知封锁（429/timeout），只给本地构建用。"""
     params = urllib.parse.urlencode({"client": "gtx", "sl": "auto", "tl": "zh-CN", "dt": "t", "q": text})
     request = urllib.request.Request(
         "https://translate.googleapis.com/translate_a/single?" + params,
@@ -97,11 +83,14 @@ def translate_to_zh(text: str | None, fast: bool = False) -> str | None:
             payload = json.loads(response.read().decode("utf-8"))
         result = "".join(segment[0] for segment in payload[0] if segment[0]).strip()
         if result and has_cn(result):
-            _FAIL_STREAK = 0
             return result
     except Exception:  # noqa: BLE001
         pass
+    return None
 
+
+def _via_mymemory(text: str) -> str | None:
+    """MyMemory 免费端点。质量一般但按量配额，做 LLM 之后的兜底。"""
     params = urllib.parse.urlencode({"q": text, "langpair": "en|zh-CN"})
     request = urllib.request.Request(
         "https://api.mymemory.translated.net/get?" + params,
@@ -112,13 +101,46 @@ def translate_to_zh(text: str | None, fast: bool = False) -> str | None:
             payload = json.loads(response.read().decode("utf-8"))
         result = (payload.get("responseData", {}).get("translatedText") or "").strip()
         if result and has_cn(result) and "MYMEMORY WARNING" not in result:
-            _FAIL_STREAK = 0
             return result
-    except Exception:  # noqa: BLE001
-        pass
+        print("[translate] MyMemory 未产出中文: %r" % (result[:60],), file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001
+        print("[translate] MyMemory 失败: %s" % exc, file=sys.stderr)
+    return None
 
-    _FAIL_STREAK += 1
-    if _FAIL_STREAK >= _FAIL_LIMIT:
-        _BLOCK_UNTIL = time.time() + _COOLDOWN_SECONDS
-        print(f"[translate] circuit open after {_FAIL_STREAK} failures", file=sys.stderr)
+
+def translate_to_zh(text: str | None, fast: bool = False) -> str | None:
+    """英译中；全部端点失败返回 None（调用方保留原文）。
+    端点链：Agnes LLM → MyMemory →（仅非 fast）Google gtx。
+    fast=True 是 CI 快速模式：跳过已被数据中心 IP 封锁的 gtx，LLM 失败仍有
+    MyMemory 兜底；本地构建走全链。"""
+    global _FAIL_STREAK, _BLOCK_UNTIL
+    if not text or time.time() < _BLOCK_UNTIL:
+        return None
+
+    # ── 端点 0：Agnes LLM（CI 与本地共同的主通道）──
+    if llm.key_pool():
+        cand = _translate_via_llm(text)
+        if cand and has_cn(cand):
+            _FAIL_STREAK = 0
+            return cand
+        # 三条静默失败（429/空响应/没翻出中文）的现场，配合 llm 的 429/空响应日志定位
+        print("[translate] LLM 未产出中文: %r" % ((cand or "")[:60]), file=sys.stderr)
+
+    # ── 端点 1：MyMemory（fast 模式的兜底；可达性由 CI 日志留证）──
+    cand = _via_mymemory(text)
+    if cand:
+        _FAIL_STREAK = 0
+        return cand
+
+    if fast:
+        # 快速模式到此为止：不撞已知被封锁的 gtx
+        _record_failure()
+        return None
+
+    # ── 端点 2：Google gtx（仅本地构建）──
+    cand = _via_gtx(text)
+    if cand:
+        _FAIL_STREAK = 0
+        return cand
+    _record_failure()
     return None

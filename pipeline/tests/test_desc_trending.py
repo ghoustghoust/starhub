@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from starhub_pipeline.build import trending
-from starhub_pipeline.enrich import desc
+from starhub_pipeline.enrich import desc, translate
 
 
 class DescTest(unittest.TestCase):
@@ -14,7 +14,13 @@ class DescTest(unittest.TestCase):
         cache = {}
         self.assertEqual(desc.desc_zh("a/b", "中文介绍", cache), "中文介绍")
         self.assertEqual(cache["a/b"], "中文介绍")
-        self.assertEqual(desc.desc_zh("a/c", "English description", cache, fast=True), "English description")
+        # 端点全部不可用（无 key + 网络断）时 fast 保留原文；不打桩会撞到真网络
+        opener = mock.MagicMock()
+        opener.open.side_effect = RuntimeError("offline")
+        with mock.patch.object(translate.llm, "key_pool", return_value=[]), \
+             mock.patch.object(translate, "_SAFE_OPENER", opener), \
+             mock.patch.object(translate.netguard, "assert_safe_url"):
+            self.assertEqual(desc.desc_zh("a/c", "English description", cache, fast=True), "English description")
 
     def test_translation(self) -> None:
         cache = {}

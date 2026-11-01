@@ -484,5 +484,7 @@
  "enmerasoftware/ai-design-check": "设计规则及零依赖接口检查器，适用于由 AI 编码代理构建的 Web 及 SwiftUI、Jetpack Compose 应用中的界面。支持英语和土耳其语。",
  "multimodal-art-projection/YuE": "YuE2：前沿音乐生成，具备符号规划、零样本翻唱和智能体音乐编辑功能。",
  "google-ai-edge/mediapipe": "跨平台、可定制的机器学习解决方案，适用于直播和流媒体。",
- "openai/CLIP": "CLIP（对比语言-图像预训练），根据图像预测最相关的文本片段"
+ "openai/CLIP": "CLIP（对比语言-图像预训练），根据图像预测最相关的文本片段",
+ "PaddlePaddle/Paddle": "PArallel Distributed Deep LEarning: Machine Learning Framework from Industrial Practice （『飞桨』核心框架，深度学习&机器学习高性能单机、分布式训练和跨平台部署）",
+ "ShusenTang/Dive-into-DL-PyTorch": "本项目将《动手学深度学习》(Dive into Deep Learning)原书中的MXNet实现改为PyTorch实现。"
 }

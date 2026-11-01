@@ -481,5 +481,8 @@
  "EntranceStarfish/VoiceStudioV2": "本地AI语音工作室：实时语音转换器、文本转语音、语音克隆和配音，使用插入式OpenAI兼容API。100%离线，无云，无API密钥。VoiceStudio的非官方分支。",
  "gh9ko8y/graphmemory": "双时相AI内存系统：六变量衰减、时间分级召回、TTL到期、重复数据删除、竞争检索（ Neo4j + PostgreSQL + Redis ）",
  "Windlich13044/rpocket-skill4agent-mcp-server": "skill4agent 的 MCP 服务器 - 通过模型上下文协议搜索和安装 AI 技能",
- "enmerasoftware/ai-design-check": "设计规则及零依赖接口检查器，适用于由 AI 编码代理构建的 Web 及 SwiftUI、Jetpack Compose 应用中的界面。支持英语和土耳其语。"
+ "enmerasoftware/ai-design-check": "设计规则及零依赖接口检查器，适用于由 AI 编码代理构建的 Web 及 SwiftUI、Jetpack Compose 应用中的界面。支持英语和土耳其语。",
+ "multimodal-art-projection/YuE": "YuE2：前沿音乐生成，具备符号规划、零样本翻唱和智能体音乐编辑功能。",
+ "google-ai-edge/mediapipe": "跨平台、可定制的机器学习解决方案，适用于直播和流媒体。",
+ "openai/CLIP": "CLIP（对比语言-图像预训练），根据图像预测最相关的文本片段"
 }

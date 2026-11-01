@@ -1,6 +1,6 @@
 {
  "schema_version": 2,
- "generated_at": "2026-11-01T07:41:57.161110Z",
+ "generated_at": "2026-11-01T07:58:04.357483Z",
  "items": [
   {
    "id": "peach-mitao/peach",
@@ -8,7 +8,7 @@
    "html_url": "https://github.com/peach-mitao/peach",
    "description": "Peach: Local-first video metadata scraper and media manager.",
    "language": "Python",
-   "stars": 13807,
+   "stars": 13814,
    "forks": 1615,
    "license": "AGPL-3.0",
    "topics": [
@@ -75,7 +75,7 @@
    "html_url": "https://github.com/timoncool/YuE2-Studio",
    "description": "Local AI song generator with an editable score — YuE2 on your GPU: full songs with vocals, sheet music, covers, exact replay. Native Windows app, no Python, installer with auto-update.",
    "language": "TypeScript",
-   "stars": 1672,
+   "stars": 1674,
    "forks": 201,
    "license": "MIT",
    "topics": [
@@ -156,9 +156,9 @@
    "id": "linshenkx/prompt-optimizer",
    "full_name": "linshenkx/prompt-optimizer",
    "html_url": "https://github.com/linshenkx/prompt-optimizer",
-   "description": "An AI prompt optimizer for writing better prompts and getting better AI results.",
+   "description": "AI提示词优化器，用于撰写更优质的提示词并获得更出色的AI生成结果。",
    "language": "TypeScript",
-   "stars": 40161,
+   "stars": 40165,
    "forks": 4549,
    "license": "NOASSERTION",
    "topics": [
@@ -190,7 +190,7 @@
    "html_url": "https://github.com/RVC-Boss/GPT-SoVITS",
    "description": "1 min voice data can also be used to train a good TTS model! (few shot voice cloning)",
    "language": "Python",
-   "stars": 64452,
+   "stars": 64453,
    "forks": 6768,
    "license": "MIT",
    "topics": [
@@ -218,7 +218,7 @@
    "html_url": "https://github.com/openfilm/openfilm",
    "description": "The open source AI video agent: turns any coding agent into a video agent, with an editor to change anything it makes.",
    "language": "TypeScript",
-   "stars": 3965,
+   "stars": 3968,
    "forks": 378,
    "license": "MIT",
    "topics": [
@@ -269,7 +269,7 @@
    "html_url": "https://github.com/cyber-xiaoya/cyber-xiaoya-live",
    "description": "赛博小雅直播版 · 组件版数字人（Vidu s2）· 免费开源 AGPL-3.0 · 作者：天工开帧（抖音/B站/YouTube 同名）",
    "language": "Python",
-   "stars": 431,
+   "stars": 432,
    "forks": 231,
    "license": "AGPL-3.0",
    "topics": [
@@ -328,7 +328,7 @@
    "html_url": "https://github.com/moeru-ai/airi",
    "description": "💖🧸 Self hosted, you-owned Grok Companion, a container of souls of waifu, cyber livings to bring them into our worlds, wishing to achieve Neuro-sama's altitude. Capable of realtime voice chat, Minecraft, Factorio playing. Web / macOS / Windows supported.",
    "language": "TypeScript",
-   "stars": 50972,
+   "stars": 50973,
    "forks": 5134,
    "license": "MIT",
    "topics": [
@@ -361,8 +361,8 @@
    "html_url": "https://github.com/Niko1221/Strata",
    "description": "Qwen3.8-Flash-Next on any consumer hardware: one-click install for Windows / Linux. Strata inference engine, OpenAI/Anthropic API on localhost, optional image input.",
    "language": "C++",
-   "stars": 37236,
-   "forks": 4038,
+   "stars": 37239,
+   "forks": 4040,
    "license": "MIT",
    "topics": [],
    "pushed_at": "2026-10-31",
@@ -477,7 +477,7 @@
    "html_url": "https://github.com/cheaper-inference/OmniRoute",
    "description": "Never stop coding. Free MIT AI gateway: one endpoint, 375 providers (150+ free), 1,400+ models Kimi, Claude, GPT, Gemini, GLM, DeepSeek, MiniMax. Works with Claude Code, Codex, Cursor, OpenCode, Cline & Copilot. Quota-aware auto-fallback, RTK+Caveman compression saves 15-95% tokens, MCP/A2A, Desktop/PWA. Built by 900+ contributors",
    "language": "TypeScript",
-   "stars": 83324,
+   "stars": 83327,
    "forks": 12431,
    "license": "MIT",
    "topics": [
@@ -602,8 +602,8 @@
    "html_url": "https://github.com/LearnPrompt/awesome-seedance",
    "description": "🎬 Evidence-led Seedance 2.5 / 2.0 prompt library: 840+ cases traced to original posts, 490+ cross-model retest runs, 27 copy-ready templates, 79 installable AI-video Skills. Synced daily from goodcase.ai. EN / 中文 / 日本語.",
    "language": "JavaScript",
-   "stars": 2372,
-   "forks": 373,
+   "stars": 2374,
+   "forks": 374,
    "license": "MIT",
    "topics": [
     "agent-skill",
@@ -626,7 +626,7 @@
     "text-to-video",
     "video-generation"
    ],
-   "pushed_at": "2026-10-31",
+   "pushed_at": "2026-11-01",
    "starred_at": "2026-10-19T10:10:12Z",
    "category": "video",
    "category_label": "AI 视频创作",
@@ -699,7 +699,7 @@
    "html_url": "https://github.com/Ebony-Vinyl/dsh-our-free-model",
    "description": "在 dsh 里装上这个插件即可，无需登录、注册或填 API Key，就能使用包括 DeepSeek V4.1 Flash、Kimi K3 在内的前沿模型——完全免费，不限量。 All you do is install this plugin in dsh: no login, no sign-up, no API key — the frontier models are just there, DeepSeek V4.1 Flash and Kimi K3 among them. Completely free, with no usage cap.",
    "language": "JavaScript",
-   "stars": 54888,
+   "stars": 54908,
    "forks": 1511,
    "license": "MIT",
    "topics": [
@@ -731,7 +731,7 @@
    "html_url": "https://github.com/maboloshi/github-chinese",
    "description": "GitHub 汉化插件，GitHub 中文化界面。 (GitHub Translation To Chinese)",
    "language": "JavaScript",
-   "stars": 37342,
+   "stars": 37343,
    "forks": 2071,
    "license": "GPL-3.0",
    "topics": [
@@ -759,7 +759,7 @@
    "html_url": "https://github.com/coreyhaines31/marketingskills",
    "description": "Claude Code 和 AI 代理的营销技巧。 CRO、文案、SEO、分析和增长工程。",
    "language": "JavaScript",
-   "stars": 57725,
+   "stars": 57726,
    "forks": 8496,
    "license": "MIT",
    "topics": [
@@ -801,7 +801,7 @@
    "html_url": "https://github.com/ComposioHQ/awesome-claude-skills",
    "description": "用于自定义Claude AI工作流程的精选Claude技能、资源和工具列表",
    "language": "Python",
-   "stars": 78468,
+   "stars": 78469,
    "forks": 9470,
    "license": "",
    "topics": [
@@ -840,7 +840,7 @@
    "html_url": "https://github.com/yetone/magpie",
    "description": "每个代理的模型。一处。来自菜单栏的 DeepSeek 上的 Codex、Kimi 上的 Claude Code。",
    "language": "Go",
-   "stars": 27193,
+   "stars": 27197,
    "forks": 2292,
    "license": "MIT",
    "topics": [
@@ -868,8 +868,8 @@
    "html_url": "https://github.com/morluto/rea",
    "description": "使用代理对任何内容进行逆向工程，从应用程序行为到本机二进制文件。",
    "language": "TypeScript",
-   "stars": 416358,
-   "forks": 104104,
+   "stars": 416402,
+   "forks": 104118,
    "license": "MIT",
    "topics": [
     "agent-skills",
@@ -963,7 +963,7 @@
    "html_url": "https://github.com/TencentCloud/Octop",
    "description": "更智能、自托管的人工智能助手——多用户、多代理。",
    "language": "Python",
-   "stars": 11400,
+   "stars": 11402,
    "forks": 1518,
    "license": "MIT",
    "topics": [
@@ -1133,7 +1133,7 @@
    "html_url": "https://github.com/KKKKhazix/AIHOT",
    "description": "一个自己找热点、自己写日报的网站框架。把信源和精选标准换成你的，它就是你的行业热点站。",
    "language": "TypeScript",
-   "stars": 8996,
+   "stars": 8997,
    "forks": 2141,
    "license": "MIT",
    "topics": [
@@ -1255,7 +1255,7 @@
    "html_url": "https://github.com/Comfy-Org/ComfyUI",
    "description": "功能强大的模块化扩散模型 GUI 与后端。",
    "language": "Python",
-   "stars": 144392,
+   "stars": 144396,
    "forks": 17180,
    "license": "GPL-3.0",
    "topics": [
@@ -1283,7 +1283,7 @@
    "html_url": "https://github.com/bojieli/ai-agent-book",
    "description": "《深入理解 AI Agent：设计原理与工程实践》（李博杰 著）开源主仓库：全书正文、编译版 PDF 与按章配套代码",
    "language": "Python",
-   "stars": 56794,
+   "stars": 56796,
    "forks": 6552,
    "license": "Apache-2.0",
    "topics": [
@@ -1345,7 +1345,7 @@
    "html_url": "https://github.com/weekend-project-space/top-rss-list",
    "description": "订阅人数最多的rss源，中文优质rss源",
    "language": null,
-   "stars": 6689,
+   "stars": 6690,
    "forks": 266,
    "license": "",
    "topics": [
@@ -1474,7 +1474,7 @@
    "html_url": "https://github.com/ginobefun/BestBlogs",
    "description": "bestblogs.dev - 汇集顶级编程、人工智能、产品、科技文章，大语言模型摘要评分辅助阅读，探索编程和技术未来",
    "language": "TypeScript",
-   "stars": 4070,
+   "stars": 4071,
    "forks": 363,
    "license": "",
    "topics": [
@@ -1795,7 +1795,7 @@
    "html_url": "https://github.com/HKUDS/DeepTutor",
    "description": "DeepTutor：终身个性化 AI 辅导系统。",
    "language": "Python",
-   "stars": 53127,
+   "stars": 53134,
    "forks": 6504,
    "license": "Apache-2.0",
    "topics": [
@@ -1863,7 +1863,7 @@
    "html_url": "https://github.com/kangarooking/cangjie-skill",
    "description": "把书、长视频、播客等高价值内容蒸馏成可执行的 Agent Skills（Distill high-value content from books, long-form videos, podcasts, and more into executable Agent Skills）",
    "language": "Python",
-   "stars": 11955,
+   "stars": 11956,
    "forks": 1406,
    "license": "MIT",
    "topics": [
@@ -1923,7 +1923,7 @@
    "html_url": "https://github.com/anywhere-labs/dsh-desktop",
    "description": "为 DeepSeek Harness (DSH) 插件生态打造的现代化桌面端解决方案。万物皆「插件」，桌面本身也是「插件」。",
    "language": "TypeScript",
-   "stars": 34331,
+   "stars": 34336,
    "forks": 1554,
    "license": "MIT",
    "topics": [
@@ -1975,7 +1975,7 @@
    "description": "面向 Claude Code / Codex 的 AI 视频技能，用 Remotion 制作电影级产品视频，含 152 个镜头卡片与 209 个动效预览。",
    "language": "TypeScript",
    "stars": 15582,
-   "forks": 1485,
+   "forks": 1486,
    "license": "Apache-2.0",
    "topics": [
     "agent-skills",
@@ -2072,8 +2072,8 @@
    "html_url": "https://github.com/baidu/Unlimited-OCR",
    "description": "无限的OCR工作：迎接一次性长距离解析的时代。",
    "language": "Python",
-   "stars": 30164,
-   "forks": 3217,
+   "stars": 30171,
+   "forks": 3218,
    "license": "MIT",
    "topics": [],
    "pushed_at": "2026-10-29",
@@ -2301,7 +2301,7 @@
    "html_url": "https://github.com/zhaoxuya520/reverse-skill",
    "description": "Reverse Engineering / Authorized Penetration Testing / Security Research Skill Router Pack AI-powered routing + On-demand toolchain bootstrapping + Self-evolving knowledge base Supports Claude Code, Kiro, Cursor, Cline, and other AI coding clients 逆向/渗透/安全技能路由包 - AI 自动路由 + 按需自举工具链 + 自动进化经验库 | 支持 Claude Code / Kiro / Cursor / Cline 等代码 AI 客户端",
    "language": "PowerShell",
-   "stars": 43896,
+   "stars": 43897,
    "forks": 6496,
    "license": "MIT",
    "topics": [],
@@ -2383,8 +2383,8 @@
    "html_url": "https://github.com/521xueweihan/HelloGitHub",
    "description": ":octocat: 分享 GitHub 上有趣、入门级的开源项目。Share interesting, entry-level open source projects on GitHub.",
    "language": "Python",
-   "stars": 186044,
-   "forks": 13166,
+   "stars": 186051,
+   "forks": 13167,
    "license": "",
    "topics": [
     "awesome",
@@ -2409,7 +2409,7 @@
    "html_url": "https://github.com/hiroi-sora/Umi-OCR",
    "description": "OCR software, free and offline. 开源、免费的离线OCR软件。支持截屏/批量导入图片，PDF文档识别，排除水印/页眉页脚，扫描/生成二维码。内置多国语言库。",
    "language": "Python",
-   "stars": 48318,
+   "stars": 48319,
    "forks": 4720,
    "license": "MIT",
    "topics": [
@@ -2591,7 +2591,7 @@
    "description": "lxmusic(洛雪音乐)全网最新最全音源",
    "language": "JavaScript",
    "stars": 6741,
-   "forks": 330,
+   "forks": 331,
    "license": "Apache-2.0",
    "topics": [],
    "pushed_at": "2026-10-31",
@@ -2695,8 +2695,8 @@
    "html_url": "https://github.com/calesthio/OpenMontage",
    "description": "全球首个开源智能体视频制作系统：12 条生产流水线、100+ 工具、700+ 技能文件，把 AI 编码助手变成完整视频工作室。",
    "language": "Python",
-   "stars": 74096,
-   "forks": 9715,
+   "stars": 74104,
+   "forks": 9716,
    "license": "AGPL-3.0",
    "topics": [
     "agent",
@@ -2736,7 +2736,7 @@
    "html_url": "https://github.com/Lightricks/LTX-2",
    "description": "LTX-2音视频生成模型的官方Python推理和LoRA训练器包。",
    "language": "Python",
-   "stars": 10007,
+   "stars": 10008,
    "forks": 1584,
    "license": "NOASSERTION",
    "topics": [
@@ -2803,8 +2803,8 @@
    "html_url": "https://github.com/NanmiCoder/MediaCrawler",
    "description": "小红书笔记 | 评论爬虫、抖音视频 | 评论爬虫、快手视频 | 评论爬虫、B 站视频 ｜ 评论爬虫、微博帖子 ｜ 评论爬虫、百度贴吧帖子 ｜ 百度贴吧评论回复爬虫 | 知乎问答文章｜评论爬虫",
    "language": "Python",
-   "stars": 69424,
-   "forks": 13194,
+   "stars": 69429,
+   "forks": 13196,
    "license": "NOASSERTION",
    "topics": [],
    "pushed_at": "2026-10-27",
@@ -2997,7 +2997,7 @@
    "description": "开源的 Claude Design 替代品：本地优先桌面应用，让编码智能体成为设计引擎（原型、落地页、看板、幻灯片、图片视频），支持 20+ CLI。",
    "language": "TypeScript",
    "stars": 105231,
-   "forks": 11992,
+   "forks": 11993,
    "license": "Apache-2.0",
    "topics": [
     "agent-skills",
@@ -3265,7 +3265,7 @@
    "html_url": "https://github.com/VoltAgent/awesome-agent-skills",
    "description": "来自官方开发团队和社区的1000多种代理技能的精选集合，与Claude Code、Codex、Gemini CLI、Cursor等兼容。",
    "language": null,
-   "stars": 36687,
+   "stars": 36688,
    "forks": 4037,
    "license": "MIT",
    "topics": [
@@ -3430,8 +3430,8 @@
    "html_url": "https://github.com/anthropics/skills",
    "description": "座席技能的公共存储库",
    "language": "Python",
-   "stars": 186025,
-   "forks": 21961,
+   "stars": 186031,
+   "forks": 21963,
    "license": "",
    "topics": [
     "agent-skills"
@@ -3474,7 +3474,7 @@
    "html_url": "https://github.com/obra/superpowers",
    "description": "面向 AI Agent 的技能框架与软件开发方法论。",
    "language": "Shell",
-   "stars": 310229,
+   "stars": 310240,
    "forks": 27606,
    "license": "MIT",
    "topics": [
@@ -3559,7 +3559,7 @@
    "html_url": "https://github.com/DavidHDev/react-bits",
    "description": "动画、交互式和完全可定制的React组件的开源集合，用于构建令人难忘的网站。",
    "language": "JavaScript",
-   "stars": 50878,
+   "stars": 50879,
    "forks": 2529,
    "license": "NOASSERTION",
    "topics": [
@@ -3597,8 +3597,8 @@
    "html_url": "https://github.com/Panniantong/Agent-Reach",
    "description": "让您的人工智能代理看到整个互联网。阅读和搜索Twitter、Reddit、YouTube、GitHub、Bilibili、XiaoHongShu —一个CLI ，无API费用。",
    "language": "Python",
-   "stars": 107330,
-   "forks": 9562,
+   "stars": 107335,
+   "forks": 9563,
    "license": "MIT",
    "topics": [
     "agent-infrastructure",
@@ -3636,7 +3636,7 @@
    "html_url": "https://github.com/shadcn-ui/ui",
    "description": "一组设计精美、易于访问的组件和代码分发平台。可与您最喜爱的框架配合使用。开源。开源代码。",
    "language": "TypeScript",
-   "stars": 127084,
+   "stars": 127085,
    "forks": 11988,
    "license": "MIT",
    "topics": [
@@ -3675,7 +3675,7 @@
    "html_url": "https://github.com/iOfficeAI/OfficeCLI",
    "description": "专为 AI 智能体打造的 Office 套件，读写、自动化 Word/Excel/PPT，单二进制免装 Office。",
    "language": "C#",
-   "stars": 32891,
+   "stars": 32892,
    "forks": 2235,
    "license": "Apache-2.0",
    "topics": [
@@ -3784,8 +3784,8 @@
    "html_url": "https://github.com/mattpocock/skills",
    "description": "面向实战工程师的技能集，直接来自作者的 .agents 目录。",
    "language": "Shell",
-   "stars": 308663,
-   "forks": 25983,
+   "stars": 308674,
+   "forks": 25984,
    "license": "MIT",
    "topics": [],
    "pushed_at": "2026-10-31",
@@ -3867,7 +3867,7 @@
    "html_url": "https://github.com/tauri-apps/tauri",
    "description": "使用Web前端构建更小、更快、更安全的桌面和移动应用程序。",
    "language": "Rust",
-   "stars": 112389,
+   "stars": 112390,
    "forks": 4143,
    "license": "Apache-2.0",
    "topics": [
@@ -3896,7 +3896,7 @@
    "html_url": "https://github.com/react/react",
    "description": "Web 和本机用户界面的库。",
    "language": "JavaScript",
-   "stars": 252059,
+   "stars": 252060,
    "forks": 51606,
    "license": "MIT",
    "topics": [
@@ -3924,8 +3924,8 @@
    "html_url": "https://github.com/op7418/guizang-ppt-skill",
    "description": "AI 智能体技能：生成精美 HTML 幻灯片（电子杂志与瑞士风布局），含图片提示词、社交封面与 WebGL/低功耗演示运行时。",
    "language": "HTML",
-   "stars": 29039,
-   "forks": 1995,
+   "stars": 29045,
+   "forks": 1996,
    "license": "AGPL-3.0",
    "topics": [
     "ai-agent",
@@ -4015,8 +4015,8 @@
    "html_url": "https://github.com/hugohe3/ppt-master",
    "description": "AI 把文档或主题直接生成为原生 PPT，含原生形状、转场动画、图表表格、语音旁白，支持自定义模板。",
    "language": "Python",
-   "stars": 71798,
-   "forks": 5610,
+   "stars": 71810,
+   "forks": 5611,
    "license": "MIT",
    "topics": [
     "ai-agent",
@@ -4183,7 +4183,7 @@
    "html_url": "https://github.com/Fokkyp/SoftwareCopyright-Skill",
    "description": "中国软件著作权申请材料 生成器 Skills，本 Skills 通过阅读本地项目，自动生成全套 .docx 软著申请材料，全开源，无须再付费购买任何软著申请服务",
    "language": "Python",
-   "stars": 6161,
+   "stars": 6162,
    "forks": 854,
    "license": "AGPL-3.0",
    "topics": [],
@@ -4272,7 +4272,7 @@
    "html_url": "https://github.com/NanmiCoder/cc-haha",
    "description": "本地优先的跨平台桌面工作台，面向 Claude Code / 智能体：多智能体、Git worktree、代码 diff、技能市场、多模型、Computer Use，并支持微信/飞书/钉钉/Telegram 等接入。",
    "language": "TypeScript",
-   "stars": 15253,
+   "stars": 15254,
    "forks": 8608,
    "license": "NOASSERTION",
    "topics": [

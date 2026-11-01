@@ -459,5 +459,16 @@
  "onyx-dot-app/onyx": "开源AI平台 - 具有高级功能的AI聊天，支持所有大型语言模型",
  "nesquena/hermes-webui": "Hermes WebUI：通过网页或手机使用 Hermes Agent 的最佳方式！",
  "dataelement/dsh-desktop": "DSHDesktop：DeepSeek Harness Desktop / DeepSeek Harness 桌面版",
- "boardshogunfluctuate/Capri-AI": "⚡ 告诉你的电脑该做什么。卡普利是一款赛博朋克风格的 AI 代理，通过 Claude Code、Codex 或 Antigravity 与你的文件、项目和代码协作。提供 Windows 安装程序，无需终端操作。此为粉丝制作项目，与 CD PROJEKT RED 无关。"
+ "boardshogunfluctuate/Capri-AI": "⚡ 告诉你的电脑该做什么。卡普利是一款赛博朋克风格的 AI 代理，通过 Claude Code、Codex 或 Antigravity 与你的文件、项目和代码协作。提供 Windows 安装程序，无需终端操作。此为粉丝制作项目，与 CD PROJEKT RED 无关。",
+ "storytold/artcraft": "ArtCraft是一款专为艺术家、设计师和电影制作人打造的创意制作引擎。",
+ "mlflow/mlflow": "面向智能体（agents）、大语言模型（LLM）和机器学习（ML）模型的开源 AI 工程平台。MLflow 使各类规模的团队能够调试、评估、监控和优化生产级 AI 应用，同时控制成本并管理对模型和数据的访问。",
+ "bytedance/UI-TARS-desktop": "开源多模态AI代理技术栈：连接尖端AI模型与代理基础设施",
+ "reactive-resume/reactive-resume": "一款独一无二的简历构建工具，注重保护您的隐私。完全安全、可定制、便携、开源且永远免费。今天就试试吧！",
+ "CopilotKit/CopilotKit": "面向智能体和生成式 UI 的前端技术栈，支持 React、Angular、移动端、Slack 等，AG-UI 协议缔造者。",
+ "khoj-ai/khoj": "你的 AI 第二大脑。支持自托管，从网络或你的文档中获取答案。构建自定义智能体、安排自动化任务、进行深度研究。将任意在线或本地大模型（GPT、Claude、Gemini、Llama、Qwen、Mistral）转化为你的个人自主 AI。立即开始——免费。",
+ "OFat34764e/InterviewCopilot-rpocket-team": "一款旨在弥合学习与实现梦想职业之间差距的教育科技应用",
+ "Orderlight93426/call-of-duty-modern-warfare-resocket-4-fps-optimizer": "轻量级桌面工具，专为《使命召唤：现代战争4》打造。智能FPS优化、性能调优、进程管理和实时监控，旨在提升帧率和稳定性。持续定期更新。",
+ "amitshekhariitbhu/forward-deployed-engineer-roadmap": "部署工程师路线图 - 成为 AI 部署工程师的分步指南，每个主题都有一篇博客文章。",
+ "loyaltyzkeeper/release-resocket-flow-docs": "音乐发行商的代理技能：保持发布流程文档与实际代码一致，或搭建本地 Adonis/Nest 审核 API。",
+ "Vampiresatyr/rpocket-AI-Coding-Agent-Toolkit": "一款强大的多合一 AI 编码智能体工具包，支持 Claude Code、OpenAI Codex 等主流平台。通过简单几步设置即可快速上手，其安装简便、工作流灵活，适用于各类项目的智能化 AI 辅助开发。"
 }

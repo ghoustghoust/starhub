@@ -152,5 +152,7 @@
  "xiaoyang111222/cn-math-taxonomy": "tools",
  "anhao/ai-pose-gallery-zh": "tools",
  "LoveRain1997/h3-prompt-journal": "tools",
- "yang0/handraw-style": "tools"
+ "yang0/handraw-style": "tools",
+ "f/prompts.chat": "learning",
+ "legeling/PromptHub": "tools"
 }

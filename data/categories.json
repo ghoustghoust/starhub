@@ -1,6 +1,6 @@
 {
  "schema_version": 2,
- "updated_at": "2026-11-03T07:47:18.877402Z",
+ "updated_at": "2026-11-04T07:25:26.348038Z",
  "map": {
   "2951461586/GPT-Register-Tool": "assistant",
   "bestnite/skills": "tools",
@@ -157,7 +157,12 @@
   "LoveRain1997/h3-prompt-journal": "tools",
   "yang0/handraw-style": "tools",
   "f/prompts.chat": "learning",
-  "legeling/PromptHub": "tools"
+  "legeling/PromptHub": "tools",
+  "wangweihong/comfyui-hairstyle-gallery": "tools",
+  "wangweihong/comfyui-portrait-gallery": "tools",
+  "wangweihong/comfyui-pose-gallery": "tools",
+  "wangweihong/comfyui-costume-gallery": "tools",
+  "KKKKhazix/agent-autoloop": "tools"
  },
  "labels": {
   "agent": "AI Agent & Skills",

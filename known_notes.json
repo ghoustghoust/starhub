@@ -1,0 +1,13 @@
+{
+ "yang0/handraw-style": "HTML 画廊展示手绘风格，偏内容创作与视觉排版",
+ "legeling/PromptHub": "一站式AI工具箱，支持Prompt、Skill、Agent统",
+ "f/prompts.chat": "社区提示词教程资料，非可运行软件，教程归学习类。",
+ "KKKKhazix/agent-autoloop": "基于MCP的命令行Agent自动化框架，支持事件驱动与人工介",
+ "wangweihong/comfyui-hairstyle-gallery": "ComfyUI发型参考图库与工作流，属图像生成辅助工具。",
+ "wangweihong/comfyui-portrait-gallery": "ComfyUI 人像图库与换装工作流节点，归属 AI 图像生",
+ "wangweihong/comfyui-pose-gallery": "ComfyUI 姿势控制节点，支持多视角浏览与深度生成工作流",
+ "wangweihong/comfyui-costume-gallery": "ComfyUI 服装图库节点，支持姿态换装，属于 AI 图像",
+ "pixelaigc/ComfyUI-MiniMax-H3-Workflow": "ComfyUI H3 视频工作流，支持首尾帧/图生视频/文生",
+ "hmjz100/LinkSwift": "支持八大网盘的Tampermonkey脚本，实现直链获取与下",
+ "62656456/ai-storyboard-director-v5.2": "AIGC分镜生成技能，将剧本转化为影视级镜头链。"
+}

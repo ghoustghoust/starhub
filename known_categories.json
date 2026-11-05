@@ -159,5 +159,8 @@
  "wangweihong/comfyui-portrait-gallery": "tools",
  "wangweihong/comfyui-pose-gallery": "tools",
  "wangweihong/comfyui-costume-gallery": "tools",
- "KKKKhazix/agent-autoloop": "tools"
+ "KKKKhazix/agent-autoloop": "tools",
+ "62656456/ai-storyboard-director-v5.2": "video",
+ "hmjz100/LinkSwift": "tools",
+ "pixelaigc/ComfyUI-MiniMax-H3-Workflow": "video"
 }

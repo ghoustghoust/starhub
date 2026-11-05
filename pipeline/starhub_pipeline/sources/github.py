@@ -59,12 +59,20 @@ def fetch_stars(token: str | None = None, username: str | None = None) -> list[d
         headers = api_headers(token)
         headers["Accept"] = "application/vnd.github.star+json"
         request = urllib.request.Request(url, headers=headers)
-        try:
-            with _safe_fetch(request, _TIMEOUT_SECONDS) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except Exception as exc:  # noqa: BLE001
-            print(f"[github] star fetch failed: {exc}", file=sys.stderr)
-            return None
+        payload = None
+        # 大响应在本机直连下偶发 IncompleteRead，按页重试而不是整场放弃
+        for attempt in range(3):
+            try:
+                with _safe_fetch(request, _TIMEOUT_SECONDS) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                break
+            except Exception as exc:  # noqa: BLE001
+                if attempt < 2:
+                    print(f"[github] star page {page} retry {attempt + 1}: {exc}", file=sys.stderr)
+                    time.sleep(3 * (attempt + 1))
+                else:
+                    print(f"[github] star fetch failed: {exc}", file=sys.stderr)
+                    return None
         if not payload:
             break
         repos.extend(normalize_star_item(item) for item in payload if isinstance(item, dict))

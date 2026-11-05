@@ -58,18 +58,30 @@ def git(args: list[str], proxy: str = "") -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=120)
 
 
+def fetch_first_ok() -> bool:
+    """拉取远端 refs：直连优先，逐个代理回退；全挂只告警（推/拉会在各自通道里再试）。"""
+    for proxy in PROXIES:
+        proc = git(["fetch", "origin"], proxy)
+        if proc.returncode == 0:
+            return True
+        log("[fetch] 失败（%s）：%s" % (proxy or "direct", (proc.stderr or "").strip()[:160]))
+    return False
+
+
 def push_with_retry() -> bool:
-    """提交已在暂存/HEAD，推送带 pull --rebase 重试；代理逐个回退。返回是否成功。"""
+    """推送（本场新提交 + 历史积压都在 HEAD 上）。pull --rebase 撞 CI 数据提交
+    按键合并；网络/代理抖动换通道重试，pull 不可解也不再提前放弃。"""
     for attempt in range(3):
         for proxy in PROXIES:
             pull = git(["pull", "--rebase", "origin", "main"], proxy)
             if pull.returncode != 0:
                 if _resolve_state_conflict(pull.stdout + pull.stderr):
-                    continue
-                log("[push] pull --rebase 失败且不可解：%s" % (pull.stderr or pull.stdout).strip()[:200])
-                return False
-            push = _push_once(proxy)
-            if push:
+                    pass  # 合并成新提交后继续推
+                else:
+                    log("[push] pull --rebase 失败（%s）：%s"
+                        % (proxy or "direct", (pull.stderr or pull.stdout).strip()[:160]))
+                    continue  # 换下一个通道重试
+            if _push_once(proxy):
                 return True
         time.sleep(5)
     return False
@@ -151,6 +163,7 @@ def dispatch_site_build() -> bool:
 def main() -> int:
     os.chdir(ROOT)
     load_env()
+    fetch_first_ok()  # 刷新 origin/main，让下面的积压判断有据可依
 
     sys.path.insert(0, ROOT)
     import fast_refresh  # noqa: E402  import 时即接管出网护栏与 .env 后的 key 池
@@ -161,20 +174,23 @@ def main() -> int:
         return rc
 
     changed = git(["status", "--porcelain", "--"] + list(STATE_FILES))
-    if not changed.stdout.strip():
-        log("[fastlane] 状态无变化，无需提交")
-        return 0
+    ahead = git(["rev-list", "--count", "origin/main..HEAD"]).stdout.strip()
+    has_backlog = ahead not in ("", "0")  # 上一场推送失败的积压提交，本场必须补推
 
-    commit = git(["add", *STATE_FILES])
-    commit = git(["commit", "-m", "chore(fastlane): 新星状态写回（分类/点评/翻译）"])
-    if commit.returncode != 0:
-        log("[fastlane] commit 失败：%s" % (commit.stderr or "").strip()[:200])
-        return 1
+    if changed.stdout.strip():
+        commit = git(["add", *STATE_FILES])
+        commit = git(["commit", "-m", "chore(fastlane): 新星状态写回（分类/点评/翻译）"])
+        if commit.returncode != 0:
+            log("[fastlane] commit 失败：%s" % (commit.stderr or "").strip()[:200])
+            return 1
+    elif not has_backlog:
+        log("[fastlane] 状态无变化且无积压，无需推送")
+        return 0
 
     if not push_with_retry():
         log("[fastlane] 推送未成功，状态保留在本地，下一场重试")
         return 1
-    log("[fastlane] 状态已推送")
+    log("[fastlane] 状态已推送（%s）" % ("含本场新写回" if changed.stdout.strip() else "积压补推"))
     dispatch_site_build()
     return 0
 

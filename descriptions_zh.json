@@ -519,5 +519,7 @@
  "wangweihong/comfyui-hairstyle-gallery": "ComfyUI 离线发型图库：893 个人体模型发参考图，双语界面与 Qwen Image 2.1 工作流",
  "62656456/ai-storyboard-director-v5.2": "AI 故事板导演 v5.2：开源导演级 AIGC 故事板技能，用于将剧本转化为可执行的电影镜头序列。",
  "bytedance/axion1_0": "前沿级智能体能力，仅需高质量数据与简洁训练配方：2轮SFT + RL，无需中期训练/DPO/OPD。完整配方已发布。",
- "DKKD13/dsh-finance": "DKKD13 个人开发的第三方 DSH 金融研究插件：研究 Skills、证据资料库、个股图表与模拟基金。与 DeepSeek 官方无隶属关系。"
+ "DKKD13/dsh-finance": "DKKD13 个人开发的第三方 DSH 金融研究插件：研究 Skills、证据资料库、个股图表与模拟基金。与 DeepSeek 官方无隶属关系。",
+ "mrhlaingbwardev/agentic-hacking-skills": "人工智能驱动的网络安全和自动化- “Agentic Hacking”电子书的官方奖励技能、代理和MCP配置（ 28个SKILL.md模板）",
+ "TIGER-AI-Lab/WebsiteBench": "人工智能代理是否可以通过浏览器探索来重建网站？"
 }

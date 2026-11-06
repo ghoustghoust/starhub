@@ -9,5 +9,6 @@
  "wangweihong/comfyui-costume-gallery": "ComfyUI 服装图库节点，支持姿态换装，属于 AI 图像",
  "pixelaigc/ComfyUI-MiniMax-H3-Workflow": "ComfyUI H3 视频工作流，支持首尾帧/图生视频/文生",
  "hmjz100/LinkSwift": "支持八大网盘的Tampermonkey脚本，实现直链获取与下",
- "62656456/ai-storyboard-director-v5.2": "AIGC分镜生成技能，将剧本转化为影视级镜头链。"
+ "62656456/ai-storyboard-director-v5.2": "AIGC分镜生成技能，将剧本转化为影视级镜头链。",
+ "Work-Fisher/fisher-moss-prompt-expander": "基于ComfyUI的图像提示词扩展工具，属于AI图像生成工作"
 }

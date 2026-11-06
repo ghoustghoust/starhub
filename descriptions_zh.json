@@ -522,5 +522,6 @@
  "DKKD13/dsh-finance": "DKKD13 个人开发的第三方 DSH 金融研究插件：研究 Skills、证据资料库、个股图表与模拟基金。与 DeepSeek 官方无隶属关系。",
  "mrhlaingbwardev/agentic-hacking-skills": "人工智能驱动的网络安全和自动化- “Agentic Hacking”电子书的官方奖励技能、代理和MCP配置（ 28个SKILL.md模板）",
  "TIGER-AI-Lab/WebsiteBench": "人工智能代理是否可以通过浏览器探索来重建网站？",
- "blixvip/BlendClone": "将参考视频转换为可编辑的Blender工程文件：AI场景分析、声明式编译器、并排保真度评分、.blend导出。"
+ "blixvip/BlendClone": "将参考视频转换为可编辑的Blender工程文件：AI场景分析、声明式编译器、并排保真度评分、.blend导出。",
+ "Work-Fisher/fisher-moss-prompt-expander": "将创意扩展为详细的中文风格图像提示词及ComfyUI模板。"
 }

@@ -523,5 +523,6 @@
  "mrhlaingbwardev/agentic-hacking-skills": "人工智能驱动的网络安全和自动化- “Agentic Hacking”电子书的官方奖励技能、代理和MCP配置（ 28个SKILL.md模板）",
  "TIGER-AI-Lab/WebsiteBench": "人工智能代理是否可以通过浏览器探索来重建网站？",
  "blixvip/BlendClone": "将参考视频转换为可编辑的Blender工程文件：AI场景分析、声明式编译器、并排保真度评分、.blend导出。",
- "Work-Fisher/fisher-moss-prompt-expander": "将创意扩展为详细的中文风格图像提示词及ComfyUI模板。"
+ "Work-Fisher/fisher-moss-prompt-expander": "将创意扩展为详细的中文风格图像提示词及ComfyUI模板。",
+ "k4yt3x/video2x": "基于机器学习的视频超分辨率与帧插值框架。估计于 2018 年 Hack the Valley II。"
 }

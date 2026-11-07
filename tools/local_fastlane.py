@@ -53,13 +53,23 @@ def load_env() -> None:
         log("[env] .env 不存在，跳过注入")
 
 
+def _token() -> str:
+    return os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
+
+
 def git(args: list[str], proxy: str = "") -> subprocess.CompletedProcess:
-    cmd = ["git"]
+    # 统一用 .env token 静默认证：清空默认 helper（绕开 manager/GCM 登录弹窗），
+    # 禁终端与 GUI 交互；core.editor=true 让 rebase --continue 不弹编辑器。
+    helper = "!f() { echo username=x-access-token; echo password=$GH_TOKEN; }; f"
+    cmd = ["git", "-c", "credential.helper=", "-c", "credential.helper=" + helper,
+           "-c", "credential.interactive=false", "-c", "core.editor=true"]
     if proxy:
         cmd += ["-c", "http.proxy=" + proxy]
     cmd += args
+    env = dict(os.environ, GH_TOKEN=_token(), GIT_TERMINAL_PROMPT="0",
+               GCM_INTERACTIVE="never", GIT_EDITOR="true")
     return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=120,
-                          creationflags=NO_WINDOW)
+                          env=env, creationflags=NO_WINDOW)
 
 
 def fetch_first_ok() -> bool:
@@ -74,13 +84,13 @@ def fetch_first_ok() -> bool:
 
 def push_with_retry() -> bool:
     """推送（本场新提交 + 历史积压都在 HEAD 上）。pull --rebase 撞 CI 数据提交
-    按键合并；网络/代理抖动换通道重试，pull 不可解也不再提前放弃。"""
+    时在 rebase 内就地按键合并，使 HEAD 落到 origin/main 之上，push 才能快进。"""
     for attempt in range(3):
         for proxy in PROXIES:
             pull = git(["pull", "--rebase", "origin", "main"], proxy)
             if pull.returncode != 0:
                 if _resolve_state_conflict(pull.stdout + pull.stderr):
-                    pass  # 合并成新提交后继续推
+                    pass  # rebase 已完成，HEAD 在 origin/main 之上，继续推
                 else:
                     log("[push] pull --rebase 失败（%s）：%s"
                         % (proxy or "direct", (pull.stderr or pull.stdout).strip()[:160]))
@@ -92,54 +102,63 @@ def push_with_retry() -> bool:
 
 
 def _push_once(proxy: str) -> bool:
-    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
-    helper = "!f() { echo username=x-access-token; echo password=$GH_TOKEN; }; f"
-    env = dict(os.environ, GH_TOKEN=token, GIT_TERMINAL_PROMPT="0")
-    cmd = ["git", "-c", "credential.helper=", "-c", "credential.helper=" + helper]
-    if proxy:
-        cmd += ["-c", "http.proxy=" + proxy]
-    cmd += ["push", "origin", "main"]
-    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
-                          timeout=120, env=env, creationflags=NO_WINDOW)
+    proc = git(["push", "origin", "main"], proxy)
     if proc.returncode == 0:
         return True
     log("[push] 失败（proxy=%s）：%s" % (proxy or "direct", (proc.stderr or "").strip()[:200]))
     return False
 
 
+def _rebase_in_progress() -> bool:
+    return os.path.isdir(os.path.join(ROOT, ".git", "rebase-merge")) or \
+        os.path.isdir(os.path.join(ROOT, ".git", "rebase-apply"))
+
+
 def _resolve_state_conflict(output: str) -> bool:
-    """pull --rebase 撞上 CI 数据提交时，按「远端为底 + 本地缺键补齐」解冲突。"""
+    """rebase 撞 CI 数据提交时，逐个提交就地按「远端为底 + 本地缺键补齐」解冲突，
+    让 rebase 真正走完（HEAD 落到 origin/main 之上）。绝不 abort 后在分叉历史上另打
+    提交——那会让 push 永远 non-fast-forward。非状态文件冲突则放弃本场。"""
     if "CONFLICT" not in output:
         return False
-    log("[push] pull 撞冲突，按键合并本地状态")
+    log("[push] pull 撞冲突，rebase 内按键合并状态文件")
     try:
-        subprocess.run(["git", "rebase", "--abort"], cwd=ROOT, capture_output=True, timeout=60,
-                       creationflags=NO_WINDOW)
-        base = {}
-        for name in STATE_FILES:
-            proc = subprocess.run(["git", "show", "origin/main:" + name], cwd=ROOT,
-                                  capture_output=True, text=True, encoding="utf-8", timeout=60,
-                                  creationflags=NO_WINDOW)
-            base[name] = json.loads(proc.stdout) if proc.returncode == 0 else {}
-        for name in STATE_FILES:
-            path = os.path.join(ROOT, name)
-            if not os.path.exists(path):
+        for _ in range(300):
+            if not _rebase_in_progress():
+                return True
+            unmerged = git(["diff", "--name-only", "--diff-filter=U"]).stdout.split()
+            for name in unmerged:
+                if name not in STATE_FILES:
+                    log("[push] 非状态文件冲突（%s），放弃本场" % name)
+                    git(["rebase", "--abort"])
+                    return False
+                ours = git(["show", ":2:" + name])    # rebase 中 :2 = 远端底
+                theirs = git(["show", ":3:" + name])  # :3 = 正在重放的本地提交
+                merged = json.loads(ours.stdout) if ours.returncode == 0 and ours.stdout.strip() else {}
+                add = json.loads(theirs.stdout) if theirs.returncode == 0 and theirs.stdout.strip() else {}
+                for key, value in add.items():
+                    if value and not merged.get(key):
+                        merged[key] = value
+                with open(os.path.join(ROOT, name), "w", encoding="utf-8") as fh:
+                    json.dump(merged, fh, ensure_ascii=False, indent=1)
+                git(["add", name])
+            cont = git(["rebase", "--continue"])
+            err = cont.stdout + cont.stderr
+            if cont.returncode == 0 and not _rebase_in_progress():
+                return True
+            if "No changes" in err or "now empty" in err or "Nothing to do" in err:
+                git(["rebase", "--skip"])  # 该提交合并后变空，跳过
                 continue
-            mine = json.load(open(path, encoding="utf-8"))
-            for key, value in mine.items():
-                if value and not base[name].get(key):
-                    base[name][key] = value
-            with open(path, "w", encoding="utf-8") as fh:
-                json.dump(base[name], fh, ensure_ascii=False, indent=1)
-        subprocess.run(["git", "add", *STATE_FILES], cwd=ROOT, capture_output=True, timeout=60,
-                       creationflags=NO_WINDOW)
-        subprocess.run(["git", "commit", "-m", "chore(fastlane): 按键合并本地状态写回"],
-                       cwd=ROOT, capture_output=True, timeout=60, creationflags=NO_WINDOW)
-        return True
+            if "CONFLICT" in err or _rebase_in_progress():
+                continue  # 下一个提交又撞冲突，继续循环
+            log("[push] rebase --continue 异常：%s" % err.strip()[:160])
+            git(["rebase", "--abort"])
+            return False
+        log("[push] 冲突合并超过 300 轮，放弃本场")
+        git(["rebase", "--abort"])
+        return False
     except Exception as exc:  # noqa: BLE001
         log("[push] 冲突合并失败：%s" % exc)
-        subprocess.run(["git", "rebase", "--abort"], cwd=ROOT, capture_output=True, timeout=60,
-                       creationflags=NO_WINDOW)
+        git(["rebase", "--abort"])
         return False
 
 

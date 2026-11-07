@@ -1,6 +1,6 @@
 {
  "schema_version": 2,
- "updated_at": "2026-11-06T07:54:42.250182Z",
+ "updated_at": "2026-11-07T06:59:45.592446Z",
  "map": {
   "2951461586/GPT-Register-Tool": "assistant",
   "bestnite/skills": "tools",
@@ -66,7 +66,6 @@
   "d2l-ai/d2l-zh": "learning",
   "zhaoxuya520/reverse-skill": "tools",
   "RapidAI/RapidOCR": "agent",
-  "PlexPt/awesome-chatgpt-prompts-zh": "learning",
   "521xueweihan/HelloGitHub": "learning",
   "hiroi-sora/Umi-OCR": "video",
   "popopo-99/zy-cinematic-realism": "agent",
@@ -165,7 +164,8 @@
   "KKKKhazix/agent-autoloop": "tools",
   "62656456/ai-storyboard-director-v5.2": "video",
   "hmjz100/LinkSwift": "tools",
-  "pixelaigc/ComfyUI-MiniMax-H3-Workflow": "video"
+  "pixelaigc/ComfyUI-MiniMax-H3-Workflow": "video",
+  "Work-Fisher/fisher-moss-prompt-expander": "tools"
  },
  "labels": {
   "agent": "AI Agent & Skills",

@@ -30,6 +30,9 @@ REPO = "ghoustghoust/starhub"
 # 出网代理候选：本机直连 GitHub 时通时断，依次回退（空 = 直连）
 PROXIES = ["", "http://127.0.0.1:12001", "http://127.0.0.1:12000"]
 
+# pythonw 无控制台，子进程默认会各开一个可见终端窗口，必须显式隐藏
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 
 def log(msg: str) -> None:
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -55,7 +58,8 @@ def git(args: list[str], proxy: str = "") -> subprocess.CompletedProcess:
     if proxy:
         cmd += ["-c", "http.proxy=" + proxy]
     cmd += args
-    return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=120)
+    return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=120,
+                          creationflags=NO_WINDOW)
 
 
 def fetch_first_ok() -> bool:
@@ -96,7 +100,7 @@ def _push_once(proxy: str) -> bool:
         cmd += ["-c", "http.proxy=" + proxy]
     cmd += ["push", "origin", "main"]
     proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
-                          timeout=120, env=env)
+                          timeout=120, env=env, creationflags=NO_WINDOW)
     if proc.returncode == 0:
         return True
     log("[push] 失败（proxy=%s）：%s" % (proxy or "direct", (proc.stderr or "").strip()[:200]))
@@ -109,11 +113,13 @@ def _resolve_state_conflict(output: str) -> bool:
         return False
     log("[push] pull 撞冲突，按键合并本地状态")
     try:
-        subprocess.run(["git", "rebase", "--abort"], cwd=ROOT, capture_output=True, timeout=60)
+        subprocess.run(["git", "rebase", "--abort"], cwd=ROOT, capture_output=True, timeout=60,
+                       creationflags=NO_WINDOW)
         base = {}
         for name in STATE_FILES:
             proc = subprocess.run(["git", "show", "origin/main:" + name], cwd=ROOT,
-                                  capture_output=True, text=True, encoding="utf-8", timeout=60)
+                                  capture_output=True, text=True, encoding="utf-8", timeout=60,
+                                  creationflags=NO_WINDOW)
             base[name] = json.loads(proc.stdout) if proc.returncode == 0 else {}
         for name in STATE_FILES:
             path = os.path.join(ROOT, name)
@@ -125,13 +131,15 @@ def _resolve_state_conflict(output: str) -> bool:
                     base[name][key] = value
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(base[name], fh, ensure_ascii=False, indent=1)
-        subprocess.run(["git", "add", *STATE_FILES], cwd=ROOT, capture_output=True, timeout=60)
+        subprocess.run(["git", "add", *STATE_FILES], cwd=ROOT, capture_output=True, timeout=60,
+                       creationflags=NO_WINDOW)
         subprocess.run(["git", "commit", "-m", "chore(fastlane): 按键合并本地状态写回"],
-                       cwd=ROOT, capture_output=True, timeout=60)
+                       cwd=ROOT, capture_output=True, timeout=60, creationflags=NO_WINDOW)
         return True
     except Exception as exc:  # noqa: BLE001
         log("[push] 冲突合并失败：%s" % exc)
-        subprocess.run(["git", "rebase", "--abort"], cwd=ROOT, capture_output=True, timeout=60)
+        subprocess.run(["git", "rebase", "--abort"], cwd=ROOT, capture_output=True, timeout=60,
+                       creationflags=NO_WINDOW)
         return False
 
 

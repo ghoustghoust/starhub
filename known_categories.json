@@ -75,7 +75,6 @@
  "UnblockNeteaseMusic/server": "agent",
  "NeteaseCloudMusicApiEnhanced/api-enhanced": "agent",
  "aishwaryanr/awesome-generative-ai-guide": "learning",
- "calesthio/OpenMontage": "video",
  "Lightricks/LTX-2": "video",
  "lzhgus/cc-plugin-codex": "agent",
  "openai/codex-plugin-cc": "agent",
@@ -162,5 +161,11 @@
  "62656456/ai-storyboard-director-v5.2": "video",
  "hmjz100/LinkSwift": "tools",
  "pixelaigc/ComfyUI-MiniMax-H3-Workflow": "video",
- "Work-Fisher/fisher-moss-prompt-expander": "tools"
+ "Work-Fisher/fisher-moss-prompt-expander": "tools",
+ "Chenkin-x/Kaloscope-Style-adapter-Comfyui": "tools",
+ "ukr8b3g-cmyk/MOSS-Image-Character-Catalog": "tools",
+ "OpenMOSS/MOSS-Image": "tools",
+ "Moeblack/moss-image-prompt-skill": "tools",
+ "larashero3-dotcom/lieflat-less-ai-tone": "tools",
+ "OpenMontageInc/OpenMontage": "video"
 }

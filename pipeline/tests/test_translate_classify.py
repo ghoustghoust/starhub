@@ -176,7 +176,7 @@ class ClassifyTest(unittest.TestCase):
 
     def test_rule_classification(self) -> None:
         self.assertEqual(classify.classify_new("owner/video-agent", "video generation", None, []), "video")
-        self.assertEqual(classify.classify_new("owner/foo", "unknown thing", None, []), "agent")
+        self.assertEqual(classify.classify_new("owner/foo", "unknown thing", None, []), "tools")
 
     def test_known_category_wins(self) -> None:
         result = classify.classify_repo("owner/repo", "video", None, [], {"owner/repo": "coding"}, [], fast=True)

@@ -32,6 +32,8 @@ export function renderLangBar(){
 }
 
 // ---- 分类 tab ----
+let catsExpanded = false;
+
 export function renderCats(){
   const cats = $('#cats'); cats.innerHTML='';
   const all = document.createElement('button');
@@ -52,12 +54,37 @@ export function renderCats(){
     b.onclick = () => { state.cat = state.cat===c.key?'':c.key; renderCats(); renderList(); syncSearchUrl(); };
     cats.appendChild(b);
   });
-  updateCatsMask();
+  const more = document.createElement('button');
+  more.className = 'cat cat-more';
+  more.setAttribute('aria-expanded', String(catsExpanded));
+  more.innerHTML = catsExpanded ? '收起 <span class="chev">▴</span>' : '更多 <span class="chev">▾</span>';
+  more.onclick = () => { catsExpanded = !catsExpanded; renderCats(); };
+  cats.appendChild(more);
+  layoutCats();
 }
-/* 分类溢出检测：未溢出时移除渐隐蒙版，避免两端标签残缺 */
-export function updateCatsMask(){
-  const el = $('#cats'); if(!el) return;
-  el.classList.toggle('no-mask', el.scrollWidth <= el.clientWidth + 2);
+/* 分类行布局：折叠时只留第一行、行尾放「更多」；展开后 flex 换行铺开全部 */
+export function layoutCats(){
+  const cats = $('#cats'); if(!cats) return;
+  const more = cats.querySelector('.cat-more');
+  const pills = Array.from(cats.querySelectorAll('.cat:not(.cat-more)'));
+  if(!more) return;
+  cats.classList.toggle('expanded', catsExpanded);
+  pills.forEach(p => { p.style.display=''; });   // 先全可见以便测量实际换行
+  more.style.display='none';
+  if(!cats.clientWidth || !pills.length) return;            // 尚未可测量：等下一帧/resize 再布局
+  const rowTop = pills[0].offsetTop;
+  const onFirstRow = el => el.offsetTop <= rowTop + 1;
+  if(pills.every(onFirstRow)) return;            // 全部一行放得下：无需「更多」
+  more.style.display='';
+  if(catsExpanded) return;                        // 展开：全部可见，自然换行
+  // 折叠：从尾部逐个隐藏，直到「更多」被挤回第一行（保留连续前缀，规避亚像素取整）
+  let selectedHidden = false;
+  for(let i = pills.length - 1; i >= 0; i--){
+    if(onFirstRow(more)) break;
+    pills[i].style.display='none';
+    if(state.cat && pills[i].classList.contains('on')) selectedHidden = true;
+  }
+  if(selectedHidden){ catsExpanded = true; renderCats(); }  // 选中的分类被折叠时自动展开
 }
 
 // ---- 语言下拉 ----

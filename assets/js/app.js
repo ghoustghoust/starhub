@@ -4,7 +4,7 @@ import { hydrateSearchState, syncSearchUrl } from './core/search-url.js';
 import { escHtml } from './core/format.js';
 import { copyRepoInfo, toast } from './core/ui.js';
 import { getTheme, applyTheme, getView, applyView } from './features/preferences.js';
-import { renderLangBar, renderCats, renderLangSel, renderList, updateCatsMask } from './features/collection.js';
+import { renderLangBar, renderCats, renderLangSel, renderList, layoutCats } from './features/collection.js';
 import { renderSearchHint, openSearchModal, closeSearchModal, runSearch, editSearchQuery, applySearchQuery } from './features/search.js';
 import { renderTrending, switchTrendTab, renderTrendingFull, openTrendModal, closeTrendModal } from './features/trending.js';
 import { renderFeed, refreshFeed, refreshTrendingBoard } from './features/feed.js';
@@ -205,7 +205,7 @@ function bindEvents(){
     e.preventDefault();
     tag.click();
   });
-  window.addEventListener('resize', updateCatsMask);
+  window.addEventListener('resize', layoutCats);
   const resultList = $('#sList');
   if(resultList){
     resultList.addEventListener('click', e => {
@@ -380,6 +380,8 @@ applyTheme(getTheme());
 applyView(getView());
 renderLangBar();
 renderCats();
+requestAnimationFrame(layoutCats);
+if(document.fonts && document.fonts.ready) document.fonts.ready.then(layoutCats);
 renderLangSel();
 $('#q').value = state.q;
 $('#btnClear').style.display = state.q ? 'block' : 'none';

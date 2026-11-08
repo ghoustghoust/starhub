@@ -2,18 +2,22 @@
 
 CATS = [
     {"key": "agent",     "label": "AI Agent & Skills",      "color": "#0550ae", "dark": "#4493f8"},
-    {"key": "assistant", "label": "AI 助手 & 应用",         "color": "#1b7c83", "dark": "#39c5cf"},
     {"key": "coding",    "label": "AI 编程 & 工具链",       "color": "#1a7f37", "dark": "#3fb950"},
+    {"key": "assistant", "label": "AI 助手 & 应用",         "color": "#1b7c83", "dark": "#39c5cf"},
+    {"key": "prompt",    "label": "提示词工程",             "color": "#0e7490", "dark": "#22b8cf"},
     {"key": "video",     "label": "AI 视频创作",            "color": "#cf222e", "dark": "#f85149"},
+    {"key": "image",     "label": "AI 图像生成",            "color": "#9c36b5", "dark": "#c56bdb"},
     {"key": "content",   "label": "内容创作 & 排版",        "color": "#d33982", "dark": "#e577b2"},
-    {"key": "distill",   "label": "思维蒸馏 & 认知",        "color": "#8250df", "dark": "#a371f7"},
+    {"key": "media",     "label": "音乐 & 音频",            "color": "#bf3989", "dark": "#db61a2"},
+    {"key": "download",  "label": "下载 & 爬虫",            "color": "#4d7c0f", "dark": "#84cc16"},
+    {"key": "ocr",       "label": "OCR & 文档识别",         "color": "#b45309", "dark": "#f59e0b"},
     {"key": "learning",  "label": "学习 & 教程",            "color": "#b58400", "dark": "#d4a72c"},
     {"key": "info",      "label": "资讯聚合 & 信息抓取",    "color": "#0969da", "dark": "#58a6ff"},
-    {"key": "tools",     "label": "效率工具",               "color": "#57606a", "dark": "#8b949e"},
-    {"key": "media",     "label": "影音 & IPTV",            "color": "#bf3989", "dark": "#db61a2"},
-    {"key": "finance",   "label": "金融 & 交易",            "color": "#c29700", "dark": "#e3b341"},
-    {"key": "business",  "label": "商业 · 一人公司与知产",  "color": "#d4600a", "dark": "#f0883e"},
+    {"key": "distill",   "label": "思维蒸馏 & 认知",        "color": "#8250df", "dark": "#a371f7"},
     {"key": "frontend",  "label": "前端 & 设计系统",        "color": "#0a7ea4", "dark": "#39a0c5"},
+    {"key": "business",  "label": "商业 · 一人公司与知产",  "color": "#d4600a", "dark": "#f0883e"},
+    {"key": "finance",   "label": "金融 & 交易",            "color": "#c29700", "dark": "#e3b341"},
+    {"key": "tools",     "label": "效率工具",               "color": "#57606a", "dark": "#8b949e"},
 ]
 
 LANG_COLORS = {

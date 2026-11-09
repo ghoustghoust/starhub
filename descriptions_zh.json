@@ -555,5 +555,7 @@
  "tireddwarf99/ai_manus": "AI Manus 是一个通用型的 AI Agent 系统，支持在沙盒环境中运行各种工具和执行各类操作。",
  "abhinay-h/ai_manus": "AI Manus 是一个通用的 AI Agent 系统，支持在沙箱环境中运行各种工具和操作。",
  "thecoderrrer/ai_manus": "AI Manus是一个通用的AI Agent系统，支持在沙盒环境中运行各种工具和操作。",
- "thecoderrrer/manus-ai": "AI Manus 是一个通用的 AI 智能体系统，支持在沙箱环境中运行各种工具和操作。"
+ "thecoderrrer/manus-ai": "AI Manus 是一个通用的 AI 智能体系统，支持在沙箱环境中运行各种工具和操作。",
+ "gitleaks/gitleaks": "用 Gitleaks 寻找秘密 🔑",
+ "langfuse/langfuse": "🪢 开源代理评测与可观测性：通过一个开放平台追踪、评估并优化大型语言模型（LLM）应用。"
 }

@@ -27,7 +27,7 @@ export async function gh(path, { method = 'GET', body, timeout = 15000 } = {}) {
     'User-Agent': 'starhub',
   };
   if (GH_TOKEN) headers.Authorization = 'Bearer ' + GH_TOKEN;
-  const response = await fetch(target, {
+  const response = await fetch(API + path, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),

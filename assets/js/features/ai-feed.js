@@ -4,7 +4,7 @@ import { escHtml, fmtRelTime } from '../core/format.js';
 import { toast } from '../core/ui.js';
 import { refreshFeed } from './feed.js';
 
-const AIHOT_API = 'https://aihot.virxact.com/api/v1/items?mode=all&window=24h&limit=40';
+const AIHOT_API = 'https://aihot.news/api/v1/items?mode=all&window=24h&limit=40';
 const NEWS_API = API_BASE + '/api/news';
 const AIHOT_CATS = { 'ai-models':['AI 模型','#2563eb'], 'ai-products':['AI 产品','#7c3aed'], industry:['行业动态','#0891b2'], paper:['论文','#d97706'], tip:['技巧观点','#dc2626'] };
 

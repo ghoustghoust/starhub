@@ -229,7 +229,7 @@ export function clampChroma(hex, lo, hi){
   return '#'+[h+1/3,h,h-1/3].map(x=>Math.round(hue2rgb(x)*255).toString(16).padStart(2,'0')).join('');
 }
 
-export function buildCard(d, isFav){
+export function buildCard(d, isFav, eager){
   const div = document.createElement('article');
   div.className = 'card cover-card' + (isFav?' faved':'') + (d.stale?' stale':'');
   const catColorVal = catColor(d.category);
@@ -248,7 +248,7 @@ export function buildCard(d, isFav){
     '<span class="tp" role="button" tabindex="0" data-act="topictag" data-topic="'+escHtml(t)+'" title="筛选该 topic">'+escHtml(t)+'</span>').join('');
   div.innerHTML =
     '<a class="cover" href="'+d.html_url+'" target="_blank" rel="noopener" tabindex="-1" aria-hidden="true">' +
-      '<img class="cover-img" src="'+coverSrc+'" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">' +
+      '<img class="cover-img" src="'+coverSrc+'" alt="" loading="'+(eager?'eager':'lazy')+'"'+(eager?' fetchpriority="high"':'')+' decoding="async" referrerpolicy="no-referrer">' +
       '<span class="cover-fallback" aria-hidden="true"><span class="mono-mark">'+escHtml((d.name||'#').charAt(0))+'</span></span>' +
       (d.updated_today ? '<span class="badge-update cover-badge">今日更新</span>' : '') +
     '</a>' +
@@ -322,7 +322,7 @@ export function renderList(){
   if(faved.length){
     pinnedWrap.style.display='';
     pinned.innerHTML='';
-    faved.forEach(d => pinned.appendChild(build(d, true)));
+    faved.forEach((d,i) => pinned.appendChild(build(d, true, i < 8)));
     $('#pinnedCount').textContent = '('+faved.length+')';
   } else {
     pinnedWrap.style.display='none';
@@ -330,7 +330,7 @@ export function renderList(){
 
   // 主列表：首屏只渲染一页，数据增长时不让 DOM 随收藏数线性膨胀
   grid.innerHTML='';
-  restAll.forEach(d => grid.appendChild(build(d, false)));
+  restAll.forEach((d,i) => grid.appendChild(build(d, false, i < 8)));
   const moreWrap = $('#loadMoreWrap');
   if(moreWrap){
     const remaining = allRest.length - restAll.length;

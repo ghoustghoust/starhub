@@ -1,7 +1,7 @@
 {
  "schema_version": 2,
- "generated_at": "2026-11-08T07:06:54.829909Z",
- "updated": "2026-11-08 15:06",
+ "generated_at": "2026-11-09T00:10:41.546494Z",
+ "updated": "2026-11-09 08:10",
  "summary": {
   "text": ""
  },
@@ -14,22 +14,10 @@
     "html_url": "https://github.com/yetone/magpie",
     "desc": "每个代理的模型。一处。来自菜单栏的 DeepSeek 上的 Codex、Kimi 上的 Claude Code。",
     "language": "Go",
-    "stars": 31953,
+    "stars": 32300,
     "created_at": "2026-09-23",
-    "delta": 523,
-    "reason": "今日涨星 +523"
-   },
-   {
-    "name": "herdr",
-    "owner": "herdrdev",
-    "full_name": "herdrdev/herdr",
-    "html_url": "https://github.com/herdrdev/herdr",
-    "desc": "你的编码代理所在的运行时",
-    "language": "Rust",
-    "stars": 49197,
-    "created_at": "2026-03-27",
-    "delta": 387,
-    "reason": "今日涨星 +387"
+    "delta": 347,
+    "reason": "今日涨星 +347"
    },
    {
     "name": "artcraft",
@@ -38,46 +26,22 @@
     "html_url": "https://github.com/storytold/artcraft",
     "desc": "ArtCraft是一款专为艺术家、设计师和电影制作人打造的创意制作引擎。",
     "language": "Rust",
-    "stars": 39641,
+    "stars": 39892,
     "created_at": "2022-03-31",
-    "delta": 303,
-    "reason": "今日涨星 +303"
+    "delta": 251,
+    "reason": "今日涨星 +251"
    },
    {
-    "name": "iFixAi",
-    "owner": "ifixai-ai",
-    "full_name": "ifixai-ai/iFixAi",
-    "html_url": "https://github.com/ifixai-ai/iFixAi",
-    "desc": "AI 代理的独立审计。无论由人工还是代理自身运行，都将回答 AI 代理经济中最关键的问题：该代理是否在做它应该做的事？借助 iFixAi，您可以在不到 120 秒的时间内获得答案。",
-    "language": "Python",
-    "stars": 44021,
-    "created_at": "2026-04-27",
-    "delta": 209,
-    "reason": "今日涨星 +209"
-   },
-   {
-    "name": "heretic",
-    "owner": "p-e-w",
-    "full_name": "p-e-w/heretic",
-    "html_url": "https://github.com/p-e-w/heretic",
-    "desc": "全自动消除语言模型审查",
-    "language": "Python",
-    "stars": 39939,
-    "created_at": "2025-09-21",
-    "delta": 143,
-    "reason": "今日涨星 +143"
-   },
-   {
-    "name": "ai-engineering-hub",
-    "owner": "patchy631",
-    "full_name": "patchy631/ai-engineering-hub",
-    "html_url": "https://github.com/patchy631/ai-engineering-hub",
-    "desc": "有关法学硕士、RAG 和现实世界人工智能代理应用程序的深入教程。",
-    "language": "Jupyter Notebook",
-    "stars": 41452,
-    "created_at": "2024-10-21",
-    "delta": 114,
-    "reason": "今日涨星 +114"
+    "name": "herdr",
+    "owner": "herdrdev",
+    "full_name": "herdrdev/herdr",
+    "html_url": "https://github.com/herdrdev/herdr",
+    "desc": "你的编码代理所在的运行时",
+    "language": "Rust",
+    "stars": 49428,
+    "created_at": "2026-03-27",
+    "delta": 231,
+    "reason": "今日涨星 +231"
    },
    {
     "name": "learn-harness-engineering",
@@ -86,10 +50,34 @@
     "html_url": "https://github.com/walkinglabs/learn-harness-engineering",
     "desc": "线束工程初学者教程，从0到1",
     "language": "TypeScript",
-    "stars": 23601,
+    "stars": 23726,
     "created_at": "2026-03-29",
-    "delta": 109,
-    "reason": "今日涨星 +109"
+    "delta": 125,
+    "reason": "今日涨星 +125"
+   },
+   {
+    "name": "book-to-skill",
+    "owner": "virgiliojr94",
+    "full_name": "virgiliojr94/book-to-skill",
+    "html_url": "https://github.com/virgiliojr94/book-to-skill",
+    "desc": "将任何技术书籍 PDF 转换为 Claude Code 技能 — 可供您在工作时学习、参考和使用。",
+    "language": "Python",
+    "stars": 37351,
+    "created_at": "2026-05-01",
+    "delta": 124,
+    "reason": "今日涨星 +124"
+   },
+   {
+    "name": "heretic",
+    "owner": "p-e-w",
+    "full_name": "p-e-w/heretic",
+    "html_url": "https://github.com/p-e-w/heretic",
+    "desc": "全自动消除语言模型审查",
+    "language": "Python",
+    "stars": 40046,
+    "created_at": "2025-09-21",
+    "delta": 107,
+    "reason": "今日涨星 +107"
    },
    {
     "name": "oh-my-pi",
@@ -98,22 +86,10 @@
     "html_url": "https://github.com/can1357/oh-my-pi",
     "desc": "⌥ 终端的 AI 编码代理 — 哈希锚定编辑、优化工具利用、LSP、Python、浏览器、子代理等",
     "language": "TypeScript",
-    "stars": 38178,
+    "stars": 38264,
     "created_at": "2025-12-31",
-    "delta": 104,
-    "reason": "今日涨星 +104"
-   },
-   {
-    "name": "AstrBot",
-    "owner": "AstrBotDevs",
-    "full_name": "AstrBotDevs/AstrBot",
-    "html_url": "https://github.com/AstrBotDevs/AstrBot",
-    "desc": "AI 智能体助手与开发框架，集成多 IM 平台、大模型、插件与 AI 能力，可作为 openclaw 的替代。",
-    "language": "Python",
-    "stars": 46398,
-    "created_at": "2022-12-08",
-    "delta": 102,
-    "reason": "今日涨星 +102"
+    "delta": 86,
+    "reason": "今日涨星 +86"
    },
    {
     "name": "mcp-for-blender",
@@ -122,82 +98,22 @@
     "html_url": "https://github.com/ahujasid/mcp-for-blender",
     "desc": "社区插件，用于通过任意你选择的LLM来控制Blender 3D。与官方Blender基金会无关。",
     "language": "Python",
-    "stars": 33592,
+    "stars": 33671,
     "created_at": "2025-03-07",
-    "delta": 95,
-    "reason": "今日涨星 +95"
+    "delta": 79,
+    "reason": "今日涨星 +79"
    },
    {
-    "name": "pentagi",
-    "owner": "vxcontrol",
-    "full_name": "vxcontrol/pentagi",
-    "html_url": "https://github.com/vxcontrol/pentagi",
-    "desc": "完全自主的AI Agents系统，能够执行复杂的渗透测试任务",
-    "language": "Go",
-    "stars": 33656,
-    "created_at": "2025-01-06",
-    "delta": 93,
-    "reason": "今日涨星 +93"
-   },
-   {
-    "name": "garden-skills",
-    "owner": "ConardLi",
-    "full_name": "ConardLi/garden-skills",
-    "html_url": "https://github.com/ConardLi/garden-skills",
-    "desc": "ConardLi的开源Skills系列，包括网页设计、知识检索、图像生成等。",
-    "language": "JavaScript",
-    "stars": 14643,
-    "created_at": "2026-04-21",
-    "delta": 89,
-    "reason": "今日涨星 +89"
-   },
-   {
-    "name": "zeroclaw",
-    "owner": "zeroclaw-labs",
-    "full_name": "zeroclaw-labs/zeroclaw",
-    "html_url": "https://github.com/zeroclaw-labs/zeroclaw",
-    "desc": "快速、小巧且完全自主的 AI 个人助理基础设施，支持任意操作系统和平台——随处部署，灵活替换 🦀",
-    "language": "Rust",
-    "stars": 33232,
-    "created_at": "2026-02-13",
-    "delta": 83,
-    "reason": "今日涨星 +83"
-   },
-   {
-    "name": "prompt-optimizer",
-    "owner": "linshenkx",
-    "full_name": "linshenkx/prompt-optimizer",
-    "html_url": "https://github.com/linshenkx/prompt-optimizer",
-    "desc": "AI提示词优化器，用于撰写更优质的提示词并获得更出色的AI生成结果。",
-    "language": "TypeScript",
-    "stars": 40867,
-    "created_at": "2025-02-12",
-    "delta": 72,
-    "reason": "今日涨星 +72"
-   },
-   {
-    "name": "WeKnora",
-    "owner": "Tencent",
-    "full_name": "Tencent/WeKnora",
-    "html_url": "https://github.com/Tencent/WeKnora",
-    "desc": "开源LLM知识平台：将原始文档变成可查询的RAG、自主推理代理和自我维护的Wiki。",
-    "language": "Go",
-    "stars": 36772,
-    "created_at": "2025-07-22",
-    "delta": 69,
-    "reason": "今日涨星 +69"
-   },
-   {
-    "name": "paperless-ngx",
-    "owner": "paperless-ngx",
-    "full_name": "paperless-ngx/paperless-ngx",
-    "html_url": "https://github.com/paperless-ngx/paperless-ngx",
-    "desc": "社区支持的强大文档管理系统：扫描、索引和归档您的所有文档",
+    "name": "PageIndex",
+    "owner": "VectifyAI",
+    "full_name": "VectifyAI/PageIndex",
+    "html_url": "https://github.com/VectifyAI/PageIndex",
+    "desc": "📑 页码索引：用于无向量、基于推理的RAG的文档索引",
     "language": "Python",
-    "stars": 47856,
-    "created_at": "2022-02-12",
-    "delta": 64,
-    "reason": "今日涨星 +64"
+    "stars": 40249,
+    "created_at": "2025-04-01",
+    "delta": 76,
+    "reason": "今日涨星 +76"
    },
    {
     "name": "airllm",
@@ -206,34 +122,106 @@
     "html_url": "https://github.com/lyogavin/airllm",
     "desc": "使用单个 4GB GPU 进行 AirLLM 70B 推理",
     "language": "Jupyter Notebook",
-    "stars": 41946,
+    "stars": 42013,
     "created_at": "2023-06-12",
-    "delta": 62,
-    "reason": "今日涨星 +62"
+    "delta": 67,
+    "reason": "今日涨星 +67"
    },
    {
-    "name": "GPT_API_free",
-    "owner": "chatanywhere",
-    "full_name": "chatanywhere/GPT_API_free",
-    "html_url": "https://github.com/chatanywhere/GPT_API_free",
-    "desc": "免费大模型API，支持免费调用GPT、DeepSeek等主流模型，免费额度10000点，每日刷新！另付费价格最低官方1-2折！",
-    "language": null,
-    "stars": 45595,
-    "created_at": "2023-04-23",
+    "name": "WeKnora",
+    "owner": "Tencent",
+    "full_name": "Tencent/WeKnora",
+    "html_url": "https://github.com/Tencent/WeKnora",
+    "desc": "开源LLM知识平台：将原始文档变成可查询的RAG、自主推理代理和自我维护的Wiki。",
+    "language": "Go",
+    "stars": 36837,
+    "created_at": "2025-07-22",
+    "delta": 65,
+    "reason": "今日涨星 +65"
+   },
+   {
+    "name": "garden-skills",
+    "owner": "ConardLi",
+    "full_name": "ConardLi/garden-skills",
+    "html_url": "https://github.com/ConardLi/garden-skills",
+    "desc": "ConardLi的开源Skills系列，包括网页设计、知识检索、图像生成等。",
+    "language": "JavaScript",
+    "stars": 14707,
+    "created_at": "2026-04-21",
+    "delta": 64,
+    "reason": "今日涨星 +64"
+   },
+   {
+    "name": "pentagi",
+    "owner": "vxcontrol",
+    "full_name": "vxcontrol/pentagi",
+    "html_url": "https://github.com/vxcontrol/pentagi",
+    "desc": "完全自主的AI Agents系统，能够执行复杂的渗透测试任务",
+    "language": "Go",
+    "stars": 33717,
+    "created_at": "2025-01-06",
     "delta": 61,
     "reason": "今日涨星 +61"
    },
    {
-    "name": "cua",
-    "owner": "trycua",
-    "full_name": "trycua/cua",
-    "html_url": "https://github.com/trycua/cua",
-    "desc": "通过开源驱动程序、跨操作系统车队以及培训、评估和数据生成的基准来扩展计算机使用2.0。",
+    "name": "ai-engineering-hub",
+    "owner": "patchy631",
+    "full_name": "patchy631/ai-engineering-hub",
+    "html_url": "https://github.com/patchy631/ai-engineering-hub",
+    "desc": "有关法学硕士、RAG 和现实世界人工智能代理应用程序的深入教程。",
+    "language": "Jupyter Notebook",
+    "stars": 41508,
+    "created_at": "2024-10-21",
+    "delta": 56,
+    "reason": "今日涨星 +56"
+   },
+   {
+    "name": "zeroclaw",
+    "owner": "zeroclaw-labs",
+    "full_name": "zeroclaw-labs/zeroclaw",
+    "html_url": "https://github.com/zeroclaw-labs/zeroclaw",
+    "desc": "快速、小巧且完全自主的 AI 个人助理基础设施，支持任意操作系统和平台——随处部署，灵活替换 🦀",
     "language": "Rust",
-    "stars": 31965,
-    "created_at": "2025-01-31",
-    "delta": 59,
-    "reason": "今日涨星 +59"
+    "stars": 33285,
+    "created_at": "2026-02-13",
+    "delta": 53,
+    "reason": "今日涨星 +53"
+   },
+   {
+    "name": "prompt-optimizer",
+    "owner": "linshenkx",
+    "full_name": "linshenkx/prompt-optimizer",
+    "html_url": "https://github.com/linshenkx/prompt-optimizer",
+    "desc": "AI提示词优化器，用于撰写更优质的提示词并获得更出色的AI生成结果。",
+    "language": "TypeScript",
+    "stars": 40919,
+    "created_at": "2025-02-12",
+    "delta": 52,
+    "reason": "今日涨星 +52"
+   },
+   {
+    "name": "AstrBot",
+    "owner": "AstrBotDevs",
+    "full_name": "AstrBotDevs/AstrBot",
+    "html_url": "https://github.com/AstrBotDevs/AstrBot",
+    "desc": "AI 智能体助手与开发框架，集成多 IM 平台、大模型、插件与 AI 能力，可作为 openclaw 的替代。",
+    "language": "Python",
+    "stars": 46446,
+    "created_at": "2022-12-08",
+    "delta": 48,
+    "reason": "今日涨星 +48"
+   },
+   {
+    "name": "paperless-ngx",
+    "owner": "paperless-ngx",
+    "full_name": "paperless-ngx/paperless-ngx",
+    "html_url": "https://github.com/paperless-ngx/paperless-ngx",
+    "desc": "社区支持的强大文档管理系统：扫描、索引和归档您的所有文档",
+    "language": "Python",
+    "stars": 47901,
+    "created_at": "2022-02-12",
+    "delta": 45,
+    "reason": "今日涨星 +45"
    },
    {
     "name": "Vibe-Trading",
@@ -242,10 +230,22 @@
     "html_url": "https://github.com/HKUDS/Vibe-Trading",
     "desc": "“Vibe-Trading：您的个人交易代理”",
     "language": "Python",
-    "stars": 37860,
+    "stars": 37905,
     "created_at": "2026-04-01",
-    "delta": 58,
-    "reason": "今日涨星 +58"
+    "delta": 45,
+    "reason": "今日涨星 +45"
+   },
+   {
+    "name": "cs249r_book",
+    "owner": "harvard-edge",
+    "full_name": "harvard-edge/cs249r_book",
+    "html_url": "https://github.com/harvard-edge/cs249r_book",
+    "desc": "机器学习系统：基础、扩展、智能体AI与物理AI（第一至四卷）• 哈佛CS249r | https://mlsysbook.ai",
+    "language": "Python",
+    "stars": 30057,
+    "created_at": "2023-09-06",
+    "delta": 42,
+    "reason": "今日涨星 +42"
    }
   ],
   "total": [
@@ -256,9 +256,9 @@
     "html_url": "https://github.com/morluto/rea",
     "desc": "使用代理对任何内容进行逆向工程，从应用程序行为到本机二进制文件。",
     "language": "TypeScript",
-    "stars": 441672,
+    "stars": 443726,
     "created_at": "2026-04-14",
-    "reason": "累计 44.2万星标"
+    "reason": "累计 44.4万星标"
    },
    {
     "name": "openclaw",
@@ -267,7 +267,7 @@
     "html_url": "https://github.com/openclaw/openclaw",
     "desc": "开源 AI 个人助手，跨任意操作系统与平台运行。",
     "language": "TypeScript",
-    "stars": 394161,
+    "stars": 394218,
     "created_at": "2025-11-24",
     "reason": "累计 39.4万星标"
    },
@@ -278,9 +278,9 @@
     "html_url": "https://github.com/obra/superpowers",
     "desc": "面向 AI Agent 的技能框架与软件开发方法论。",
     "language": "Shell",
-    "stars": 314233,
+    "stars": 314589,
     "created_at": "2025-10-09",
-    "reason": "累计 31.4万星标"
+    "reason": "累计 31.5万星标"
    },
    {
     "name": "ECC",
@@ -289,9 +289,9 @@
     "html_url": "https://github.com/affaan-m/ECC",
     "desc": "Agent 性能优化系统，整合技能、记忆、安全与代码研究。",
     "language": "JavaScript",
-    "stars": 299300,
+    "stars": 299702,
     "created_at": "2026-01-18",
-    "reason": "累计 29.9万星标"
+    "reason": "累计 30.0万星标"
    },
    {
     "name": "hermes-agent",
@@ -300,7 +300,7 @@
     "html_url": "https://github.com/NousResearch/hermes-agent",
     "desc": "会随使用不断进化的自适应 AI Agent。",
     "language": "Python",
-    "stars": 261569,
+    "stars": 261766,
     "created_at": "2025-07-22",
     "reason": "累计 26.2万星标"
    },
@@ -311,7 +311,7 @@
     "html_url": "https://github.com/n8n-io/n8n",
     "desc": "公平代码的工作流自动化平台，原生集成 AI 能力。",
     "language": "TypeScript",
-    "stars": 209789,
+    "stars": 209851,
     "created_at": "2019-06-22",
     "reason": "累计 21.0万星标"
    },
@@ -322,7 +322,7 @@
     "html_url": "https://github.com/tensorflow/tensorflow",
     "desc": "Google 出品的开源机器学习框架。",
     "language": "C++",
-    "stars": 201389,
+    "stars": 201401,
     "created_at": "2015-11-07",
     "reason": "累计 20.1万星标"
    },
@@ -333,7 +333,7 @@
     "html_url": "https://github.com/firecrawl/firecrawl",
     "desc": "大规模网页搜索、抓取与交互的上下文 API。",
     "language": "TypeScript",
-    "stars": 199594,
+    "stars": 199812,
     "created_at": "2024-04-15",
     "reason": "累计 20.0万星标"
    },
@@ -344,7 +344,7 @@
     "html_url": "https://github.com/Significant-Gravitas/AutoGPT",
     "desc": "让 AI 普惠大众的自主智能体项目。",
     "language": "Python",
-    "stars": 187933,
+    "stars": 187952,
     "created_at": "2023-03-16",
     "reason": "累计 18.8万星标"
    },
@@ -355,7 +355,7 @@
     "html_url": "https://github.com/DietrichGebert/ponytail",
     "desc": "让你的人工智能代理像房间里最懒的高级开发人员一样思考。最好的代码是你从未编写过的代码。",
     "language": "JavaScript",
-    "stars": 186508,
+    "stars": 186922,
     "created_at": "2026-06-12",
     "reason": "累计 18.7万星标"
    },
@@ -366,7 +366,7 @@
     "html_url": "https://github.com/ollama/ollama",
     "desc": "本地一键运行 DeepSeek、Qwen、Gemma 等大模型。",
     "language": "Go",
-    "stars": 186313,
+    "stars": 186384,
     "created_at": "2023-06-26",
     "reason": "累计 18.6万星标"
    },
@@ -377,9 +377,9 @@
     "html_url": "https://github.com/f/prompts.chat",
     "desc": "精选 ChatGPT 提示词合集，支持自托管。",
     "language": "MDX",
-    "stars": 176321,
+    "stars": 176550,
     "created_at": "2022-12-05",
-    "reason": "累计 17.6万星标"
+    "reason": "累计 17.7万星标"
    },
    {
     "name": "transformers",
@@ -388,7 +388,7 @@
     "html_url": "https://github.com/huggingface/transformers",
     "desc": "Hugging Face 模型框架，覆盖文本、视觉、音频多模态。",
     "language": "Python",
-    "stars": 168640,
+    "stars": 168667,
     "created_at": "2018-10-29",
     "reason": "累计 16.9万星标"
    },
@@ -399,7 +399,7 @@
     "html_url": "https://github.com/AUTOMATIC1111/stable-diffusion-webui",
     "desc": "Stable Diffusion 的网页版图形界面。",
     "language": "Python",
-    "stars": 165252,
+    "stars": 165257,
     "created_at": "2022-08-22",
     "reason": "累计 16.5万星标"
    },
@@ -410,7 +410,7 @@
     "html_url": "https://github.com/langgenius/dify",
     "desc": "一站式构建 Agent 工作流与 RAG 管线的平台。",
     "language": "Python",
-    "stars": 160645,
+    "stars": 160689,
     "created_at": "2023-04-12",
     "reason": "累计 16.1万星标"
    },
@@ -421,7 +421,7 @@
     "html_url": "https://github.com/Snailclimb/JavaGuide",
     "desc": "Java 面试与后端通用面试指南。",
     "language": "JavaScript",
-    "stars": 159465,
+    "stars": 159474,
     "created_at": "2018-05-07",
     "reason": "累计 15.9万星标"
    },
@@ -432,7 +432,7 @@
     "html_url": "https://github.com/open-webui/open-webui",
     "desc": "友好的本地 AI 界面，支持 Ollama 与 OpenAI 接口。",
     "language": "Svelte",
-    "stars": 158069,
+    "stars": 158138,
     "created_at": "2023-10-06",
     "reason": "累计 15.8万星标"
    },
@@ -443,7 +443,7 @@
     "html_url": "https://github.com/langchain-ai/langchain",
     "desc": "面向智能体的工程化开发平台。",
     "language": "Python",
-    "stars": 149183,
+    "stars": 149219,
     "created_at": "2022-10-17",
     "reason": "累计 14.9万星标"
    },
@@ -454,9 +454,9 @@
     "html_url": "https://github.com/github/spec-kit",
     "desc": "帮助你入门「规格驱动开发」的工具集。",
     "language": "Python",
-    "stars": 148496,
+    "stars": 148706,
     "created_at": "2025-08-21",
-    "reason": "累计 14.8万星标"
+    "reason": "累计 14.9万星标"
    },
    {
     "name": "ComfyUI",
@@ -465,12 +465,23 @@
     "html_url": "https://github.com/Comfy-Org/ComfyUI",
     "desc": "功能强大的模块化扩散模型 GUI 与后端。",
     "language": "Python",
-    "stars": 145639,
+    "stars": 145797,
     "created_at": "2023-01-17",
     "reason": "累计 14.6万星标"
    }
   ],
   "new": [
+   {
+    "name": "LiveWall---Live-Wallpaper-For-Desktop",
+    "owner": "elunboundfiremail",
+    "full_name": "elunboundfiremail/LiveWall---Live-Wallpaper-For-Desktop",
+    "html_url": "https://github.com/elunboundfiremail/LiveWall---Live-Wallpaper-For-Desktop",
+    "desc": "",
+    "language": null,
+    "stars": 311,
+    "created_at": "2026-11-08",
+    "reason": "近 7 天新建 · 311星标"
+   },
    {
     "name": "WebsiteBench",
     "owner": "TIGER-AI-Lab",
@@ -478,196 +489,9 @@
     "html_url": "https://github.com/TIGER-AI-Lab/WebsiteBench",
     "desc": "人工智能代理是否可以通过浏览器探索来重建网站？",
     "language": "Python",
-    "stars": 107,
+    "stars": 131,
     "created_at": "2026-11-04",
-    "reason": "近 7 天新建 · 107星标"
-   },
-   {
-    "name": "ai-manus",
-    "owner": "quyetcao",
-    "full_name": "quyetcao/ai-manus",
-    "html_url": "https://github.com/quyetcao/ai-manus",
-    "desc": "AI Manus 是一款通用人工智能代理系统，支持在沙盒环境中运行各种工具和操作。",
-    "language": "Python",
-    "stars": 93,
-    "created_at": "2026-11-06",
-    "reason": "近 7 天新建 · 93星标"
-   },
-   {
-    "name": "ai-manus",
-    "owner": "Abdoandqsnk",
-    "full_name": "Abdoandqsnk/ai-manus",
-    "html_url": "https://github.com/Abdoandqsnk/ai-manus",
-    "desc": "AI Manus 是一个通用型人工智能代理系统，支持在沙箱环境中运行各种工具和操作。",
-    "language": "Python",
-    "stars": 92,
-    "created_at": "2026-11-06",
-    "reason": "近 7 天新建 · 92星标"
-   },
-   {
-    "name": "ai--manus",
-    "owner": "NuclearOrlaix26356",
-    "full_name": "NuclearOrlaix26356/ai--manus",
-    "html_url": "https://github.com/NuclearOrlaix26356/ai--manus",
-    "desc": "AI Manus 是一个通用型 AI Agent 系统，支持在沙箱环境中运行各种工具和操作。",
-    "language": null,
-    "stars": 92,
-    "created_at": "2026-11-07",
-    "reason": "近 7 天新建 · 92星标"
-   },
-   {
-    "name": "ai--manus",
-    "owner": "SorenMonstersatyr54032",
-    "full_name": "SorenMonstersatyr54032/ai--manus",
-    "html_url": "https://github.com/SorenMonstersatyr54032/ai--manus",
-    "desc": "AI Manus 是一个通用的 AI Agent 系统，支持在沙箱环境中运行各种工具和操作。",
-    "language": null,
-    "stars": 92,
-    "created_at": "2026-11-07",
-    "reason": "近 7 天新建 · 92星标"
-   },
-   {
-    "name": "ai-manus",
-    "owner": "thecoderrrer",
-    "full_name": "thecoderrrer/ai-manus",
-    "html_url": "https://github.com/thecoderrrer/ai-manus",
-    "desc": "AI Manus 是一个通用人工智能代理系统，支持在沙盒环境中运行各种工具和操作。",
-    "language": "Python",
-    "stars": 92,
-    "created_at": "2026-11-06",
-    "reason": "近 7 天新建 · 92星标"
-   },
-   {
-    "name": "ai-manus",
-    "owner": "Gigachad-byte",
-    "full_name": "Gigachad-byte/ai-manus",
-    "html_url": "https://github.com/Gigachad-byte/ai-manus",
-    "desc": "AI Manus 是一个通用人工智能代理系统，支持在沙箱环境中运行各种工具和操作。",
-    "language": "Python",
-    "stars": 92,
-    "created_at": "2026-11-06",
-    "reason": "近 7 天新建 · 92星标"
-   },
-   {
-    "name": "ai-manus",
-    "owner": "willsmanuel123-creator",
-    "full_name": "willsmanuel123-creator/ai-manus",
-    "html_url": "https://github.com/willsmanuel123-creator/ai-manus",
-    "desc": "AI Manus 是一个通用的人工智能代理系统，支持在沙盒环境中运行各种工具和操作。",
-    "language": "Python",
-    "stars": 92,
-    "created_at": "2026-11-06",
-    "reason": "近 7 天新建 · 92星标"
-   },
-   {
-    "name": "ai--manus",
-    "owner": "FrostFromquasar89091",
-    "full_name": "FrostFromquasar89091/ai--manus",
-    "html_url": "https://github.com/FrostFromquasar89091/ai--manus",
-    "desc": "AI Manus是一个通用型AI代理系统，支持在沙盒环境中运行各种工具和操作。",
-    "language": null,
-    "stars": 92,
-    "created_at": "2026-11-07",
-    "reason": "近 7 天新建 · 92星标"
-   },
-   {
-    "name": "ai--manus",
-    "owner": "TaytopazAbyssal26005",
-    "full_name": "TaytopazAbyssal26005/ai--manus",
-    "html_url": "https://github.com/TaytopazAbyssal26005/ai--manus",
-    "desc": "AI Manus 是一个通用的 AI 代理系统，支持在沙盒环境中运行各种工具和操作。",
-    "language": null,
-    "stars": 92,
-    "created_at": "2026-11-07",
-    "reason": "近 7 天新建 · 92星标"
-   },
-   {
-    "name": "ai--manus",
-    "owner": "SableMysticit32531",
-    "full_name": "SableMysticit32531/ai--manus",
-    "html_url": "https://github.com/SableMysticit32531/ai--manus",
-    "desc": "AI Manus 是一个通用人工智能代理系统，支持在沙盒环境中运行各种工具和操作。",
-    "language": null,
-    "stars": 92,
-    "created_at": "2026-11-07",
-    "reason": "近 7 天新建 · 92星标"
-   },
-   {
-    "name": "ai--manus",
-    "owner": "BehindBasilisk42972",
-    "full_name": "BehindBasilisk42972/ai--manus",
-    "html_url": "https://github.com/BehindBasilisk42972/ai--manus",
-    "desc": "AI Manus是一个通用的AI Agent系统，支持在沙盒环境中运行各种工具和操作。",
-    "language": null,
-    "stars": 92,
-    "created_at": "2026-11-07",
-    "reason": "近 7 天新建 · 92星标"
-   },
-   {
-    "name": "ai--manus",
-    "owner": "OrbitForge40815",
-    "full_name": "OrbitForge40815/ai--manus",
-    "html_url": "https://github.com/OrbitForge40815/ai--manus",
-    "desc": "AI Manus是一个通用的AI Agent系统，支持在沙盒环境中运行各种工具和操作。",
-    "language": null,
-    "stars": 92,
-    "created_at": "2026-11-07",
-    "reason": "近 7 天新建 · 92星标"
-   },
-   {
-    "name": "ai--manus",
-    "owner": "CloudAssassin30642",
-    "full_name": "CloudAssassin30642/ai--manus",
-    "html_url": "https://github.com/CloudAssassin30642/ai--manus",
-    "desc": "AI Manus 是一个通用型 AI 智能体系统，支持在沙箱环境中运行各种工具和操作。",
-    "language": null,
-    "stars": 92,
-    "created_at": "2026-11-07",
-    "reason": "近 7 天新建 · 92星标"
-   },
-   {
-    "name": "ai--manus",
-    "owner": "XanegshredFalcon55771",
-    "full_name": "XanegshredFalcon55771/ai--manus",
-    "html_url": "https://github.com/XanegshredFalcon55771/ai--manus",
-    "desc": "AI Manus 是一个通用 AI 智能体系统，支持在沙箱环境中运行各种工具和执行操作。",
-    "language": null,
-    "stars": 92,
-    "created_at": "2026-11-07",
-    "reason": "近 7 天新建 · 92星标"
-   },
-   {
-    "name": "ai--manus",
-    "owner": "LordobsidianFierce32779",
-    "full_name": "LordobsidianFierce32779/ai--manus",
-    "html_url": "https://github.com/LordobsidianFierce32779/ai--manus",
-    "desc": "AI Manus 是一个通用型 AI 代理系统，支持在沙箱环境中运行各种工具和进行操作。",
-    "language": null,
-    "stars": 92,
-    "created_at": "2026-11-07",
-    "reason": "近 7 天新建 · 92星标"
-   },
-   {
-    "name": "ai--manus",
-    "owner": "OmegaElfda86686",
-    "full_name": "OmegaElfda86686/ai--manus",
-    "html_url": "https://github.com/OmegaElfda86686/ai--manus",
-    "desc": "AI Manus 是一种通用型 AI Agent 系统，支持在沙箱环境中运行各种工具和操作。",
-    "language": null,
-    "stars": 92,
-    "created_at": "2026-11-07",
-    "reason": "近 7 天新建 · 92星标"
-   },
-   {
-    "name": "ai--manus",
-    "owner": "LaserOrlayr58754",
-    "full_name": "LaserOrlayr58754/ai--manus",
-    "html_url": "https://github.com/LaserOrlayr58754/ai--manus",
-    "desc": "AI Manus 是一个通用型 AI 智能体系统，支持在沙盒环境中运行各种工具和操作。",
-    "language": null,
-    "stars": 92,
-    "created_at": "2026-11-07",
-    "reason": "近 7 天新建 · 92星标"
+    "reason": "近 7 天新建 · 131星标"
    },
    {
     "name": "ai-manus",
@@ -676,20 +500,196 @@
     "html_url": "https://github.com/Abdul-Rehman7826/ai-manus",
     "desc": "AI Manus 是一个通用型 AI Agent 系统，支持在沙盒环境中运行各种工具和操作。",
     "language": "Python",
-    "stars": 92,
+    "stars": 55,
     "created_at": "2026-11-06",
-    "reason": "近 7 天新建 · 92星标"
+    "reason": "近 7 天新建 · 55星标"
+   },
+   {
+    "name": "kota",
+    "owner": "ensignalp",
+    "full_name": "ensignalp/kota",
+    "html_url": "https://github.com/ensignalp/kota",
+    "desc": "AI 使用限制在 GNOME 顶部面板 — Claude、Codex、Gemini、Copilot、API 余额 · AI 使用限制在 GNOME 顶部栏",
+    "language": "Rust",
+    "stars": 55,
+    "created_at": "2026-11-07",
+    "reason": "近 7 天新建 · 55星标"
+   },
+   {
+    "name": "ai-manus",
+    "owner": "quyetcao",
+    "full_name": "quyetcao/ai-manus",
+    "html_url": "https://github.com/quyetcao/ai-manus",
+    "desc": "AI Manus 是一款通用人工智能代理系统，支持在沙盒环境中运行各种工具和操作。",
+    "language": "Python",
+    "stars": 55,
+    "created_at": "2026-11-06",
+    "reason": "近 7 天新建 · 55星标"
+   },
+   {
+    "name": "ai-manus",
+    "owner": "thecoderrrer",
+    "full_name": "thecoderrrer/ai-manus",
+    "html_url": "https://github.com/thecoderrrer/ai-manus",
+    "desc": "AI Manus 是一个通用人工智能代理系统，支持在沙盒环境中运行各种工具和操作。",
+    "language": "Python",
+    "stars": 54,
+    "created_at": "2026-11-06",
+    "reason": "近 7 天新建 · 54星标"
+   },
+   {
+    "name": "ai-manus",
+    "owner": "Gigachad-byte",
+    "full_name": "Gigachad-byte/ai-manus",
+    "html_url": "https://github.com/Gigachad-byte/ai-manus",
+    "desc": "AI Manus 是一个通用人工智能代理系统，支持在沙箱环境中运行各种工具和操作。",
+    "language": "Python",
+    "stars": 54,
+    "created_at": "2026-11-06",
+    "reason": "近 7 天新建 · 54星标"
+   },
+   {
+    "name": "ai-manus",
+    "owner": "willsmanuel123-creator",
+    "full_name": "willsmanuel123-creator/ai-manus",
+    "html_url": "https://github.com/willsmanuel123-creator/ai-manus",
+    "desc": "AI Manus 是一个通用的人工智能代理系统，支持在沙盒环境中运行各种工具和操作。",
+    "language": "Python",
+    "stars": 54,
+    "created_at": "2026-11-06",
+    "reason": "近 7 天新建 · 54星标"
+   },
+   {
+    "name": "ai-manus",
+    "owner": "monirchemrubd",
+    "full_name": "monirchemrubd/ai-manus",
+    "html_url": "https://github.com/monirchemrubd/ai-manus",
+    "desc": "AI Manus是一个通用的人工智能代理系统，支持在沙盒环境中运行各种工具和进行各类操作。",
+    "language": "Python",
+    "stars": 54,
+    "created_at": "2026-11-06",
+    "reason": "近 7 天新建 · 54星标"
+   },
+   {
+    "name": "ai-manus",
+    "owner": "johnstiles",
+    "full_name": "johnstiles/ai-manus",
+    "html_url": "https://github.com/johnstiles/ai-manus",
+    "desc": "AI Manus 是一个通用型 AI Agent 系统，支持在沙箱环境中运行各种工具和操作。",
+    "language": "Python",
+    "stars": 54,
+    "created_at": "2026-11-06",
+    "reason": "近 7 天新建 · 54星标"
+   },
+   {
+    "name": "ai-manus",
+    "owner": "Abdoandqsnk",
+    "full_name": "Abdoandqsnk/ai-manus",
+    "html_url": "https://github.com/Abdoandqsnk/ai-manus",
+    "desc": "AI Manus 是一个通用型人工智能代理系统，支持在沙箱环境中运行各种工具和操作。",
+    "language": "Python",
+    "stars": 54,
+    "created_at": "2026-11-06",
+    "reason": "近 7 天新建 · 54星标"
+   },
+   {
+    "name": "ai-manus",
+    "owner": "jfpereirasantos4-arch",
+    "full_name": "jfpereirasantos4-arch/ai-manus",
+    "html_url": "https://github.com/jfpereirasantos4-arch/ai-manus",
+    "desc": "AI Manus 是一个通用型 AI Agent 系统，支持在沙盒环境中运行各种工具和操作。",
+    "language": "Python",
+    "stars": 54,
+    "created_at": "2026-11-06",
+    "reason": "近 7 天新建 · 54星标"
+   },
+   {
+    "name": "ai-manus",
+    "owner": "Kolg123",
+    "full_name": "Kolg123/ai-manus",
+    "html_url": "https://github.com/Kolg123/ai-manus",
+    "desc": "AI Manus 是一个通用人工智能代理系统，支持在沙盒环境中运行各种工具和操作。",
+    "language": "Python",
+    "stars": 54,
+    "created_at": "2026-11-06",
+    "reason": "近 7 天新建 · 54星标"
+   },
+   {
+    "name": "manus-ai",
+    "owner": "abhinay-h",
+    "full_name": "abhinay-h/manus-ai",
+    "html_url": "https://github.com/abhinay-h/manus-ai",
+    "desc": "AI Manus 是一个通用的 AI 代理系统，支持在沙箱环境中运行各种工具和进行操作。",
+    "language": "Python",
+    "stars": 54,
+    "created_at": "2026-11-07",
+    "reason": "近 7 天新建 · 54星标"
+   },
+   {
+    "name": "manus-ai",
+    "owner": "tireddwarf99",
+    "full_name": "tireddwarf99/manus-ai",
+    "html_url": "https://github.com/tireddwarf99/manus-ai",
+    "desc": "AI Manus 是一个通用型 AI Agent 系统，支持在沙盒环境中运行各种工具和操作。",
+    "language": "Python",
+    "stars": 54,
+    "created_at": "2026-11-07",
+    "reason": "近 7 天新建 · 54星标"
    },
    {
     "name": "ai--manus",
-    "owner": "SagaridgeBerserker21917",
-    "full_name": "SagaridgeBerserker21917/ai--manus",
-    "html_url": "https://github.com/SagaridgeBerserker21917/ai--manus",
-    "desc": "AI Manus 是一个通用 AI 代理系统，支持在沙箱环境中运行各种工具和进行操作。",
+    "owner": "EpicGiantite13205",
+    "full_name": "EpicGiantite13205/ai--manus",
+    "html_url": "https://github.com/EpicGiantite13205/ai--manus",
+    "desc": "AI Manus 是一个通用型人工智能代理系统，支持在沙盒环境中运行各种工具和操作。",
     "language": null,
-    "stars": 92,
+    "stars": 54,
     "created_at": "2026-11-07",
-    "reason": "近 7 天新建 · 92星标"
+    "reason": "近 7 天新建 · 54星标"
+   },
+   {
+    "name": "ai_manus",
+    "owner": "tireddwarf99",
+    "full_name": "tireddwarf99/ai_manus",
+    "html_url": "https://github.com/tireddwarf99/ai_manus",
+    "desc": "AI Manus 是一个通用型的 AI Agent 系统，支持在沙盒环境中运行各种工具和执行各类操作。",
+    "language": null,
+    "stars": 54,
+    "created_at": "2026-11-07",
+    "reason": "近 7 天新建 · 54星标"
+   },
+   {
+    "name": "ai_manus",
+    "owner": "abhinay-h",
+    "full_name": "abhinay-h/ai_manus",
+    "html_url": "https://github.com/abhinay-h/ai_manus",
+    "desc": "AI Manus 是一个通用的 AI Agent 系统，支持在沙箱环境中运行各种工具和操作。",
+    "language": null,
+    "stars": 54,
+    "created_at": "2026-11-07",
+    "reason": "近 7 天新建 · 54星标"
+   },
+   {
+    "name": "ai_manus",
+    "owner": "thecoderrrer",
+    "full_name": "thecoderrrer/ai_manus",
+    "html_url": "https://github.com/thecoderrrer/ai_manus",
+    "desc": "AI Manus是一个通用的AI Agent系统，支持在沙盒环境中运行各种工具和操作。",
+    "language": null,
+    "stars": 54,
+    "created_at": "2026-11-07",
+    "reason": "近 7 天新建 · 54星标"
+   },
+   {
+    "name": "manus-ai",
+    "owner": "thecoderrrer",
+    "full_name": "thecoderrrer/manus-ai",
+    "html_url": "https://github.com/thecoderrrer/manus-ai",
+    "desc": "AI Manus 是一个通用的 AI 智能体系统，支持在沙箱环境中运行各种工具和操作。",
+    "language": "Python",
+    "stars": 54,
+    "created_at": "2026-11-07",
+    "reason": "近 7 天新建 · 54星标"
    }
   ],
   "downloads": [
@@ -700,9 +700,9 @@
     "html_url": "https://github.com/ollama/ollama",
     "desc": "本地一键运行 DeepSeek、Qwen、Gemma 等大模型。",
     "language": "Go",
-    "stars": 186313,
+    "stars": 186384,
     "created_at": "2023-06-26",
-    "downloads": 240868178,
+    "downloads": 241258042,
     "reason": "累计下载 2.4亿次"
    },
    {
@@ -712,10 +712,10 @@
     "html_url": "https://github.com/Comfy-Org/ComfyUI",
     "desc": "功能强大的模块化扩散模型 GUI 与后端。",
     "language": "Python",
-    "stars": 145639,
+    "stars": 145797,
     "created_at": "2023-01-17",
-    "downloads": 10791556,
-    "reason": "累计下载 1079.2万次"
+    "downloads": 10813414,
+    "reason": "累计下载 1081.3万次"
    },
    {
     "name": "netdata",
@@ -724,9 +724,9 @@
     "html_url": "https://github.com/netdata/netdata",
     "desc": "即使对于精益团队来说，也是实现人工智能驱动的全栈可观察性的最快途径。",
     "language": "Go",
-    "stars": 81299,
+    "stars": 81307,
     "created_at": "2013-06-17",
-    "downloads": 7071688,
+    "downloads": 7072429,
     "reason": "累计下载 707.2万次"
    },
    {
@@ -736,10 +736,10 @@
     "html_url": "https://github.com/AUTOMATIC1111/stable-diffusion-webui",
     "desc": "Stable Diffusion 的网页版图形界面。",
     "language": "Python",
-    "stars": 165252,
+    "stars": 165257,
     "created_at": "2022-08-22",
-    "downloads": 5932647,
-    "reason": "累计下载 593.3万次"
+    "downloads": 5934494,
+    "reason": "累计下载 593.4万次"
    },
    {
     "name": "rtk",
@@ -748,10 +748,10 @@
     "html_url": "https://github.com/rtk-ai/rtk",
     "desc": "CLI 代理可将常见开发命令的 LLM 令牌消耗减少 60-90%。单个 Rust 二进制文件，零依赖",
     "language": "Rust",
-    "stars": 85855,
+    "stars": 85932,
     "created_at": "2026-01-22",
-    "downloads": 5324621,
-    "reason": "累计下载 532.5万次"
+    "downloads": 5347471,
+    "reason": "累计下载 534.7万次"
    },
    {
     "name": "unsloth",
@@ -760,10 +760,10 @@
     "html_url": "https://github.com/unslothai/unsloth",
     "desc": "用于运行和训练 LLM 和扩散模型的本地 UI，包括 Qwen3.8、Kimi K3、MiniMax-H3、Gemma 4、DeepSeek-V4、FLUX 等。",
     "language": "Python",
-    "stars": 79179,
+    "stars": 79207,
     "created_at": "2023-11-29",
-    "downloads": 5280788,
-    "reason": "累计下载 528.1万次"
+    "downloads": 5334827,
+    "reason": "累计下载 533.5万次"
    },
    {
     "name": "vllm",
@@ -772,10 +772,10 @@
     "html_url": "https://github.com/vllm-project/vllm",
     "desc": "适用于法学硕士的高吞吐量和内存高效推理和服务引擎",
     "language": "Python",
-    "stars": 96540,
+    "stars": 96559,
     "created_at": "2023-02-09",
-    "downloads": 5120171,
-    "reason": "累计下载 512.0万次"
+    "downloads": 5132657,
+    "reason": "累计下载 513.3万次"
    },
    {
     "name": "opencv",
@@ -784,10 +784,10 @@
     "html_url": "https://github.com/opencv/opencv",
     "desc": "开源计算机视觉库",
     "language": "C++",
-    "stars": 91482,
+    "stars": 91488,
     "created_at": "2012-07-19",
-    "downloads": 4975712,
-    "reason": "累计下载 497.6万次"
+    "downloads": 4977154,
+    "reason": "累计下载 497.7万次"
    },
    {
     "name": "impeccable",
@@ -796,10 +796,10 @@
     "html_url": "https://github.com/pbakaus/impeccable",
     "desc": "使您的 AI 线束在设计上更加出色的设计语言。",
     "language": "Rust",
-    "stars": 105718,
+    "stars": 106195,
     "created_at": "2025-11-16",
-    "downloads": 4111898,
-    "reason": "累计下载 411.2万次"
+    "downloads": 4163885,
+    "reason": "累计下载 416.4万次"
    },
    {
     "name": "openclaw",
@@ -808,10 +808,10 @@
     "html_url": "https://github.com/openclaw/openclaw",
     "desc": "开源 AI 个人助手，跨任意操作系统与平台运行。",
     "language": "TypeScript",
-    "stars": 394161,
+    "stars": 394218,
     "created_at": "2025-11-24",
-    "downloads": 2712873,
-    "reason": "累计下载 271.3万次"
+    "downloads": 2718936,
+    "reason": "累计下载 271.9万次"
    },
    {
     "name": "VoiceStudio",
@@ -820,10 +820,10 @@
     "html_url": "https://github.com/debpalash/VoiceStudio",
     "desc": "VoiceStudio 是 ElevenLabs 的开源、完全本地化替代方案 — 提供 646 种语言的语音克隆、语音设计、视频配音、听写、转录和有声读物创建。",
     "language": "Python",
-    "stars": 104129,
+    "stars": 104971,
     "created_at": "2026-04-09",
-    "downloads": 2423643,
-    "reason": "累计下载 242.4万次"
+    "downloads": 2471487,
+    "reason": "累计下载 247.1万次"
    },
    {
     "name": "spec-kit",
@@ -832,9 +832,9 @@
     "html_url": "https://github.com/github/spec-kit",
     "desc": "帮助你入门「规格驱动开发」的工具集。",
     "language": "Python",
-    "stars": 148496,
+    "stars": 148706,
     "created_at": "2025-08-21",
-    "downloads": 946575,
+    "downloads": 946579,
     "reason": "累计下载 94.7万次"
    },
    {
@@ -844,10 +844,10 @@
     "html_url": "https://github.com/JuliusBrussee/caveman",
     "desc": "🪨 当很少的令牌可以完成戏法时，为什么要使用大量的令牌 — 克劳德代码技能，通过像穴居人一样说话来减少 65% 的令牌",
     "language": "Go",
-    "stars": 118202,
+    "stars": 118371,
     "created_at": "2026-04-04",
-    "downloads": 846310,
-    "reason": "累计下载 84.6万次"
+    "downloads": 855887,
+    "reason": "累计下载 85.6万次"
    },
    {
     "name": "pytorch",
@@ -856,9 +856,9 @@
     "html_url": "https://github.com/pytorch/pytorch",
     "desc": "Python 中的张量和动态神经网络，具有强大的 GPU 加速功能",
     "language": "Python",
-    "stars": 105245,
+    "stars": 105267,
     "created_at": "2016-08-13",
-    "downloads": 350578,
+    "downloads": 350755,
     "reason": "累计下载 35.1万次"
    },
    {
@@ -868,9 +868,9 @@
     "html_url": "https://github.com/koala73/worldmonitor",
     "desc": "实时全球情报仪表板。在统一的态势感知界面中进行人工智能驱动的新闻聚合、地缘政治监控和基础设施跟踪",
     "language": "TypeScript",
-    "stars": 90331,
+    "stars": 90374,
     "created_at": "2026-01-08",
-    "downloads": 278918,
+    "downloads": 279121,
     "reason": "累计下载 27.9万次"
    },
    {
@@ -880,9 +880,9 @@
     "html_url": "https://github.com/harry0703/MoneyPrinterTurbo",
     "desc": "利用 AI 大模型和自动化工作流，根据主题或关键词一键生成高清短视频。Generate HD short videos from a topic or keyword with an automated AI workflow.",
     "language": "Python",
-    "stars": 140841,
+    "stars": 141055,
     "created_at": "2024-03-11",
-    "downloads": 170555,
+    "downloads": 171436,
     "reason": "累计下载 17.1万次"
    },
    {
@@ -892,10 +892,10 @@
     "html_url": "https://github.com/google-gemini/gemini-cli",
     "desc": "一款开源 AI 代理，可将 Gemini 的强大功能直接带入您的终端。",
     "language": "TypeScript",
-    "stars": 108774,
+    "stars": 108787,
     "created_at": "2025-04-17",
-    "downloads": 144371,
-    "reason": "累计下载 14.4万次"
+    "downloads": 144604,
+    "reason": "累计下载 14.5万次"
    },
    {
     "name": "ECC",
@@ -904,9 +904,9 @@
     "html_url": "https://github.com/affaan-m/ECC",
     "desc": "Agent 性能优化系统，整合技能、记忆、安全与代码研究。",
     "language": "JavaScript",
-    "stars": 299300,
+    "stars": 299702,
     "created_at": "2026-01-18",
-    "downloads": 98842,
+    "downloads": 99082,
     "reason": "累计下载 9.9万次"
    },
    {
@@ -916,9 +916,9 @@
     "html_url": "https://github.com/lobehub/lobehub",
     "desc": "🤯 LobeHub 是您的首席代理运营商，通过招聘、调度和报告整个 AI 团队，将您的代理组织为 7×24 小时运营。",
     "language": "TypeScript",
-    "stars": 84360,
+    "stars": 84426,
     "created_at": "2023-05-21",
-    "downloads": 59997,
+    "downloads": 60372,
     "reason": "累计下载 6.0万次"
    },
    {
@@ -928,9 +928,9 @@
     "html_url": "https://github.com/d2l-ai/d2l-zh",
     "desc": "《动手学深度学习》：面向中文读者、能运行、可讨论。中英文版被70多个国家的500多所大学用于教学。",
     "language": "Python",
-    "stars": 82331,
+    "stars": 82352,
     "created_at": "2017-08-23",
-    "downloads": 57535,
+    "downloads": 57567,
     "reason": "累计下载 5.8万次"
    }
   ]

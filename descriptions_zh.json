@@ -564,5 +564,8 @@
  "viet140612/ai-manus": "AI Manus 是一个通用人工智能代理系统，支持在沙盒环境中运行各种工具和操作。",
  "professorsolderin/project-lighthouse": "灯塔项目——将AI的光芒照耀于历史从未阅读过的书页：高斯、黎曼、欧拉等笔记的转录、深度解读与研究发现",
  "DespiteVoltcloud/InterviewCopilot-rpocket-team": "一款旨在弥合学习与实现梦想工作之间差距的教育科技应用",
- "joeseesun/xnews": "X 新闻——海外创始人发帖及 AI 视频，以巧木中文改写"
+ "joeseesun/xnews": "X 新闻——海外创始人发帖及 AI 视频，以巧木中文改写",
+ "a2ui-project/a2ui": "开源生成式UI框架：智能体流式传输布局数据，应用通过React、Angular、Lit、Flutter、SwiftUI和Jetpack Compose中的原生组件进行渲染。",
+ "8hjkkwikl8/ai-portfolio": "三个可运行的 AI 工程项目：可追溯 RAG、提示词评测与受守护的 NL2SQL 分析",
+ "osarhiemenaiyevbosa-cloud/ai-manus": "AI Manus 是一个通用的人工智能代理系统，支持在沙箱环境中运行各种工具和执行操作。"
 }

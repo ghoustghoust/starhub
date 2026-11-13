@@ -1,6 +1,6 @@
 {
  "schema_version": 2,
- "updated_at": "2026-11-12T08:08:04.400959Z",
+ "updated_at": "2026-11-13T07:46:42.461518Z",
  "map": {
   "lijigang/ljg-skills": "agent",
   "Minireel/HGhub": "video",
@@ -183,7 +183,9 @@
   "WoYun520/gif-factory": "content",
   "imputnet/cobalt": "download",
   "youyukongzhong/HGhub": "assistant",
-  "XiaoYouChR/Ghost-Downloader-3": "download"
+  "XiaoYouChR/Ghost-Downloader-3": "download",
+  "zxsos/HGhubX": "tools",
+  "togg53192-cmd/jailbreaks": "tools"
  },
  "labels": {
   "agent": "AI Agent & Skills",

@@ -1,10 +1,10 @@
 {
  "schema_version": 2,
- "last_success_at": "2026-11-12T08:08:04.400959Z",
+ "last_success_at": "2026-11-13T07:46:42.461518Z",
  "sources": {
   "github": {
    "status": "ok",
-   "item_count": 182
+   "item_count": 184
   },
   "ai_daily": {
    "status": "unknown"

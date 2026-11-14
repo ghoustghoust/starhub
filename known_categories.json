@@ -174,7 +174,6 @@
  "op7418/dsh-guizang-design": "frontend",
  "woniuniuniu/dsh-media-desk": "video",
  "z91772524-ai/pojia-next": "assistant",
- "OpenSelena/omniget": "media",
  "harry0703/MangoDisk": "business",
  "Predidit/Kazumi": "download",
  "WoYun520/gif-factory": "content",
@@ -182,5 +181,6 @@
  "youyukongzhong/HGhub": "assistant",
  "XiaoYouChR/Ghost-Downloader-3": "download",
  "zxsos/HGhubX": "tools",
- "togg53192-cmd/jailbreaks": "tools"
+ "togg53192-cmd/jailbreaks": "tools",
+ "OpenSelena/libreget": "media"
 }

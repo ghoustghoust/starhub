@@ -183,5 +183,9 @@
  "zxsos/HGhubX": "tools",
  "togg53192-cmd/jailbreaks": "tools",
  "OpenSelena/libreget": "media",
- "yueliu1999/Awesome-Jailbreak-on-LLMs": "tools"
+ "yueliu1999/Awesome-Jailbreak-on-LLMs": "tools",
+ "lingdongbudong/Comfyui-Anima-Wardrobe-V6": "image",
+ "Graphify-Labs/graphify": "agent",
+ "lingdongbudong/Comfyui-K2-Editorial": "image",
+ "goohai/Goohaitools-comfyui": "image"
 }

@@ -1,7 +1,7 @@
 {
  "schema_version": 2,
- "generated_at": "2026-11-19T08:36:11.468890Z",
- "updated": "2026-11-19 16:36",
+ "generated_at": "2026-11-20T08:18:55.433862Z",
+ "updated": "2026-11-20 16:18",
  "summary": {
   "text": ""
  },
@@ -14,34 +14,10 @@
     "html_url": "https://github.com/yetone/magpie",
     "desc": "每个代理的模型。一处。来自菜单栏的 DeepSeek 上的 Codex、Kimi 上的 Claude Code。",
     "language": "Go",
-    "stars": 38849,
+    "stars": 39288,
     "created_at": "2026-09-23",
-    "delta": 445,
-    "reason": "今日涨星 +445"
-   },
-   {
-    "name": "heretic",
-    "owner": "p-e-w",
-    "full_name": "p-e-w/heretic",
-    "html_url": "https://github.com/p-e-w/heretic",
-    "desc": "全自动消除语言模型审查",
-    "language": "Python",
-    "stars": 42074,
-    "created_at": "2025-09-21",
-    "delta": 349,
-    "reason": "今日涨星 +349"
-   },
-   {
-    "name": "iFixAi",
-    "owner": "ifixai-ai",
-    "full_name": "ifixai-ai/iFixAi",
-    "html_url": "https://github.com/ifixai-ai/iFixAi",
-    "desc": "AI 代理的独立审计。无论由人工还是代理自身运行，都将回答 AI 代理经济中最关键的问题：该代理是否在做它应该做的事？借助 iFixAi，您可以在不到 120 秒的时间内获得答案。",
-    "language": "Python",
-    "stars": 46665,
-    "created_at": "2026-04-27",
-    "delta": 281,
-    "reason": "今日涨星 +281"
+    "delta": 439,
+    "reason": "今日涨星 +439"
    },
    {
     "name": "dsh-desktop",
@@ -50,22 +26,22 @@
     "html_url": "https://github.com/dataelement/dsh-desktop",
     "desc": "DSHDesktop：DeepSeek Harness Desktop / DeepSeek Harness 桌面版",
     "language": "JavaScript",
-    "stars": 19972,
+    "stars": 20168,
     "created_at": "2026-08-13",
-    "delta": 225,
-    "reason": "今日涨星 +225"
+    "delta": 196,
+    "reason": "今日涨星 +196"
    },
    {
-    "name": "learn-harness-engineering",
-    "owner": "walkinglabs",
-    "full_name": "walkinglabs/learn-harness-engineering",
-    "html_url": "https://github.com/walkinglabs/learn-harness-engineering",
-    "desc": "线束工程初学者教程，从0到1",
-    "language": "TypeScript",
-    "stars": 25507,
-    "created_at": "2026-03-29",
-    "delta": 154,
-    "reason": "今日涨星 +154"
+    "name": "heretic",
+    "owner": "p-e-w",
+    "full_name": "p-e-w/heretic",
+    "html_url": "https://github.com/p-e-w/heretic",
+    "desc": "全自动消除语言模型审查",
+    "language": "Python",
+    "stars": 42260,
+    "created_at": "2025-09-21",
+    "delta": 186,
+    "reason": "今日涨星 +186"
    },
    {
     "name": "artcraft",
@@ -74,10 +50,22 @@
     "html_url": "https://github.com/storytold/artcraft",
     "desc": "ArtCraft是一款专为艺术家、设计师和电影制作人打造的创意制作引擎。",
     "language": "Rust",
-    "stars": 41581,
+    "stars": 41728,
     "created_at": "2022-03-31",
-    "delta": 139,
-    "reason": "今日涨星 +139"
+    "delta": 147,
+    "reason": "今日涨星 +147"
+   },
+   {
+    "name": "learn-harness-engineering",
+    "owner": "walkinglabs",
+    "full_name": "walkinglabs/learn-harness-engineering",
+    "html_url": "https://github.com/walkinglabs/learn-harness-engineering",
+    "desc": "线束工程初学者教程，从0到1",
+    "language": "TypeScript",
+    "stars": 25618,
+    "created_at": "2026-03-29",
+    "delta": 111,
+    "reason": "今日涨星 +111"
    },
    {
     "name": "mcp-for-blender",
@@ -86,34 +74,22 @@
     "html_url": "https://github.com/ahujasid/mcp-for-blender",
     "desc": "社区插件，用于通过任意你选择的LLM来控制Blender 3D。与官方Blender基金会无关。",
     "language": "Python",
-    "stars": 34980,
+    "stars": 35088,
     "created_at": "2025-03-07",
-    "delta": 117,
-    "reason": "今日涨星 +117"
+    "delta": 108,
+    "reason": "今日涨星 +108"
    },
    {
-    "name": "frigate",
-    "owner": "blakeblackshear",
-    "full_name": "blakeblackshear/frigate",
-    "html_url": "https://github.com/blakeblackshear/frigate",
-    "desc": "具有 IP 摄像机实时本地对象检测功能的 NVR",
-    "language": "Python",
-    "stars": 37671,
-    "created_at": "2019-01-26",
-    "delta": 113,
-    "reason": "今日涨星 +113"
-   },
-   {
-    "name": "pentagi",
-    "owner": "vxcontrol",
-    "full_name": "vxcontrol/pentagi",
-    "html_url": "https://github.com/vxcontrol/pentagi",
-    "desc": "完全自主的AI Agents系统，能够执行复杂的渗透测试任务",
-    "language": "Go",
-    "stars": 34588,
-    "created_at": "2025-01-06",
-    "delta": 109,
-    "reason": "今日涨星 +109"
+    "name": "jan",
+    "owner": "janhq",
+    "full_name": "janhq/jan",
+    "html_url": "https://github.com/janhq/jan",
+    "desc": "Jan 是 ChatGPT 的开源替代品，可在您的计算机上 100% 离线运行。",
+    "language": "Rust",
+    "stars": 45908,
+    "created_at": "2023-08-17",
+    "delta": 82,
+    "reason": "今日涨星 +82"
    },
    {
     "name": "book-to-skill",
@@ -122,94 +98,10 @@
     "html_url": "https://github.com/virgiliojr94/book-to-skill",
     "desc": "将任何技术书籍 PDF 转换为 Claude Code 技能 — 可供您在工作时学习、参考和使用。",
     "language": "Python",
-    "stars": 38440,
+    "stars": 38514,
     "created_at": "2026-05-01",
-    "delta": 106,
-    "reason": "今日涨星 +106"
-   },
-   {
-    "name": "oh-my-pi",
-    "owner": "can1357",
-    "full_name": "can1357/oh-my-pi",
-    "html_url": "https://github.com/can1357/oh-my-pi",
-    "desc": "⌥ 终端的 AI 编码代理 — 哈希锚定编辑、优化工具利用、LSP、Python、浏览器、子代理等",
-    "language": "TypeScript",
-    "stars": 39449,
-    "created_at": "2025-12-31",
-    "delta": 95,
-    "reason": "今日涨星 +95"
-   },
-   {
-    "name": "airllm",
-    "owner": "lyogavin",
-    "full_name": "lyogavin/airllm",
-    "html_url": "https://github.com/lyogavin/airllm",
-    "desc": "使用单个 4GB GPU 进行 AirLLM 70B 推理",
-    "language": "Jupyter Notebook",
-    "stars": 42679,
-    "created_at": "2023-06-12",
-    "delta": 80,
-    "reason": "今日涨星 +80"
-   },
-   {
-    "name": "agentscope",
-    "owner": "agentscope-ai",
-    "full_name": "agentscope-ai/agentscope",
-    "html_url": "https://github.com/agentscope-ai/agentscope",
-    "desc": "构建和运行您可以看到、理解和信任的代理。",
-    "language": "Python",
-    "stars": 36285,
-    "created_at": "2024-01-12",
-    "delta": 79,
-    "reason": "今日涨星 +79"
-   },
-   {
-    "name": "cua",
-    "owner": "trycua",
-    "full_name": "trycua/cua",
-    "html_url": "https://github.com/trycua/cua",
-    "desc": "通过开源驱动程序、跨操作系统车队以及培训、评估和数据生成的基准来扩展计算机使用2.0。",
-    "language": "Rust",
-    "stars": 32638,
-    "created_at": "2025-01-31",
-    "delta": 78,
-    "reason": "今日涨星 +78"
-   },
-   {
-    "name": "GPT_API_free",
-    "owner": "chatanywhere",
-    "full_name": "chatanywhere/GPT_API_free",
-    "html_url": "https://github.com/chatanywhere/GPT_API_free",
-    "desc": "免费大模型API，支持免费调用GPT、DeepSeek等主流模型，免费额度10000点，每日刷新！另付费价格最低官方1-2折！",
-    "language": null,
-    "stars": 46346,
-    "created_at": "2023-04-23",
-    "delta": 73,
-    "reason": "今日涨星 +73"
-   },
-   {
-    "name": "zeroclaw",
-    "owner": "zeroclaw-labs",
-    "full_name": "zeroclaw-labs/zeroclaw",
-    "html_url": "https://github.com/zeroclaw-labs/zeroclaw",
-    "desc": "快速、小巧且完全自主的 AI 个人助理基础设施，支持任意操作系统和平台——随处部署，灵活替换 🦀",
-    "language": "Rust",
-    "stars": 33473,
-    "created_at": "2026-02-13",
-    "delta": 73,
-    "reason": "今日涨星 +73"
-   },
-   {
-    "name": "paperless-ngx",
-    "owner": "paperless-ngx",
-    "full_name": "paperless-ngx/paperless-ngx",
-    "html_url": "https://github.com/paperless-ngx/paperless-ngx",
-    "desc": "社区支持的强大文档管理系统：扫描、索引和归档您的所有文档",
-    "language": "Python",
-    "stars": 48318,
-    "created_at": "2022-02-12",
-    "delta": 72,
-    "reason": "今日涨星 +72"
+    "delta": 74,
+    "reason": "今日涨星 +74"
    },
    {
     "name": "WeKnora",
@@ -218,34 +110,142 @@
     "html_url": "https://github.com/Tencent/WeKnora",
     "desc": "开源LLM知识平台：将原始文档变成可查询的RAG、自主推理代理和自我维护的Wiki。",
     "language": "Go",
-    "stars": 37786,
+    "stars": 37857,
     "created_at": "2025-07-22",
-    "delta": 72,
-    "reason": "今日涨星 +72"
-   },
-   {
-    "name": "prompt-optimizer",
-    "owner": "linshenkx",
-    "full_name": "linshenkx/prompt-optimizer",
-    "html_url": "https://github.com/linshenkx/prompt-optimizer",
-    "desc": "AI提示词优化器，用于撰写更优质的提示词并获得更出色的AI生成结果。",
-    "language": "TypeScript",
-    "stars": 41941,
-    "created_at": "2025-02-12",
     "delta": 71,
     "reason": "今日涨星 +71"
    },
    {
-    "name": "ai-website-cloner-template",
-    "owner": "JCodesMore",
-    "full_name": "JCodesMore/ai-website-cloner-template",
-    "html_url": "https://github.com/JCodesMore/ai-website-cloner-template",
-    "desc": "使用 AI 编码代理通过一个命令克隆任何网站",
+    "name": "meetily",
+    "owner": "Zackriya-Solutions",
+    "full_name": "Zackriya-Solutions/meetily",
+    "html_url": "https://github.com/Zackriya-Solutions/meetily",
+    "desc": "隐私第一，AI 会议助手具有 4 倍快的 Parakeet/Whisper 实时转录、发言者分类和基于 Rust 构建的 Ollama 摘要。 100%本地加工。无需云。 Meetily（Meetly Ai - https://meetily.ai）是适用于 macOS 和 Windows 的排名第一的自托管开源人工智能会议记录工具。了解如何撰写会议纪要",
+    "language": "Rust",
+    "stars": 32897,
+    "created_at": "2024-12-26",
+    "delta": 71,
+    "reason": "今日涨星 +71"
+   },
+   {
+    "name": "airllm",
+    "owner": "lyogavin",
+    "full_name": "lyogavin/airllm",
+    "html_url": "https://github.com/lyogavin/airllm",
+    "desc": "使用单个 4GB GPU 进行 AirLLM 70B 推理",
+    "language": "Jupyter Notebook",
+    "stars": 42748,
+    "created_at": "2023-06-12",
+    "delta": 69,
+    "reason": "今日涨星 +69"
+   },
+   {
+    "name": "pentagi",
+    "owner": "vxcontrol",
+    "full_name": "vxcontrol/pentagi",
+    "html_url": "https://github.com/vxcontrol/pentagi",
+    "desc": "完全自主的AI Agents系统，能够执行复杂的渗透测试任务",
+    "language": "Go",
+    "stars": 34654,
+    "created_at": "2025-01-06",
+    "delta": 66,
+    "reason": "今日涨星 +66"
+   },
+   {
+    "name": "Vibe-Trading",
+    "owner": "HKUDS",
+    "full_name": "HKUDS/Vibe-Trading",
+    "html_url": "https://github.com/HKUDS/Vibe-Trading",
+    "desc": "“Vibe-Trading：您的个人交易代理”",
+    "language": "Python",
+    "stars": 38575,
+    "created_at": "2026-04-01",
+    "delta": 64,
+    "reason": "今日涨星 +64"
+   },
+   {
+    "name": "oh-my-pi",
+    "owner": "can1357",
+    "full_name": "can1357/oh-my-pi",
+    "html_url": "https://github.com/can1357/oh-my-pi",
+    "desc": "⌥ 终端的 AI 编码代理 — 哈希锚定编辑、优化工具利用、LSP、Python、浏览器、子代理等",
     "language": "TypeScript",
-    "stars": 39482,
-    "created_at": "2026-03-13",
-    "delta": 68,
-    "reason": "今日涨星 +68"
+    "stars": 39509,
+    "created_at": "2025-12-31",
+    "delta": 60,
+    "reason": "今日涨星 +60"
+   },
+   {
+    "name": "cua",
+    "owner": "trycua",
+    "full_name": "trycua/cua",
+    "html_url": "https://github.com/trycua/cua",
+    "desc": "通过开源驱动程序、跨操作系统车队以及培训、评估和数据生成的基准来扩展计算机使用2.0。",
+    "language": "Rust",
+    "stars": 32695,
+    "created_at": "2025-01-31",
+    "delta": 57,
+    "reason": "今日涨星 +57"
+   },
+   {
+    "name": "GPT_API_free",
+    "owner": "chatanywhere",
+    "full_name": "chatanywhere/GPT_API_free",
+    "html_url": "https://github.com/chatanywhere/GPT_API_free",
+    "desc": "免费大模型API，支持免费调用GPT、DeepSeek等主流模型，免费额度10000点，每日刷新！另付费价格最低官方1-2折！",
+    "language": null,
+    "stars": 46402,
+    "created_at": "2023-04-23",
+    "delta": 56,
+    "reason": "今日涨星 +56"
+   },
+   {
+    "name": "AstrBot",
+    "owner": "AstrBotDevs",
+    "full_name": "AstrBotDevs/AstrBot",
+    "html_url": "https://github.com/AstrBotDevs/AstrBot",
+    "desc": "AI 智能体助手与开发框架，集成多 IM 平台、大模型、插件与 AI 能力，可作为 openclaw 的替代。",
+    "language": "Python",
+    "stars": 47234,
+    "created_at": "2022-12-08",
+    "delta": 55,
+    "reason": "今日涨星 +55"
+   },
+   {
+    "name": "frigate",
+    "owner": "blakeblackshear",
+    "full_name": "blakeblackshear/frigate",
+    "html_url": "https://github.com/blakeblackshear/frigate",
+    "desc": "具有 IP 摄像机实时本地对象检测功能的 NVR",
+    "language": "Python",
+    "stars": 37725,
+    "created_at": "2019-01-26",
+    "delta": 54,
+    "reason": "今日涨星 +54"
+   },
+   {
+    "name": "garden-skills",
+    "owner": "ConardLi",
+    "full_name": "ConardLi/garden-skills",
+    "html_url": "https://github.com/ConardLi/garden-skills",
+    "desc": "ConardLi的开源Skills系列，包括网页设计、知识检索、图像生成等。",
+    "language": "JavaScript",
+    "stars": 15523,
+    "created_at": "2026-04-21",
+    "delta": 54,
+    "reason": "今日涨星 +54"
+   },
+   {
+    "name": "Octop",
+    "owner": "TencentCloud",
+    "full_name": "TencentCloud/Octop",
+    "html_url": "https://github.com/TencentCloud/Octop",
+    "desc": "更智能、自托管的人工智能助手——多用户、多代理。",
+    "language": "Python",
+    "stars": 12291,
+    "created_at": "2026-07-08",
+    "delta": 54,
+    "reason": "今日涨星 +54"
    }
   ],
   "total": [
@@ -256,9 +256,9 @@
     "html_url": "https://github.com/morluto/rea",
     "desc": "使用代理对任何内容进行逆向工程，从应用程序行为到本机二进制文件。",
     "language": "TypeScript",
-    "stars": 468861,
+    "stars": 470527,
     "created_at": "2026-04-14",
-    "reason": "累计 46.9万星标"
+    "reason": "累计 47.1万星标"
    },
    {
     "name": "openclaw",
@@ -267,7 +267,7 @@
     "html_url": "https://github.com/openclaw/openclaw",
     "desc": "开源 AI 个人助手，跨任意操作系统与平台运行。",
     "language": "TypeScript",
-    "stars": 394783,
+    "stars": 394867,
     "created_at": "2025-11-24",
     "reason": "累计 39.5万星标"
    },
@@ -278,7 +278,7 @@
     "html_url": "https://github.com/obra/superpowers",
     "desc": "面向 AI Agent 的技能框架与软件开发方法论。",
     "language": "Shell",
-    "stars": 321536,
+    "stars": 322348,
     "created_at": "2025-10-09",
     "reason": "累计 32.2万星标"
    },
@@ -289,7 +289,7 @@
     "html_url": "https://github.com/affaan-m/ECC",
     "desc": "Agent 性能优化系统，整合技能、记忆、安全与代码研究。",
     "language": "JavaScript",
-    "stars": 306809,
+    "stars": 307426,
     "created_at": "2026-01-18",
     "reason": "累计 30.7万星标"
    },
@@ -300,7 +300,7 @@
     "html_url": "https://github.com/NousResearch/hermes-agent",
     "desc": "会随使用不断进化的自适应 AI Agent。",
     "language": "Python",
-    "stars": 264595,
+    "stars": 264837,
     "created_at": "2025-07-22",
     "reason": "累计 26.5万星标"
    },
@@ -311,7 +311,7 @@
     "html_url": "https://github.com/n8n-io/n8n",
     "desc": "公平代码的工作流自动化平台，原生集成 AI 能力。",
     "language": "TypeScript",
-    "stars": 211294,
+    "stars": 211476,
     "created_at": "2019-06-22",
     "reason": "累计 21.1万星标"
    },
@@ -322,9 +322,9 @@
     "html_url": "https://github.com/firecrawl/firecrawl",
     "desc": "大规模网页搜索、抓取与交互的上下文 API。",
     "language": "TypeScript",
-    "stars": 203427,
+    "stars": 204582,
     "created_at": "2024-04-15",
-    "reason": "累计 20.3万星标"
+    "reason": "累计 20.5万星标"
    },
    {
     "name": "tensorflow",
@@ -333,7 +333,7 @@
     "html_url": "https://github.com/tensorflow/tensorflow",
     "desc": "Google 出品的开源机器学习框架。",
     "language": "C++",
-    "stars": 201609,
+    "stars": 201659,
     "created_at": "2015-11-07",
     "reason": "累计 20.2万星标"
    },
@@ -344,9 +344,9 @@
     "html_url": "https://github.com/DietrichGebert/ponytail",
     "desc": "让你的人工智能代理像房间里最懒的高级开发人员一样思考。最好的代码是你从未编写过的代码。",
     "language": "JavaScript",
-    "stars": 194395,
+    "stars": 195110,
     "created_at": "2026-06-12",
-    "reason": "累计 19.4万星标"
+    "reason": "累计 19.5万星标"
    },
    {
     "name": "AutoGPT",
@@ -355,7 +355,7 @@
     "html_url": "https://github.com/Significant-Gravitas/AutoGPT",
     "desc": "让 AI 普惠大众的自主智能体项目。",
     "language": "Python",
-    "stars": 188099,
+    "stars": 188117,
     "created_at": "2023-03-16",
     "reason": "累计 18.8万星标"
    },
@@ -366,7 +366,7 @@
     "html_url": "https://github.com/ollama/ollama",
     "desc": "本地一键运行 DeepSeek、Qwen、Gemma 等大模型。",
     "language": "Go",
-    "stars": 187576,
+    "stars": 187703,
     "created_at": "2023-06-26",
     "reason": "累计 18.8万星标"
    },
@@ -377,7 +377,7 @@
     "html_url": "https://github.com/f/prompts.chat",
     "desc": "精选 ChatGPT 提示词合集，支持自托管。",
     "language": "MDX",
-    "stars": 177855,
+    "stars": 177928,
     "created_at": "2022-12-05",
     "reason": "累计 17.8万星标"
    },
@@ -388,7 +388,7 @@
     "html_url": "https://github.com/huggingface/transformers",
     "desc": "Hugging Face 模型框架，覆盖文本、视觉、音频多模态。",
     "language": "Python",
-    "stars": 169222,
+    "stars": 169308,
     "created_at": "2018-10-29",
     "reason": "累计 16.9万星标"
    },
@@ -399,7 +399,7 @@
     "html_url": "https://github.com/AUTOMATIC1111/stable-diffusion-webui",
     "desc": "Stable Diffusion 的网页版图形界面。",
     "language": "Python",
-    "stars": 165340,
+    "stars": 165364,
     "created_at": "2022-08-22",
     "reason": "累计 16.5万星标"
    },
@@ -410,9 +410,9 @@
     "html_url": "https://github.com/langgenius/dify",
     "desc": "一站式构建 Agent 工作流与 RAG 管线的平台。",
     "language": "Python",
-    "stars": 161473,
+    "stars": 161552,
     "created_at": "2023-04-12",
-    "reason": "累计 16.1万星标"
+    "reason": "累计 16.2万星标"
    },
    {
     "name": "JavaGuide",
@@ -421,7 +421,7 @@
     "html_url": "https://github.com/Snailclimb/JavaGuide",
     "desc": "Java 面试与后端通用面试指南。",
     "language": "JavaScript",
-    "stars": 159616,
+    "stars": 159627,
     "created_at": "2018-05-07",
     "reason": "累计 16.0万星标"
    },
@@ -432,20 +432,9 @@
     "html_url": "https://github.com/open-webui/open-webui",
     "desc": "友好的本地 AI 界面，支持 Ollama 与 OpenAI 接口。",
     "language": "Svelte",
-    "stars": 159068,
+    "stars": 159126,
     "created_at": "2023-10-06",
     "reason": "累计 15.9万星标"
-   },
-   {
-    "name": "spec-kit",
-    "owner": "github",
-    "full_name": "github/spec-kit",
-    "html_url": "https://github.com/github/spec-kit",
-    "desc": "帮助你入门「规格驱动开发」的工具集。",
-    "language": "Python",
-    "stars": 150569,
-    "created_at": "2025-08-21",
-    "reason": "累计 15.1万星标"
    },
    {
     "name": "graphify",
@@ -454,9 +443,20 @@
     "html_url": "https://github.com/Graphify-Labs/graphify",
     "desc": "将任何代码库及其文档、SQL 架构、配置和 PDF 转换为可查询的知识图。适用于 Claude Code、Cursor、Codex 和 Gemini CLI 的 /graphify 技能：本地确定性 AST 解析，每条边均已解释，无向量存储。",
     "language": "Python",
-    "stars": 150316,
+    "stars": 150793,
     "created_at": "2026-04-03",
-    "reason": "累计 15.0万星标"
+    "reason": "累计 15.1万星标"
+   },
+   {
+    "name": "spec-kit",
+    "owner": "github",
+    "full_name": "github/spec-kit",
+    "html_url": "https://github.com/github/spec-kit",
+    "desc": "帮助你入门「规格驱动开发」的工具集。",
+    "language": "Python",
+    "stars": 150748,
+    "created_at": "2025-08-21",
+    "reason": "累计 15.1万星标"
    },
    {
     "name": "langchain",
@@ -465,7 +465,7 @@
     "html_url": "https://github.com/langchain-ai/langchain",
     "desc": "面向智能体的工程化开发平台。",
     "language": "Python",
-    "stars": 149872,
+    "stars": 149947,
     "created_at": "2022-10-17",
     "reason": "累计 15.0万星标"
    }
@@ -478,9 +478,9 @@
     "html_url": "https://github.com/YellowLaborerMarket/Gemini-Config-Checker-",
     "desc": "链式区域扫描器：查找能访问 Google AI Studio 和 Gemini 的代理配置（需登录状态下的浏览器验证、防 DPI 检测，支持 Windows/macOS/Linux/Android）",
     "language": "Makefile",
-    "stars": 475,
+    "stars": 474,
     "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 475星标"
+    "reason": "近 7 天新建 · 474星标"
    },
    {
     "name": "Gemini-Config-Checker-",
@@ -488,17 +488,6 @@
     "full_name": "weightcashiercupola/Gemini-Config-Checker-",
     "html_url": "https://github.com/weightcashiercupola/Gemini-Config-Checker-",
     "desc": "Chain region scanner: 查找能访问 Google AI Studio 和 Gemini 的代理配置（需登录浏览器验证，支持反 DPI 检测，兼容 Windows/macOS/Linux/Android）",
-    "language": "Makefile",
-    "stars": 474,
-    "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 474星标"
-   },
-   {
-    "name": "Gemini-Config-Checker-",
-    "owner": "TypeTyrantScheme",
-    "full_name": "TypeTyrantScheme/Gemini-Config-Checker-",
-    "html_url": "https://github.com/TypeTyrantScheme/Gemini-Config-Checker-",
-    "desc": "链式区域扫描器：查找可访问 Google AI Studio 和 Gemini 的代理配置（已登录浏览器检查，反 DPI 检测，支持 Windows/macOS/Linux/Android）",
     "language": "Makefile",
     "stars": 473,
     "created_at": "2026-11-15",
@@ -511,64 +500,20 @@
     "html_url": "https://github.com/WingDataVacuum/Gemini-Config-Checker-",
     "desc": "链区扫描仪：查找可访问 Google AI Studio 和 Gemini 的代理配置（已登录浏览器检查、反 DPI 检测，支持 Windows/macOS/Linux/Android）",
     "language": "Makefile",
-    "stars": 473,
+    "stars": 472,
     "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
+    "reason": "近 7 天新建 · 472星标"
    },
    {
     "name": "Gemini-Config-Checker-",
-    "owner": "Violetnyudress",
-    "full_name": "Violetnyudress/Gemini-Config-Checker-",
-    "html_url": "https://github.com/Violetnyudress/Gemini-Config-Checker-",
-    "desc": "链式区域扫描器：查找能访问 Google AI Studio 和 Gemini 的代理配置（含已登录浏览器检查、反 DPI 检测，支持 Windows/macOS/Linux/Android）",
-    "language": "Go",
-    "stars": 473,
-    "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
-   },
-   {
-    "name": "Gemini-Config-Checker-",
-    "owner": "Visionbeyondtrack",
-    "full_name": "Visionbeyondtrack/Gemini-Config-Checker-",
-    "html_url": "https://github.com/Visionbeyondtrack/Gemini-Config-Checker-",
-    "desc": "链式区域扫描器：查找可访问 Google AI Studio 和 Gemini 的代理配置（需登录浏览器验证、反 DPI 检测，支持 Windows/macOS/Linux/Android）",
+    "owner": "TypeTyrantScheme",
+    "full_name": "TypeTyrantScheme/Gemini-Config-Checker-",
+    "html_url": "https://github.com/TypeTyrantScheme/Gemini-Config-Checker-",
+    "desc": "链式区域扫描器：查找可访问 Google AI Studio 和 Gemini 的代理配置（已登录浏览器检查，反 DPI 检测，支持 Windows/macOS/Linux/Android）",
     "language": "Makefile",
-    "stars": 473,
+    "stars": 472,
     "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
-   },
-   {
-    "name": "Gemini-Config-Checker-",
-    "owner": "VortexHostFeel",
-    "full_name": "VortexHostFeel/Gemini-Config-Checker-",
-    "html_url": "https://github.com/VortexHostFeel/Gemini-Config-Checker-",
-    "desc": "Chain 区域扫描器：查找可进入 Google AI Studio 和 Gemini 的代理配置（需登录浏览器验证、抗 DPI 干扰，支持 Windows/macOS/Linux/Android）",
-    "language": "Makefile",
-    "stars": 473,
-    "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
-   },
-   {
-    "name": "Gemini-Config-Checker-",
-    "owner": "weldbladesmithwharf",
-    "full_name": "weldbladesmithwharf/Gemini-Config-Checker-",
-    "html_url": "https://github.com/weldbladesmithwharf/Gemini-Config-Checker-",
-    "desc": "链式区域扫描器：查找能访问 Google AI Studio 和 Gemini 的代理配置（需检查已登录浏览器、反 DPI 检测，支持 Windows/macOS/Linux/Android）",
-    "language": "Makefile",
-    "stars": 473,
-    "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
-   },
-   {
-    "name": "Gemini-Config-Checker-",
-    "owner": "TurtleReside",
-    "full_name": "TurtleReside/Gemini-Config-Checker-",
-    "html_url": "https://github.com/TurtleReside/Gemini-Config-Checker-",
-    "desc": "Chain 区域扫描器：查找能访问 Google AI Studio 和 Gemini 的代理配置（需登录浏览器验证、防 DPI 检测、支持 Windows/macOS/Linux/Android）",
-    "language": "Go",
-    "stars": 473,
-    "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
+    "reason": "近 7 天新建 · 472星标"
    },
    {
     "name": "Gemini-Config-Checker-",
@@ -577,9 +522,64 @@
     "html_url": "https://github.com/WinnerSpecialist/Gemini-Config-Checker-",
     "desc": "链式区域扫描器：查找可访问 Google AI Studio 和 Gemini 的代理配置（含登录浏览器检查、抗 DPI 干扰，支持 Windows/macOS/Linux/Android）",
     "language": "Makefile",
-    "stars": 473,
+    "stars": 472,
     "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
+    "reason": "近 7 天新建 · 472星标"
+   },
+   {
+    "name": "Gemini-Config-Checker-",
+    "owner": "Visionbeyondtrack",
+    "full_name": "Visionbeyondtrack/Gemini-Config-Checker-",
+    "html_url": "https://github.com/Visionbeyondtrack/Gemini-Config-Checker-",
+    "desc": "链式区域扫描器：查找可访问 Google AI Studio 和 Gemini 的代理配置（需登录浏览器验证、反 DPI 检测，支持 Windows/macOS/Linux/Android）",
+    "language": "Makefile",
+    "stars": 472,
+    "created_at": "2026-11-15",
+    "reason": "近 7 天新建 · 472星标"
+   },
+   {
+    "name": "Gemini-Config-Checker-",
+    "owner": "Violetnyudress",
+    "full_name": "Violetnyudress/Gemini-Config-Checker-",
+    "html_url": "https://github.com/Violetnyudress/Gemini-Config-Checker-",
+    "desc": "链式区域扫描器：查找能访问 Google AI Studio 和 Gemini 的代理配置（含已登录浏览器检查、反 DPI 检测，支持 Windows/macOS/Linux/Android）",
+    "language": "Go",
+    "stars": 472,
+    "created_at": "2026-11-15",
+    "reason": "近 7 天新建 · 472星标"
+   },
+   {
+    "name": "Gemini-Config-Checker-",
+    "owner": "weldbladesmithwharf",
+    "full_name": "weldbladesmithwharf/Gemini-Config-Checker-",
+    "html_url": "https://github.com/weldbladesmithwharf/Gemini-Config-Checker-",
+    "desc": "链式区域扫描器：查找能访问 Google AI Studio 和 Gemini 的代理配置（需检查已登录浏览器、反 DPI 检测，支持 Windows/macOS/Linux/Android）",
+    "language": "Makefile",
+    "stars": 472,
+    "created_at": "2026-11-15",
+    "reason": "近 7 天新建 · 472星标"
+   },
+   {
+    "name": "Gemini-Config-Checker-",
+    "owner": "TurtleReside",
+    "full_name": "TurtleReside/Gemini-Config-Checker-",
+    "html_url": "https://github.com/TurtleReside/Gemini-Config-Checker-",
+    "desc": "Chain 区域扫描器：查找能访问 Google AI Studio 和 Gemini 的代理配置（需登录浏览器验证、防 DPI 检测、支持 Windows/macOS/Linux/Android）",
+    "language": "Go",
+    "stars": 472,
+    "created_at": "2026-11-15",
+    "reason": "近 7 天新建 · 472星标"
+   },
+   {
+    "name": "Gemini-Config-Checker-",
+    "owner": "VortexHostFeel",
+    "full_name": "VortexHostFeel/Gemini-Config-Checker-",
+    "html_url": "https://github.com/VortexHostFeel/Gemini-Config-Checker-",
+    "desc": "Chain 区域扫描器：查找可进入 Google AI Studio 和 Gemini 的代理配置（需登录浏览器验证、抗 DPI 干扰，支持 Windows/macOS/Linux/Android）",
+    "language": "Makefile",
+    "stars": 472,
+    "created_at": "2026-11-15",
+    "reason": "近 7 天新建 · 472星标"
    },
    {
     "name": "Gemini-Config-Checker-",
@@ -588,9 +588,9 @@
     "html_url": "https://github.com/WireProvostPucker/Gemini-Config-Checker-",
     "desc": "链路区域扫描器：查找能够访问 Google AI Studio 和 Gemini 的代理配置（含已登录浏览器检查、反 DPI 检测，支持 Windows/macOS/Linux/Android）",
     "language": "Makefile",
-    "stars": 473,
+    "stars": 472,
     "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
+    "reason": "近 7 天新建 · 472星标"
    },
    {
     "name": "Gemini-Config-Checker-",
@@ -599,9 +599,9 @@
     "html_url": "https://github.com/WindGatorRise37/Gemini-Config-Checker-",
     "desc": "链区域扫描器：查找让您进入 Google AI Studio 和 Gemini 的代理配置（已登录浏览器检查、反 DPI、Windows/macOS/Linux/Android）",
     "language": "Makefile",
-    "stars": 473,
+    "stars": 472,
     "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
+    "reason": "近 7 天新建 · 472星标"
    },
    {
     "name": "Gemini-Config-Checker-",
@@ -610,53 +610,9 @@
     "html_url": "https://github.com/TrooperFilter/Gemini-Config-Checker-",
     "desc": "链式区域扫描器：查找能进入 Google AI Studio 和 Gemini 的代理配置（需已登录浏览器验证，支持反 DPI 检测，适用于 Windows/macOS/Linux/Android）",
     "language": "Makefile",
-    "stars": 473,
+    "stars": 472,
     "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
-   },
-   {
-    "name": "Gemini-Config-Checker-",
-    "owner": "wisemeadowlarkspike",
-    "full_name": "wisemeadowlarkspike/Gemini-Config-Checker-",
-    "html_url": "https://github.com/wisemeadowlarkspike/Gemini-Config-Checker-",
-    "desc": "链区扫描器：查找能访问 Google AI Studio 和 Gemini 的代理配置（需登录状态浏览器验证，支持抗 DPI 拦截，覆盖 Windows/macOS/Linux/Android）",
-    "language": "Go",
-    "stars": 473,
-    "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
-   },
-   {
-    "name": "Gemini-Config-Checker-",
-    "owner": "Watchlespeed",
-    "full_name": "Watchlespeed/Gemini-Config-Checker-",
-    "html_url": "https://github.com/Watchlespeed/Gemini-Config-Checker-",
-    "desc": "链区域扫描器：查找能让你访问 Google AI Studio 和 Gemini 的代理配置（需登录浏览器检查、防 DPI，支持 Windows/macOS/Linux/Android）",
-    "language": "Makefile",
-    "stars": 473,
-    "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
-   },
-   {
-    "name": "Gemini-Config-Checker-",
-    "owner": "WharfBoulderColander",
-    "full_name": "WharfBoulderColander/Gemini-Config-Checker-",
-    "html_url": "https://github.com/WharfBoulderColander/Gemini-Config-Checker-",
-    "desc": "链式区域扫描器：查找能接入 Google AI Studio 和 Gemini 的代理配置（需已登录的浏览器验证，支持反 DPI 检测，兼容 Windows/macOS/Linux/Android）",
-    "language": "Makefile",
-    "stars": 473,
-    "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
-   },
-   {
-    "name": "Gemini-Config-Checker-",
-    "owner": "WyrmClimberManacle",
-    "full_name": "WyrmClimberManacle/Gemini-Config-Checker-",
-    "html_url": "https://github.com/WyrmClimberManacle/Gemini-Config-Checker-",
-    "desc": "链式区域扫描器：查找可进入 Google AI Studio 和 Gemini 的代理配置（需登录浏览器验证，支持反 DPI 检测，适用于 Windows/macOS/Linux/Android）",
-    "language": "Makefile",
-    "stars": 473,
-    "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
+    "reason": "近 7 天新建 · 472星标"
    },
    {
     "name": "Gemini-Config-Checker-",
@@ -665,9 +621,9 @@
     "html_url": "https://github.com/VisionWormStudio/Gemini-Config-Checker-",
     "desc": "链式区域扫描器：查找可访问 Google AI Studio 和 Gemini 的代理配置（需登录浏览器验证，支持反 DPI 检测，覆盖 Windows/macOS/Linux/Android）",
     "language": "Go",
-    "stars": 473,
+    "stars": 472,
     "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
+    "reason": "近 7 天新建 · 472星标"
    },
    {
     "name": "Gemini-Config-Checker-",
@@ -676,9 +632,53 @@
     "html_url": "https://github.com/WestLocksmithSpout/Gemini-Config-Checker-",
     "desc": "链式区域扫描器：查找可访问 Google AI Studio 和 Gemini 的代理配置（需登录浏览器的验证、反 DPI 检测，支持 Windows/macOS/Linux/Android）",
     "language": "Go",
-    "stars": 473,
+    "stars": 472,
     "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
+    "reason": "近 7 天新建 · 472星标"
+   },
+   {
+    "name": "Gemini-Config-Checker-",
+    "owner": "WharfBoulderColander",
+    "full_name": "WharfBoulderColander/Gemini-Config-Checker-",
+    "html_url": "https://github.com/WharfBoulderColander/Gemini-Config-Checker-",
+    "desc": "链式区域扫描器：查找能接入 Google AI Studio 和 Gemini 的代理配置（需已登录的浏览器验证，支持反 DPI 检测，兼容 Windows/macOS/Linux/Android）",
+    "language": "Makefile",
+    "stars": 472,
+    "created_at": "2026-11-15",
+    "reason": "近 7 天新建 · 472星标"
+   },
+   {
+    "name": "Gemini-Config-Checker-",
+    "owner": "wisemeadowlarkspike",
+    "full_name": "wisemeadowlarkspike/Gemini-Config-Checker-",
+    "html_url": "https://github.com/wisemeadowlarkspike/Gemini-Config-Checker-",
+    "desc": "链区扫描器：查找能访问 Google AI Studio 和 Gemini 的代理配置（需登录状态浏览器验证，支持抗 DPI 拦截，覆盖 Windows/macOS/Linux/Android）",
+    "language": "Go",
+    "stars": 472,
+    "created_at": "2026-11-15",
+    "reason": "近 7 天新建 · 472星标"
+   },
+   {
+    "name": "Gemini-Config-Checker-",
+    "owner": "Watchlespeed",
+    "full_name": "Watchlespeed/Gemini-Config-Checker-",
+    "html_url": "https://github.com/Watchlespeed/Gemini-Config-Checker-",
+    "desc": "链区域扫描器：查找能让你访问 Google AI Studio 和 Gemini 的代理配置（需登录浏览器检查、防 DPI，支持 Windows/macOS/Linux/Android）",
+    "language": "Makefile",
+    "stars": 472,
+    "created_at": "2026-11-15",
+    "reason": "近 7 天新建 · 472星标"
+   },
+   {
+    "name": "Gemini-Config-Checker-",
+    "owner": "WyrmClimberManacle",
+    "full_name": "WyrmClimberManacle/Gemini-Config-Checker-",
+    "html_url": "https://github.com/WyrmClimberManacle/Gemini-Config-Checker-",
+    "desc": "链式区域扫描器：查找可进入 Google AI Studio 和 Gemini 的代理配置（需登录浏览器验证，支持反 DPI 检测，适用于 Windows/macOS/Linux/Android）",
+    "language": "Makefile",
+    "stars": 472,
+    "created_at": "2026-11-15",
+    "reason": "近 7 天新建 · 472星标"
    },
    {
     "name": "Gemini-Config-Checker-",
@@ -687,9 +687,9 @@
     "html_url": "https://github.com/WerewolfEmuHub/Gemini-Config-Checker-",
     "desc": "链式区域扫描器：查找可访问 Google AI Studio 和 Gemini 的代理配置（含已登录浏览器检查、抗 DPI 检测，支持 Windows/macOS/Linux/Android）",
     "language": "Go",
-    "stars": 473,
+    "stars": 472,
     "created_at": "2026-11-15",
-    "reason": "近 7 天新建 · 473星标"
+    "reason": "近 7 天新建 · 472星标"
    }
   ],
   "downloads": [
@@ -700,9 +700,9 @@
     "html_url": "https://github.com/ollama/ollama",
     "desc": "本地一键运行 DeepSeek、Qwen、Gemma 等大模型。",
     "language": "Go",
-    "stars": 187576,
+    "stars": 187703,
     "created_at": "2023-06-26",
-    "downloads": 246729670,
+    "downloads": 247232018,
     "reason": "累计下载 2.5亿次"
    },
    {
@@ -712,10 +712,10 @@
     "html_url": "https://github.com/Comfy-Org/ComfyUI",
     "desc": "功能强大的模块化扩散模型 GUI 与后端。",
     "language": "Python",
-    "stars": 147584,
+    "stars": 147735,
     "created_at": "2023-01-17",
-    "downloads": 11177531,
-    "reason": "累计下载 1117.8万次"
+    "downloads": 11216214,
+    "reason": "累计下载 1121.6万次"
    },
    {
     "name": "netdata",
@@ -724,10 +724,10 @@
     "html_url": "https://github.com/netdata/netdata",
     "desc": "即使对于精益团队来说，也是实现人工智能驱动的全栈可观察性的最快途径。",
     "language": "Go",
-    "stars": 81474,
+    "stars": 81536,
     "created_at": "2013-06-17",
-    "downloads": 7087935,
-    "reason": "累计下载 708.8万次"
+    "downloads": 7091123,
+    "reason": "累计下载 709.1万次"
    },
    {
     "name": "stable-diffusion-webui",
@@ -736,10 +736,10 @@
     "html_url": "https://github.com/AUTOMATIC1111/stable-diffusion-webui",
     "desc": "Stable Diffusion 的网页版图形界面。",
     "language": "Python",
-    "stars": 165340,
+    "stars": 165364,
     "created_at": "2022-08-22",
-    "downloads": 5961258,
-    "reason": "累计下载 596.1万次"
+    "downloads": 5963344,
+    "reason": "累计下载 596.3万次"
    },
    {
     "name": "rtk",
@@ -748,10 +748,10 @@
     "html_url": "https://github.com/rtk-ai/rtk",
     "desc": "CLI 代理可将常见开发命令的 LLM 令牌消耗减少 60-90%。单个 Rust 二进制文件，零依赖",
     "language": "Rust",
-    "stars": 87140,
+    "stars": 87231,
     "created_at": "2026-01-22",
-    "downloads": 5798682,
-    "reason": "累计下载 579.9万次"
+    "downloads": 5846113,
+    "reason": "累计下载 584.6万次"
    },
    {
     "name": "vllm",
@@ -760,10 +760,10 @@
     "html_url": "https://github.com/vllm-project/vllm",
     "desc": "适用于法学硕士的高吞吐量和内存高效推理和服务引擎",
     "language": "Python",
-    "stars": 97197,
+    "stars": 97246,
     "created_at": "2023-02-09",
-    "downloads": 5421787,
-    "reason": "累计下载 542.2万次"
+    "downloads": 5450570,
+    "reason": "累计下载 545.1万次"
    },
    {
     "name": "impeccable",
@@ -772,10 +772,10 @@
     "html_url": "https://github.com/pbakaus/impeccable",
     "desc": "使您的 AI 线束在设计上更加出色的设计语言。",
     "language": "Rust",
-    "stars": 113093,
+    "stars": 113670,
     "created_at": "2025-11-16",
-    "downloads": 5172237,
-    "reason": "累计下载 517.2万次"
+    "downloads": 5270912,
+    "reason": "累计下载 527.1万次"
    },
    {
     "name": "opencv",
@@ -784,10 +784,10 @@
     "html_url": "https://github.com/opencv/opencv",
     "desc": "开源计算机视觉库",
     "language": "C++",
-    "stars": 91641,
+    "stars": 91647,
     "created_at": "2012-07-19",
-    "downloads": 5007211,
-    "reason": "累计下载 500.7万次"
+    "downloads": 5010298,
+    "reason": "累计下载 501.0万次"
    },
    {
     "name": "VoiceStudio",
@@ -796,10 +796,10 @@
     "html_url": "https://github.com/debpalash/VoiceStudio",
     "desc": "VoiceStudio 是 ElevenLabs 的开源、完全本地化替代方案 — 提供 646 种语言的语音克隆、语音设计、视频配音、听写、转录和有声读物创建。",
     "language": "Python",
-    "stars": 113722,
+    "stars": 114776,
     "created_at": "2026-04-09",
-    "downloads": 3254589,
-    "reason": "累计下载 325.5万次"
+    "downloads": 3331879,
+    "reason": "累计下载 333.2万次"
    },
    {
     "name": "openclaw",
@@ -808,10 +808,10 @@
     "html_url": "https://github.com/openclaw/openclaw",
     "desc": "开源 AI 个人助手，跨任意操作系统与平台运行。",
     "language": "TypeScript",
-    "stars": 394783,
+    "stars": 394867,
     "created_at": "2025-11-24",
-    "downloads": 2823557,
-    "reason": "累计下载 282.4万次"
+    "downloads": 2833071,
+    "reason": "累计下载 283.3万次"
    },
    {
     "name": "caveman",
@@ -820,10 +820,10 @@
     "html_url": "https://github.com/JuliusBrussee/caveman",
     "desc": "🪨 当很少的令牌可以完成戏法时，为什么要使用大量的令牌 — 克劳德代码技能，通过像穴居人一样说话来减少 65% 的令牌",
     "language": "Go",
-    "stars": 121387,
+    "stars": 121641,
     "created_at": "2026-04-04",
-    "downloads": 1054419,
-    "reason": "累计下载 105.4万次"
+    "downloads": 1070758,
+    "reason": "累计下载 107.1万次"
    },
    {
     "name": "spec-kit",
@@ -832,10 +832,10 @@
     "html_url": "https://github.com/github/spec-kit",
     "desc": "帮助你入门「规格驱动开发」的工具集。",
     "language": "Python",
-    "stars": 150569,
+    "stars": 150748,
     "created_at": "2025-08-21",
-    "downloads": 947795,
-    "reason": "累计下载 94.8万次"
+    "downloads": 950546,
+    "reason": "累计下载 95.1万次"
    },
    {
     "name": "pytorch",
@@ -844,10 +844,10 @@
     "html_url": "https://github.com/pytorch/pytorch",
     "desc": "Python 中的张量和动态神经网络，具有强大的 GPU 加速功能",
     "language": "Python",
-    "stars": 105665,
+    "stars": 105735,
     "created_at": "2016-08-13",
-    "downloads": 355063,
-    "reason": "累计下载 35.5万次"
+    "downloads": 355629,
+    "reason": "累计下载 35.6万次"
    },
    {
     "name": "worldmonitor",
@@ -856,10 +856,10 @@
     "html_url": "https://github.com/koala73/worldmonitor",
     "desc": "实时全球情报仪表板。在统一的态势感知界面中进行人工智能驱动的新闻聚合、地缘政治监控和基础设施跟踪",
     "language": "TypeScript",
-    "stars": 90921,
+    "stars": 90976,
     "created_at": "2026-01-08",
-    "downloads": 283252,
-    "reason": "累计下载 28.3万次"
+    "downloads": 283884,
+    "reason": "累计下载 28.4万次"
    },
    {
     "name": "MoneyPrinterTurbo",
@@ -868,10 +868,10 @@
     "html_url": "https://github.com/harry0703/MoneyPrinterTurbo",
     "desc": "利用 AI 大模型和自动化工作流，根据主题或关键词一键生成高清短视频。Generate HD short videos from a topic or keyword with an automated AI workflow.",
     "language": "Python",
-    "stars": 144589,
+    "stars": 144766,
     "created_at": "2024-03-11",
-    "downloads": 186457,
-    "reason": "累计下载 18.6万次"
+    "downloads": 187439,
+    "reason": "累计下载 18.7万次"
    },
    {
     "name": "gemini-cli",
@@ -880,10 +880,10 @@
     "html_url": "https://github.com/google-gemini/gemini-cli",
     "desc": "一款开源 AI 代理，可将 Gemini 的强大功能直接带入您的终端。",
     "language": "TypeScript",
-    "stars": 108936,
+    "stars": 108949,
     "created_at": "2025-04-17",
-    "downloads": 154421,
-    "reason": "累计下载 15.4万次"
+    "downloads": 155087,
+    "reason": "累计下载 15.5万次"
    },
    {
     "name": "dsh-our-free-model",
@@ -892,10 +892,10 @@
     "html_url": "https://github.com/Ebony-Vinyl/dsh-our-free-model",
     "desc": "在 dsh 里装上这个插件即可，无需登录、注册或填 API Key，就能使用包括 DeepSeek V4.1 Flash、Kimi K3 在内的前沿模型——完全免费，不限量。 All you do is install this plugin in dsh: no login, no sign-up, no API key — the frontier models are just there, DeepSeek V4.1 Flash and Kimi K3 among them. Completely free, with no usage cap.",
     "language": "JavaScript",
-    "stars": 80295,
+    "stars": 81466,
     "created_at": "2026-09-24",
-    "downloads": 131847,
-    "reason": "累计下载 13.2万次"
+    "downloads": 136535,
+    "reason": "累计下载 13.7万次"
    },
    {
     "name": "ECC",
@@ -904,9 +904,9 @@
     "html_url": "https://github.com/affaan-m/ECC",
     "desc": "Agent 性能优化系统，整合技能、记忆、安全与代码研究。",
     "language": "JavaScript",
-    "stars": 306809,
+    "stars": 307426,
     "created_at": "2026-01-18",
-    "downloads": 103602,
+    "downloads": 104061,
     "reason": "累计下载 10.4万次"
    },
    {
@@ -916,10 +916,10 @@
     "html_url": "https://github.com/lobehub/lobehub",
     "desc": "🤯 LobeHub 是您的首席代理运营商，通过招聘、调度和报告整个 AI 团队，将您的代理组织为 7×24 小时运营。",
     "language": "TypeScript",
-    "stars": 85834,
+    "stars": 85906,
     "created_at": "2023-05-21",
-    "downloads": 70019,
-    "reason": "累计下载 7.0万次"
+    "downloads": 70890,
+    "reason": "累计下载 7.1万次"
    },
    {
     "name": "d2l-zh",
@@ -928,9 +928,9 @@
     "html_url": "https://github.com/d2l-ai/d2l-zh",
     "desc": "《动手学深度学习》：面向中文读者、能运行、可讨论。中英文版被70多个国家的500多所大学用于教学。",
     "language": "Python",
-    "stars": 82589,
+    "stars": 82607,
     "created_at": "2017-08-23",
-    "downloads": 58092,
+    "downloads": 58180,
     "reason": "累计下载 5.8万次"
    }
   ]

@@ -1,6 +1,6 @@
 {
  "schema_version": 2,
- "updated_at": "2026-11-19T08:36:11.468890Z",
+ "updated_at": "2026-11-20T08:18:55.433862Z",
  "map": {
   "lijigang/ljg-skills": "agent",
   "Minireel/HGhub": "video",
@@ -53,7 +53,6 @@
   "yetone/magpie": "tools",
   "morluto/rea": "agent",
   "1314521gjy/ninfer-fusion-kvmem": "tools",
-  "Avarce/chatgpt-plus-china-guide": "learning",
   "TencentCloud/Octop": "assistant",
   "JackalClient/JackalClient": "assistant",
   "Omnls/system-prompts-and-models-of-ai-tools-chinese": "prompt",
@@ -191,7 +190,9 @@
   "Graphify-Labs/graphify": "agent",
   "lingdongbudong/Comfyui-K2-Editorial": "image",
   "goohai/Goohaitools-comfyui": "image",
-  "ZenHG/ComfyUI-MOSS-Storyboard": "video"
+  "ZenHG/ComfyUI-MOSS-Storyboard": "video",
+  "Overstar66/prompt-workbench": "prompt",
+  "nregret/Comfyui-Anima-Tools": "image"
  },
  "labels": {
   "agent": "AI Agent & Skills",

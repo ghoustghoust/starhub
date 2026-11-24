@@ -26,7 +26,6 @@
  "seasnakes/gloria-prompt-archive": "prompt",
  "1314521gjy/ComfyUI-Local-Infinite-Canvas": "image",
  "linshenkx/prompt-optimizer": "prompt",
- "RVC-Boss/GPT-SoVITS": "video",
  "openfilm/openfilm": "video",
  "pjpv/zcode-switch": "assistant",
  "cyber-xiaoya/cyber-xiaoya-live": "video",
@@ -189,5 +188,7 @@
  "goohai/Goohaitools-comfyui": "image",
  "ZenHG/ComfyUI-MOSS-Storyboard": "video",
  "Overstar66/prompt-workbench": "prompt",
- "nregret/Comfyui-Anima-Tools": "image"
+ "nregret/Comfyui-Anima-Tools": "image",
+ "Lee-xeo/Claude-Cage": "finance",
+ "bilibili/GPT-SoVITS": "video"
 }
